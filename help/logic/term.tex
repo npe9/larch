@@ -1,0 +1,65 @@
+\doc{Terms}
+\ref{terms}
+\ref{subterm}
+\ref{qualification}
+\ref{term}
+
+A \def{term} in multisorted first-order logic denotes an element of some sort.
+A term can be an \def{atomic} term (i.e., a \dlink{variable}{variable} or a
+\dlink{constant}{constant}), or it can be a \def{compound} term with one of the
+following forms:
+\begin{itemize}
+\item \dlink{function}{functional}, e.g., \f{f(x)} or \f{min(x, y)}
+\item \dlink{infix}{infix}, e.g., \f{x + y}
+\item \dlink{infix}{prefix}, e.g., \f{-x}
+\item \dlink{infix}{postfix}, e.g, \f{x!} or \f{q.last}
+\item \dlink{bracket}{bracketed}, e.g., \f{a[i]}
+\item \dlink{conditional}{conditional}, e.g., \f{if x < 0 then -x else x}
+\item \dlink{quantifier}{quantified}, e.g., \f{\A x \E y (x < y)}
+\end{itemize}
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+
+\begin{verbatim}
+\sd{term}          ::= \f{if} \s{term} \f{then} \s{term} \f{else} \s{term}
+                       | \s{subterm}
+\sd{subterm}       ::= \s{subterm} ( \slink{operator}{simpleOp} \s{subterm} )+
+                       | ( \slink{operator}{simpleOp} | \slink{quantifier}{quantifier} )* \slink{operator}{simpleOp} \s{secondary}
+                       | ( \slink{operator}{simpleOp} | \slink{quantifier}{quantifier} )* \slink{quantifier}{quantifier} \s{primary}
+                       | \s{secondary} \slink{operator}{simpleOp}*
+\sd{secondary}     ::= \s{primary}
+                       | [ \s{bracketPre} ] \s{bracketed} [ \s{bracketPost} ]
+\sd{primary}       ::= \s{primaryHead} \s{primaryTail}*
+\sd{primaryHead}   ::= \slink{../symbols/symbols}{simpleId} [ \qf{(} \s{term}+, \qf{)} ]
+                       | \qf{(} \s{term} \qf{)}
+\sd{primaryTail}   ::= \qf{.} \s{primaryHead} | \s{qualification}
+\sd{qualification} ::= \qf{:} \slink{sort}{sort}
+\sd{bracketPre}    ::= \s{primaryHead} | \s{primary} \f{.} \s{primaryHead}
+\sd{bracketed}     ::= \slink{operator}{openSym} \s{term}*, \slink{operator}{closeSym} [ \s{qualification} ]
+\sd{bracketPost}   ::= \s{primary} | \f{.} \s{primaryHead} \s{primaryTail}*
+\end{verbatim}
+
+Restrictions: Terms must \def{type-check}, that is, all operators must be
+applied to arguments with sorts in the operator's \dlink{signature}{signature}.
+The following combinations of \s{simpleOp}s cannot appear in a \s{subterm}
+unless they are separated by \s{simpleOp}s that \dlink{precedence}{bind} less
+tightly:
+\begin{itemize}
+\item more than one \f{=>}, \f{=}, or \f{~=}
+\item both \f{/\} and \f{\/}
+\item both \f{=} and \f{~=}
+\item two different user-declared \s{simpleOp}s
+\end{itemize}
+
+\head{2}{Usage}
+LP uses the following kinds of information to resolve potential ambiguities in
+terms: 
+\begin{itemize}
+\item 
+Operator \dlink{precedence}{precedence}, when two \s{simpleOp}s appear in the
+same \s{subterm}
+\item
+Context, when \dlink{overload}{overloaded} operators appear in a term
+\item
+Explicit \s{qualification}s appearing in a term
+\end{itemize}

@@ -1,0 +1,643 @@
+#extend
+
+% A "printer" prints a stream of strings separated by blanks.  It breaks overly
+% long lines of output by replacing blanks with line breaks and specified
+% indentations.  It does not break strings.  A printer also allows output to be
+% grouped into logical blocks, and it breaks overly long lines of output
+% between blocks before it breaks them within.
+
+% A "printer" provides procedures for outputting strings, for outputting blanks
+% that lead to filled or aligned output when replaced by line breaks, for
+% starting and finishing blocks, and for specifying indents.  It also provides
+% a procedure that decodes text containing embedded blanks and control
+% sequences beginning with the character "~", as follows.
+
+%    Text	Printer operation		Action
+%    ----	------- ---------		------
+
+%    s		printer$puts(p, s)		prints s
+%    " "	printer$filled_blanks(p, 1)	prints space or newline
+%    "~ "	printer$puts(p, " ")		prints space
+%    "~nF"	printer$filled_blanks(p, n)	allows newline
+%    "~nA"	printer$aligned_blanks(p, n)	ditto, but breaks at all ~A's
+%    "~{"	printer$start_block(p)		starts logical block
+%    "~}"	printer$finish_block(p)		ends logical block
+%    "\n"	printer$newline(p)		forces a newline
+%    "~nI"	p.indent := n			indents relative to block
+%    "~nJ"	p.relative_indent := n		indents relative to position
+%    "~~"	printer$puts(p, "~")		prints ~
+%    "~E"	printer$end_of_output(p)	flushes output
+
+% When "n" is omitted, its default value is 0.
+
+
+%   Examples			Width 10	Width 8		Width 6
+%   --------			--------	-------		-------
+
+%   "~{f(~Ja, b, c)~}"		f(a, b, c)	f(a, b,		f(a,
+%						  c)		  b,
+%								  c)
+
+%   "~{f(~Ja,~1Ab,~1Ac)~}"	f(a, b, c)	f(a,		f(a,
+%						  b,		  b,
+%						  c)		  c)
+
+%   "~{~2Iffff~A(~Ja, b)~}"	ffff(a, b)	ffff		ffff
+%						  (a, b)	  (a,
+%								   b)
+
+% 
+
+% The formatting primitives used in this cluster are based on those described
+% by Richard C. Waters in ``XP: A Common Lisp Pretty Printing System,'' MIT
+% A.I. Memo No. 1102a (August, 1989).  The implementation of this cluster is
+% based on algorithms described by Derek C. Oppen in ``Prettyprinting,'' ACM
+% Transactions on Programming Languages and Systems 2:4 (October, 1980), pp.
+% 465-483.  A primary advantage of these primtives and algorithms is that they
+% require linear time and constant space, i.e., space that is linear in the
+% width of an output line (and the maximum depth of nested blocks), not linear
+% in the length of the output stream.
+
+% Blanks and blocks divide the output into nested sections, as follows.  The
+% section preceding a blank consists of all output since the last blank in the
+% current block, or since the beginning of the block if this is the first blank
+% in the block.  The section following a blank consists of all output to the
+% next blank in the current block or in a block containing the current block.
+% The entire output is considered as a block followed by a blank.
+
+% The printer buffers tokens describing output requests until it sees a blank
+% and can compute the space required to print the section beginning with the
+% first token in the buffer; then it sends tokens with known space requirements
+% from the beginning of the buffer to a print routine, which generates output
+% and keeps track of indentations.  The space required to print a string is the
+% length of the string together with all following strings up to the next
+% blank.  The space required to print "n" blanks is "n" plus the length of the
+% following strings.  The space required to print the start of a block is that
+% required to print the section in which it is contained; it is infinity if the
+% printer determines that the section cannot be printed on the current line of
+% output.
+
+% The implementation differs from Oppen's description in its use of Waters'
+% primitives.  Furthermore, it does not use a circular buffer of bounded length
+% since Oppen's bound does not hold when printing deeply nested syntactic
+% structures.
+
+% ENHANCE: Consider providing additional procedures:
+% (1) miser_blanks ("~M")
+% (2) line_prefix
+% (3) set_tab and tab ("~T" and "\t")
+
+
+printer = cluster is 
+	create_stream,		% creates a new printer, output to a "stream"
+	create_iodev,		% creates a new printer, output to an "iodev"
+	nul,			% creates a null printer, output thrown away
+	puts,			% prints a string without breaking it
+	puts_broken,		% prints a string broken at whitespace
+	filled_blanks,		% prints spaces and allows filled line breaks
+	aligned_blanks,		% prints spaces and allows aligned line breaks
+	newline,		% prints a newline
+	set_indent,		% sets the indentation for the current block
+	set_relative_indent, 	% ditto, but relative to current position
+	text,			% prints a string with embedded format controls
+	start_block,		% starts a logical block
+	finish_block,		% finishes a logical block
+	error,			% notifies "iodev" of an error
+	get_total_lines,	% returns total number of lines printed
+	end_of_output		% flushes output
+
+    rep = record[dest: kind,		% output stream, iodev, or nul
+		 indents: indent_stack,	% indentation stack
+		 left: int, 		% # characters sent since no missing
+    		 margin: int,		% width of output lines
+		 missing: int_arr,	% indexes of missing widths in buffer
+		 nesting: int,		% current depth of nesting for blocks
+    		 remaining: int,	% space left on current output line
+		 right: int,		% # characters seen since no missing
+		 tokens: token_arr,	% buffer of tokens to print
+		 total_lines: int,	% total number of lines printed
+		 widths: int_arr]	% widths required to print tokens
+
+    % "dest" is the destination for output.  "tokens" is a buffer of tokens
+    % that need to be printed.  "widths" records the space required to print
+    % these tokens.  This space is computed by looking ahead to the next blank.
+    % When a string is entered in the buffer, the printer records its width and
+    % increments the space required to print any immediately preceding strings.
+    % When a nonstring is entered in the buffer, the printer records in
+    % "widths" how many characters it has seen so far.  When the look ahead
+    % encounters a blank, it computes the latest missing width in the buffer if
+    % the corresponding token is a blank or a block finish (by computing the
+    % difference between the number of characters it has seen now and the
+    % number it saw earlier); whenever it computes the width of a block finish,
+    % it also computes the width of the corresponding block start.
+    
+    kind = oneof[iodev: iodev, nul: null, stream: stream]
+    token_arr = array[token]
+    token = oneof[blanks: blank_token,		% whitespace to print
+		  finish: null,			% end of block
+		  indent: int,			% indentation wrt block start
+		  rel_indent: int,		% indentation wrt position
+		  start: null,			% start of block
+		  text: string]			% string to print
+
+    blank_token = struct[kind: break_kind,   	% aligned or filled
+    			 len: int] 	     	% number of spaces to print
+			 
+    break_kind = oneof[aligned, filled: null]
+    aligned = break_kind$make_aligned(nil)
+    filled = break_kind$make_filled(nil)
+
+    default_line_length = 79
+    default_indent = 0
+    
+    
+    % Stack of indents for block starts.  REP INVARIANT: The stack is nonempty.
+    
+    indent_stack = stack[indent_info]
+    indent_info = record[block_col: int,	 % column where block started
+			 fits: bool,             % true if no breaks needed
+			 last_broken: bool,      % true if last section broken
+			 offset: int]		 % indentation for breaks
+    			 
+    
+    % Creates a new printer for the stream "s".
+    
+    create_stream = proc (s: stream) returns (cvt)
+	line_length: int := s.line_length - 1
+	   except when no_limit: line_length := default_line_length end
+	return(create(kind$make_stream(s), line_length))
+	end create_stream
+    
+    
+    % Creates a new printer for the iodev "io".
+    
+    create_iodev = proc (io: iodev) returns (cvt)
+	line_length: int := io.line_length - 1
+	return(create(kind$make_iodev(io), io.line_length - 1))
+	end create_iodev
+    
+    
+    % Creates a null printer for throwing away output.
+    
+    nul = proc () returns (cvt)
+	return(create(kind$make_nul(nil), 0))
+	end nul
+    
+    
+    % (Internal procedure)  Creates a new printer for "dest" with the given
+    % "line_length".
+    
+    create = proc (dest: kind, line_length: int) returns (rep)
+	n: int := kind$value_iodev(dest).total_lines
+	   except when wrong_tag: n := 0 end
+        return(rep${dest: dest,
+		    indents: indent_stack$[global_indent_info()],
+		    left: 0,
+	    	    margin: line_length,
+		    missing: int_arr$[],
+		    nesting: 0,
+	    	    remaining: line_length,
+		    right: 0,
+		    tokens: token_arr$[],
+		    total_lines: n,
+		    widths: int_arr$[]})
+	end create
+    
+
+    % (Internal procedure) Returns "indent_info" suitable for the default
+    % outer block.
+
+    global_indent_info = proc () returns (indent_info)
+	return(indent_info${offset: 0, fits: true, last_broken: false, 
+			    block_col: 0})
+	end global_indent_info
+
+    
+    % Creates a text token to print the string "s".  Increments the widths
+    % required to print all text tokens in the current section.
+
+    puts = proc (p: cvt, s: string)
+	if string$empty(s) cor kind$is_nul(p.dest) then return end
+	len: int := string$size(s)
+	adjust_text_widths(p, token_arr$high(p.tokens), len)
+	token_arr$addh(p.tokens, token$make_text(s))
+	int_arr$addh(p.widths, len)
+	p.right := p.right + len
+	end puts
+    
+    % (Internal procedure) Increments the space required to print string tokens
+    % at or immediately before "p.tokens[n]".
+
+    adjust_text_widths = proc (p: rep, n: int, len: int)
+	while true do
+	    tagcase p.tokens[n]
+	       tag text: p.widths[n] := p.widths[n] + len
+	       tag blanks: break
+	       tag indent, rel_indent, start, finish: 
+	       end
+	    n := n - 1
+	    end except when bounds: end
+        end adjust_text_widths
+
+    
+    % Creates a token that breaks the output by "len" spaces or by a newline
+    % and the indentation for the current block if either (a) the following
+    % section cannot be printed on the current line, or (b) the preceding
+    % section was not printed on a single line.
+    
+    filled_blanks = proc (p: cvt, len: int)
+	putblank(p, blank_token${len: len, kind: filled})
+	end filled_blanks
+    
+    
+    % Creates a token that breaks the output to be broken by "len" spaces or
+    % by a newline and the indentation for the current block if the containing
+    % section cannot be printed on a single line.
+    
+    aligned_blanks = proc (p: cvt, len: int)
+	putblank(p, blank_token${len: len, kind: aligned})
+	end aligned_blanks
+    
+    
+    % (Internal procedure) Processes "bt".
+    
+    putblank = proc (p: rep, bt: blank_token)
+	if kind$is_nul(p.dest) then return end
+	t: token := token$make_blanks(bt)
+	if int_arr$empty(p.missing)
+	   then p.left := 1
+		p.right := 1
+	   else compute_missing_widths(p, 0)
+	   end
+	token_arr$addh(p.tokens, t)
+	int_arr$addh(p.widths, -p.right)
+	int_arr$addh(p.missing, token_arr$high(p.tokens))
+	p.right := p.right + bt.len
+	check_margin(p)
+	end putblank
+    
+    
+    % Creates a token that forces a line break.
+    
+    newline = proc (p: cvt)
+	filled_blanks(up(p), p.margin + 1)
+	end newline
+    
+    
+    % Creates a stream of tokens by interpreting whitespace embedded in "s".
+    
+    puts_broken = proc (p: printer, s: string)
+	text(p, string_replace_char(s, '~', "~~"))
+	end puts_broken
+    
+
+    % Creates a stream of tokens by interpreting whitespace and "~" format
+    % controls embedded in "s".
+    
+    text = proc (p: printer, s: string)
+	if kind$is_nul(down(p).dest) then return end
+	while ~string$empty(s) do
+	    head, delim, tail: string := string_divide(s, " ~\n\t")
+	    puts(p, head)
+	    if delim = "" then return
+	     elseif delim = "\n" then newline(p)
+	     elseif delim = " " then
+	       n: int := string$size(tail)
+	       tail := trim_chars(tail, " ")
+	       filled_blanks(p, 1 + n - string$size(tail))
+	     elseif delim = "\t" then
+	       % FIX this
+	       filled_blanks(p, 1)
+	     elseif string$empty(tail) then exit illegal
+	     else code: char := tail[1]
+		  if code = 'E' then end_of_output(p)
+		   elseif code = '{' then start_block(p)
+		   elseif code = '}' then finish_block(p)
+		   elseif code = '~' then puts(p, "~")
+		   elseif code = ' ' then puts(p, " ")
+		   else count, letter, rest: string := 
+		   	    string_divide(tail, "AFIJ")
+			if letter = "" then exit illegal end
+			spaces: int := 0
+			if count ~= "" then spaces := int$parse(count) end
+			if letter = "A" then aligned_blanks(p, spaces)
+			 elseif letter = "F" then filled_blanks(p, spaces)
+			 elseif letter = "I" then set_indent(p, spaces)
+			 else set_relative_indent(p, spaces)
+			 end
+			s := rest
+			continue
+		   end
+	          s := string$rest(tail, 2)
+		  continue
+	     end except when illegal, bad_format, overflow, no_block:
+			     puts(p, delim)
+			end
+	    s := tail
+	    end
+	end text
+    
+    
+    % Creates a token for the start of a block.  The block will be printed on a
+    % single line if possible.  Otherwise, it will be broken by replacing
+    % blanks by newlines and appropriate indentations.
+    
+    start_block = proc (p: cvt)
+	if kind$is_nul(p.dest) then return end
+	t: token := token$make_start(nil)
+	if token_arr$empty(p.tokens) then
+	   p.left := 1
+	   p.right := 1
+	   end
+	token_arr$addh(p.tokens, t)
+	int_arr$addh(p.widths, -p.right)
+	int_arr$addh(p.missing, token_arr$high(p.tokens))
+	p.nesting := p.nesting + 1
+	end start_block
+    
+
+    % Creates a token for the end of a block.  Signals "no_block" if no block
+    % has been started.
+    
+    finish_block = proc (p: cvt) signals (no_block)
+	if kind$is_nul(p.dest) then return end
+	if p.nesting <= 0 then signal no_block end
+	p.nesting := p.nesting - 1
+	t: token := token$make_finish(nil)
+	if int_arr$empty(p.missing)
+	   then print(p, t, 0)
+	   else token_arr$addh(p.tokens, t)
+		int_arr$addh(p.widths, -1)
+		int_arr$addh(p.missing, token_arr$high(p.tokens))
+	   end
+	end finish_block
+    
+    
+    % If output is to an "iodev", notifies it that an error has occurred.
+    
+    error = proc (p: cvt)
+	iodev$error(kind$value_iodev(p.dest))
+	   except when wrong_tag: end
+	end error
+
+
+    % Returns the total number of lines printed.
+    
+    get_total_lines = proc (p: cvt) returns (int)
+	return(kind$value_iodev(p.dest).total_lines)
+	   except when wrong_tag: end
+	return(p.total_lines)
+	end get_total_lines
+
+
+    % Creates a token to set the indentation for the current block to "n" more
+    % (or less, if "n" is negative) than the column in which the block begins.
+    
+    set_indent = proc (p: cvt, n: int)
+	if kind$is_nul(p.dest) then return end
+	token_arr$addh(p.tokens, token$make_indent(n))
+	int_arr$addh(p.widths, 0)
+	end set_indent
+    
+    
+    % Creates a token to set the indentation for the current block to "n" more
+    % (or less, if "n" is negative) than the current position in the output
+    % line.
+    
+    set_relative_indent = proc (p: cvt, n: int)
+	if kind$is_nul(p.dest) then return end
+	token_arr$addh(p.tokens, token$make_rel_indent(n))
+	int_arr$addh(p.widths, 0)
+	end set_relative_indent
+    
+
+    % Flushes all output.
+
+    end_of_output = proc (p: cvt)
+        compute_missing_widths(p, int_arr$size(p.widths))
+	flush_tokens(p)
+	p.indents := indent_stack$[global_indent_info()]
+	p.left := 0
+	p.missing := int_arr$[]
+	p.nesting := 0
+	p.remaining := p.margin
+	p.right := 0
+	tagcase p.dest
+	   tag stream (str: stream): stream$flush(str)
+	   tag iodev (io: iodev):    iodev$flush(io)
+	   tag nul:
+	   end
+	end end_of_output
+
+    
+    % (Internal procedure) Flushes tokens from the front of the buffer
+    % "p.tokens" until there is enough space on the current line to print the
+    % remaining tokens.
+
+    check_margin = proc (p: rep)
+	while p.right - p.left > p.remaining do
+	    low: int := int_arr$low(p.widths)
+	    if p.widths[low] < 0 then % assign large width
+	       p.widths[low] := p.margin + 1
+	       int_arr$reml(p.missing)
+	       end
+	    flush_tokens(p)
+	    end except when bounds: end
+	end check_margin
+    
+    
+    % (Internal procedure) Flushes tokens with known widths from the front of
+    % the buffer "p.tokens".
+    
+    flush_tokens = proc (p: rep)
+	while int_arr$bottom(p.widths) >= 0 do
+	    t: token := token_arr$reml(p.tokens)
+	    width: int := int_arr$reml(p.widths)
+	    print(p, t, width)
+	    tagcase t
+	       tag blanks (b: blank_token): p.left := p.left + b.len
+	       tag text (s: string): p.left := p.left + string$size(s)
+	       others:
+	       end
+	    end
+	   except when bounds: end
+	end flush_tokens
+
+    
+    % (Internal procedure) When invoked by "putblank", computes the latest
+    % missing width in "p.widths" if it was for a blank or for a block finish.
+    % If it was for a block finish, also computes missing widths back to that
+    % for the corresponding block start.  If "k" is nonzero, computes further
+    % missing widths back to the "k"th block start.
+    
+    compute_missing_widths = proc (p: rep, k: int)
+	while true do
+	    m: int := int_arr$top(p.missing)
+	    tagcase p.tokens[m]
+	       tag start:
+		   if k = 0 then return end
+		   p.widths[m] := p.widths[m] + p.right
+		   int_arr$remh(p.missing)
+		   k := k - 1
+	       tag finish:
+		   p.widths[m] := 0
+		   int_arr$remh(p.missing)
+		   k := k + 1
+	       others:
+		   p.widths[m] := p.widths[m] + p.right
+		   int_arr$remh(p.missing)
+		   if k = 0 then return end
+	       end
+	    end except when bounds: end
+	end compute_missing_widths
+    
+    
+    % (Internal procedure) Prints the token "t".  Inserts appropriate line
+    % breaks and indentation if "len" exceeds the space remaining on the
+    % current line of output.  Maintains a stack of indentations for blocks
+    % started but not yet finished.
+
+    print = proc (p: rep, t: token, len: int)
+	col: int := p.margin - p.remaining
+	tagcase t
+	   tag start:
+	       indent_stack$push(p.indents,
+				 indent_info${offset: col,
+					      fits: len <= p.remaining,
+					      last_broken: false,
+					      block_col: col})
+	   tag finish:
+	       if indent_stack$size(p.indents) < 2 then
+		  fail("printer$%print: extra block finish")
+		  end
+	       indent_stack$pop(p.indents)
+	   tag indent (delta: int):
+	       ii: indent_info := indent_stack$top(p.indents)
+	       ii.offset := int$min(p.margin, int$max(ii.block_col + delta, 0))
+	   tag rel_indent (delta: int):
+	       ii: indent_info := indent_stack$top(p.indents)
+	       ii.offset := int$min(p.margin, int$max(col + delta, 0))
+	   tag blanks (bt: blank_token):
+	       ii: indent_info := indent_stack$top(p.indents)
+	       tagcase bt.kind
+		  tag aligned:
+		      if ii.fits
+			 then print_spaces(p, bt.len)
+			 else print_new_line(p)
+			 end
+		  tag filled:
+		      if len > p.remaining cor ii.last_broken
+			 then print_new_line(p)
+			 else print_spaces(p, bt.len)
+			 end
+		  end
+	   tag text (s: string):
+	       if len > p.remaining then % line too long
+		  indent_stack$top(p.indents).offset :=
+		      int$max(p.margin - len, 0)
+		  print_new_line(p)
+		  end
+	       p.remaining := int$max(p.remaining - string$size(s), 0)
+	       tagcase p.dest
+		  tag stream (str: stream): stream$puts(str, s)
+		  tag iodev (io: iodev):    iodev$puts(io, s)
+		  tag nul:
+		  end
+	   end
+	end print
+    
+    
+    % (Internal procedure) Prints "n" spaces on the current line if there is
+    % room for more output on that line.
+    
+    print_spaces = proc (p: rep, n: int)
+	p.remaining := p.remaining - n
+	if p.remaining <= 0 then return end
+	tagcase p.dest
+	   tag stream (str: stream): stream$putspace(str, n)
+	   tag iodev (io: iodev):    iodev$putspace(io, n)
+	   tag nul:
+	   end
+	end print_spaces
+    
+    
+    % (Internal procedure) Prints a newline and the correct indentation for the
+    % next line.  Notes that the sections preceding this break in all blocks
+    % but the current block have been broken.
+
+    print_new_line = proc (p: rep)
+	tagcase p.dest
+	   tag stream (str: stream): stream$putl(str, "")
+	   tag iodev (io: iodev):    iodev$putl(io, "")
+	   tag nul:
+	   end
+        p.total_lines := p.total_lines + 1
+	for ii: indent_info in indent_stack$elements(p.indents) do
+	    ii.last_broken := true
+	    end
+	itop: indent_info := indent_stack$top(p.indents)
+	itop.last_broken := false
+	p.remaining := p.margin
+	print_spaces(p, itop.offset)
+	end print_new_line
+
+
+    dump = proc (pr: cvt)
+	po: stream := stream$primary_output()
+	stream$putl(po, "")
+	stream$puts(po, "dest = ")
+	tagcase pr.dest
+	   tag stream: stream$putl(po, "stream")
+	   tag iodev:  stream$putl(po, "iodev")
+	   tag nul:    stream$putl(po, "nul")
+	   end
+	n: int := indent_stack$size(pr.indents) + 1
+	for ii: indent_info in indent_stack$elements(pr.indents) do
+	    n := n - 1
+	    stream$puts(po, "indents[" || int$unparse(n) || "] = ")
+	    stream$puts(po, "block_col " || int$unparse(ii.block_col) || ", ")
+	    if ~ii.fits then stream$puts(po, "~") end
+	    stream$puts(po, "fits, ")
+	    if ~ii.last_broken then stream$puts(po, "~") end
+	    stream$puts(po, "last-broken, ")
+	    stream$putl(po, "offset " || int$unparse(ii.offset))
+	    end
+	stream$putl(po, "left = " || int$unparse(pr.left))
+	stream$putl(po, "margin = " || int$unparse(pr.margin))
+	for i: int in int_arr$indexes(pr.missing) do
+	    stream$puts(po, "missing[" || int$unparse(i) || "] = ")
+	    stream$putl(po, int$unparse(pr.missing[i]))
+	    end
+	stream$putl(po, "nesting = " || int$unparse(pr.nesting))
+	stream$putl(po, "remaining = " || int$unparse(pr.remaining))
+	stream$putl(po, "right = " || int$unparse(pr.right))
+	for i: int in token_arr$indexes(pr.tokens) do
+	    stream$puts(po, "tokens[" || int$unparse(i) || "] = ")
+	    stream$puts(po, "width ")
+	    stream$puts(po, padl(int$unparse(pr.widths[i]), 3))
+	       except when bounds: stream$puts(po, "???") end
+	    stream$puts(po, ", ")
+	    tagcase pr.tokens[i]
+	       tag blanks (bt: blank_token):
+		   stream$puts(po, int$unparse(bt.len))
+		   tagcase bt.kind
+		      tag aligned: stream$puts(po, " aligned")
+		      tag filled: stream$puts(po, " filled")
+		      end
+		   stream$putl(po, " blanks")
+	       tag finish:
+		   stream$putl(po, "finish")
+	       tag indent (j: int):
+		   stream$putl(po, "indent " || int$unparse(j))
+	       tag rel_indent (j: int):
+		   stream$putl(po, "relative indent " || int$unparse(j))
+	       tag start:
+		   stream$putl(po, "start")
+	       tag text (s: string):
+		   stream$putl(po, "text `" || s || "'")
+	       end
+	    end
+	stream$putl(po, "total_lines = " || int$unparse(pr.total_lines))
+	end dump
+
+    end printer

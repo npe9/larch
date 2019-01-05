@@ -1,0 +1,12 @@
+\doc{Confluence}
+\ref{confluent}
+\ref{confluence}
+\ref{Church-Rosser}
+
+A set of rewrite rules is called \def{confluent} (or \def{Church-Rosser}) if,
+whenever a term \fq{t} can be rewritten in two ways to terms \fq{u} and \fq{v},
+there is another term \fq{w} such that \fq{u} and \fq{v} both rewrite to
+\fq{w}.  A set of rewrite rules is confluent if it is both terminating and
+\def{locally confluent}, i.e., if whenever a term \fq{t} can be rewritten two 
+ways, each in a single step, to terms \fq{u} and \fq{v}, there is another term
+\fq{w} such that \fq{u} and \fq{v} both rewrite to \fq{w} (Newman, 1942).

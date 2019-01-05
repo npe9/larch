@@ -1,0 +1,841 @@
+#extend
+
+% A "tableau" is a table of the form
+%                   >
+%          x1  ... xj ... xm    
+%        ------------------------
+%    Z  |   0       0      0    0
+%    y1 | a11     a1j    a1m   c1
+%       .
+%    >= |
+%    yi | ai1     aij    aim   ci
+%       |
+%    yn | an1     anj    anm   cn
+%  
+% where "aij" and "cj" are rational numbers and where "Z", "yi", and "xj" are
+% unknowns.  The table represents a set of "n" linear equations
+%   yi = ai1*x1 + ... + aij*xj + ... + aim*xm + ci
+% together with a set of linear inequalities
+%   yi >= 0
+%   xj > 0
+% obtained from rows and columns marked with the restrictions ">" and ">=".
+
+% The "sample point" of the tableau is the point defined by letting "xj = 0"
+% and "yi = ci".  The tableau is "feasible" if the sample point satisfies the
+% sign constraints.
+
+% The unknown "xj" is said to "own" column "j", and the unknown "yi" is said to
+% "own" row "i".  A row unknown "yi" is said to be "manifestly maximized" if
+% "aij = 0" whenever "xj" is unrestricted and "aij <= 0" whenever "xj" is
+% restricted.
+
+tableau = cluster is new, add_eq, add_col_var, del_row, get_row_var,
+                     make_pos, make_nonneg,
+		     make_pos_row, make_nonneg_row, make_nonneg_col, 
+		     make_own_row, make_own_col, owns_col, owns_row, is_pos,
+		     owner_row, owner_col,
+		     is_nonneg, equiv_to_nonneg, equiv_neg_to_nonneg,
+		     is_restricted, 
+		     is_0, kill_row, kill_column,
+		     negate_col, negate_row, possible_non_zero,
+		     find_pivot, pivot,
+		     sample, save, undo, _gcd
+		     
+    rep        = record[body: tab, u_stack: tab_stack]
+    tab        = record[col_hds, row_hds: head_arr, coeffs: rat_mat, dcol: int]
+    head_arr   = array[header]
+    header     = record[uns: unknowns, restr: restr_type]
+    restr_type = oneof[gt, ge, none: null]
+    restr_ge   = restr_type$make_ge(nil)
+    restr_gt   = restr_type$make_gt(nil)
+    no_restr   = restr_type$make_none(nil)
+
+    rat_mat    = numeric_matrix[rat]
+    tab_stack  = stack[tab]
+
+
+    % A(r): xi = r.col_hds[i].uns, xi> (>=) if r.col_hds[i].restr = restr_gt(ge)
+    %       yj = r.row_hds[j].uns, (analogical)
+    %       aij = rat_mat$coeff(r.coeffs, i, j),
+    %       ci = rat_mat$last_in_row(r.coeffs, i)
+    %       column i is dead iff i <= r.dcol
+
+    % I(r): r.dcol >= 1
+    % size(r.col_hds) + 1 = rat_mat$num_of_cols(r.coeffs)
+    % size(r.row_hds) = rat_mat$num_of_rows(r.coeffs)
+    % if r.row_hds[i].restr ~= no_restr then 
+    %           rat_mat$last_in_row (r.coeffs, i) >= 0
+
+    own zero: rat := rat$zero()
+    own big: rat := rat$big()
+    own one: rat := rat$one()
+
+    
+    % Returns a new, empty tableau.
+    
+    new = proc () returns (cvt)
+	return(rep${body: tab${row_hds: head_arr$[], col_hds: head_arr$[],
+			       coeffs: rat_mat$[], dcol: 0},
+		    u_stack: tab_stack$[]})
+	end new
+
+    
+    % Modifies: T
+    % Effects: row_constraints(T.post) => eq
+    % eq is (u = rhs). 
+    % if \E u1, s.t. row_constraints(T.post) => (u1 = rhs), signals exists(u1)
+    % If u owns the row in T.post signals with # of the row .
+    % if T.post has different columns from T.pre yields # of all new columns
+    %   in T.post
+    % Note: if several u1 exists signals with one of them.
+    
+    add_eq = iter (T: cvt, eq: lin_eq) yields (int) 
+	       signals (exists(unknown), row_num(int))
+	r: rat_arr 
+	for nc: int in eval_expr(T, eq.rhs) do yield(nc) end
+	   except when done (r1: rat_arr): r:= r1 end
+	start: int := T.body.dcol + 1
+	nr: int
+	u: unknown
+	uns: unknowns
+	lhs: unknown := eq.lhs
+	last: int := head_arr$size(T.body.col_hds) + 1
+	begin %if eq.lhs is equiv to column var
+	    index: int := is_trivial(r, start)
+	    if index = last then %eq.lhs is a number
+	       begin
+		   nr := rat_mat$has_same_row(T.body.coeffs, start, r)
+		   uns := T.body.row_hds[nr].uns
+		   u := uns.elt
+                   if unknown$is_mapped(lhs) cor unknown$is_number(lhs) then
+		      unknowns$add(uns, lhs)
+		      end
+		   end 
+		  except when no_row: signal row_num(add_row(T, lhs, r)) end
+	       else 
+		    uns := T.body.col_hds[index].uns
+		    u := uns.elt
+		    if unknown$is_mapped(lhs) then unknowns$add(uns, lhs) end
+	       end
+	    signal exists(u)
+	    end except when not_trivial: end
+	begin %if T has row, similar to r
+	    nr := rat_mat$has_same_row(T.body.coeffs, start, r)
+	    uns := T.body.row_hds[nr].uns
+	    u := uns.elt
+	    if unknown$is_mapped(lhs) cor unknown$is_number(lhs) then
+	       unknowns$add(uns, lhs) 
+	       end
+	    signal exists(u)
+	    end except when no_row: end
+	signal row_num(add_row(T, lhs, r))
+	end add_eq
+
+        
+    %internal proc
+    % Effects: if exactly one of "r[start], ..., r[rat_arr$size(r)]" is one
+    %          and the rest are zero, returns the index of that element.
+    %          Otherwise signals not_trivial
+    
+    is_trivial = proc (r: rat_arr, start: int) returns (int) 
+		   signals (not_trivial)
+	for i: int in int$from_to(start, rat_arr$size(r)) do
+	    if r[i] = zero then continue end
+	    if r[i] ~= one then signal not_trivial end
+	    for k: int in int$from_to(i + 1, rat_arr$size(r)) do
+		if r[k] ~= zero then signal not_trivial end
+		end
+	    return(i) 
+	    end
+	signal not_trivial
+	end is_trivial
+
+    
+    % (internal)
+    % Requires: the number of columns in "T" is the size of "r"
+    % Modifies: "T"
+    % Ensures: \A j from 1 to # of rows(T.pre) row(j, T.pre) = row(j, T.post);  
+    %          u owns row # (size(T.pre) + 1) in T.post and this row is 
+    %          equal to r.
+    %         Returns the # of row r in T.post
+    
+    add_row = proc (T: rep, u: unknown, r: rat_arr) returns (int)
+	h: header := header${uns: unknowns$single(u), restr: no_restr}
+	head_arr$addh(T.body.row_hds, h)
+	rat_mat$add_row(T.body.coeffs, r)
+	return(head_arr$size(T.body.row_hds))
+	end add_row
+
+    
+    % Requires: "u" does not own a row or a column in "T"
+    % Modifies: T
+    % Ensures:  "u" owns a column of all zeros in "T"
+    %           Returns the number of that column.
+    
+    add_col_var = proc (T: cvt, u: unknown) returns (int)
+	h: header := header${uns: unknowns$single(u), restr: no_restr}
+	head_arr$addh(T.body.col_hds, h)
+	rat_mat$add_0_col(T.body.coeffs)
+	return(head_arr$size(T.body.col_hds))
+	end add_col_var
+    
+    
+    % Deletes row "nr" from "T".  Signals "bad_row" if "nr" is out of bounds.
+    
+    del_row = proc (T: cvt, nr: int) signals(bad_row)
+	rat_mat$del_row(T.body.coeffs, nr) resignal bad_row
+	row_hds: head_arr := T.body.row_hds
+	row_hds[nr] := row_hds[head_arr$high(row_hds)]
+	head_arr$remh(row_hds)
+        end del_row
+    
+    
+    get_row_var = proc (T: cvt, nr: int) returns (unknown) signals (bounds)
+	return(T.body.row_hds[nr].uns.elt) resignal bounds
+	end get_row_var
+    
+    
+    % internal 
+    % Modifies: T
+    % Effects: all unknowns from exp are present in T.post;
+    %          row_vars(T.post) = row_vars(T.pre);
+    %          \A i: nr, j: nc 
+    %            if owner(j) \in col_vars(T.pre) then coeff(T.pre, i,j) =
+    %                                                 coeff(T.post,i,j)
+    %               else coeff(T.post, i,j) = 0;
+    %         signals done(r), s.t. r*column_vars(T.post) =
+    %                    exp| modulo{row_constraints(T.post)};
+    %         If columns(T.post) ~= columns(T.pre) yields numbers
+    %         of all new columns
+    
+    eval_expr = iter (T: rep, exp: prod) yields (int) signals (done(rat_arr))
+	coeffs: rat_mat := T.body.coeffs
+	m: int := head_arr$size(T.body.col_hds)
+	uns: un_arr := exp.uns
+	cfs: rat_arr := exp.cfs
+	r: rat_arr := rat_arr$fill(1, m, zero)
+	%add constant term of exp to r
+	rat_arr$addh(r, rat_arr$top(cfs))
+	for k: int in un_arr$indexes(uns) do
+	    u: unknown := uns[k]
+	    begin
+		nc: int := owns_col(up(T), u)
+		r[nc] := r[nc] + cfs[k]
+		continue
+		end except when none: end
+	    begin
+		nr: int := owns_row(up(T), u)
+		ar: rat_arr := rat_mat$get_row(coeffs, nr)
+		for i: int in rat_arr$indexes(ar) do
+		    ar[i] := ar[i] * cfs[k]
+		    r[i] := r[i] + ar[i]
+		    end
+		continue
+		end except when none: end
+	    %u is not in t
+	    yield(add_col_var(up(T), u))
+	    h: rat := rat_arr$remh(r)
+	    rat_arr$addh(r, cfs[k])
+	    rat_arr$addh(r, h)
+	    end
+	signal done(r)
+	end eval_expr
+    	
+
+    % Modifies: T
+    % Ensures:  u is positively restricted in T.post
+    % NOTE: no check is done, whether u was restricted before or not
+    
+    make_pos = proc (T: cvt, u: unknown)
+	get_header(T, u).restr := restr_gt
+	end make_pos
+    
+    
+    % Modifies: T
+    % Ensures:  u is nonnegatively restricted in T.post
+    % NOTE: no check is done, whether u was restricted before or not
+    
+    make_nonneg = proc (T: cvt, u: unknown)
+	get_header(T, u).restr := restr_ge
+	end make_nonneg
+    
+    
+    % Modifies T
+    % Effects owner(T.pre. nr) is positively restricted in T.post
+    % Signals bad_row, if nr does not specify a row in T
+    % NOTE: no check is done, whether u was restricted before or not
+    
+    make_pos_row = proc (T: cvt, nr: int) signals (bad_row)
+	T.body.row_hds[nr].restr := restr_gt
+	   except when bounds: signal bad_row end
+	end make_pos_row
+
+    
+    % Modifies T
+    % Effects owner(T, nr) is nonnegatively restricted in T.post
+    % Signals bad_row, if nr does not specify a row in T
+    % NOTE: no check is done, whether u was restricted before or not
+    
+    make_nonneg_row = proc (T: cvt, nr: int) signals (bad_row)
+	T.body.row_hds[nr].restr := restr_ge
+	   except when bounds: signal bad_row end
+	end make_nonneg_row
+
+    
+    % Modifies T
+    % Effects owner(T, nc) is nonnegatively restricted in T.post
+    % Signals bad_col, if nc does not specify a col in T
+    % NOTE: no check is done, whether u was restricted before or not
+    
+    make_nonneg_col = proc (T: cvt, nc: int) signals (bad_col)
+	T.body.col_hds[nc].restr := restr_ge
+	   except when bounds: signal bad_col end
+	end make_nonneg_col
+
+    
+    % Returns the number of the row owned by "u".  Signals "none" if "u" does
+    % not own a row.
+
+    owns_row = proc (T: cvt, u: unknown) returns (int) signals (none)
+	heads: head_arr := T.body.row_hds
+	for nr: int in head_arr$indexes(heads) do
+	    if unknowns$is_in(heads[nr].uns, u) then return(nr) end
+	    end
+	signal none
+	end owns_row
+    
+    
+    % Returns the number of the column owned by "u".  Signals "none" if "u"
+    % does not own a column.
+    
+    owns_col = proc (T: cvt, u: unknown) returns (int) signals (none)
+	heads: head_arr := T.body.col_hds
+	for nc: int in head_arr$indexes(T.body.col_hds) do
+	    if unknowns$is_in(heads[nc].uns, u) then return(nc) end
+	    end
+	signal none
+	end owns_col
+
+
+    % Returns an unknown that owns row "nr" in "T".  Signals "none" if "nr" is
+    % out of bounds.
+    
+    owner_row = proc (T: cvt, nr: int) returns (unknown) signals (none)
+	return(T.body.row_hds[nr].uns.elt) 
+	   except when bounds: signal none end
+	end owner_row
+	    
+
+    % Returns an unknown that owns column "nc" in "T".  Signals "none" if "nc"
+    % is out of bounds.
+    
+    owner_col = proc(T: cvt, nc: int) returns (unknown) signals (none)
+	return(T.body.col_hds[nc].uns.elt) 
+	   except when bounds: signal none end
+	end owner_col
+	
+
+    % Returns "true" iff "u" is restricted to be positive in "T".  Signals
+    % "none" if "u" does not occur in "T".
+    
+    is_pos = proc (T: cvt, u: unknown) returns (bool) signals (none)
+	h: header := get_header(T, u) resignal none
+	return(restr_type$is_gt(h.restr))
+	end is_pos
+
+
+    % Returns "true" iff "u" is restricted to be nonnegative in "T".  Signals
+    % "none" if "u" does not occur in "T".
+      
+    is_nonneg = proc (T: cvt, u: unknown) returns (bool) signals (none)
+	h: header := get_header(T, u) resignal none
+	return(restr_type$is_ge(h.restr))
+	end is_nonneg
+    
+
+    % Returns "true" iff "u" is restricted in "T".  Signals "none" if "u" does
+    % not occur in "T".
+      
+    is_restricted = proc (T: cvt, u: unknown) returns (bool) signals (none)
+	h: header := get_header(T, u) resignal none
+	return(~restr_type$is_none(h.restr))
+	end is_restricted
+
+
+    % Returns "true" iff there is an unknown "u1" that is restricted to be 
+    % nonnegative in "T" such that the row constraints of "T" imply "u = u1".
+    % Signals "none" if "u" is not in "T".
+    
+    equiv_to_nonneg = proc (T: cvt, u: unknown) returns (bool) signals (none)
+	row_hds: head_arr := T.body.row_hds
+	col_hds: head_arr := T.body.col_hds
+	coeffs: rat_mat := T.body.coeffs
+	start: int := T.body.dcol + 1
+	begin
+	    nc: int := owns_col(up(T), u) 
+	    if restr_type$is_ge(col_hds[nc].restr) then return(true) end
+	    for nr: int in rat_mat$col_eq_rows(coeffs, start, nc) do
+		if restr_type$is_ge(row_hds[nr].restr) then 
+		   return(true)
+		   end
+	        end
+	    return(false)
+	    end except when none: end
+	begin
+	    nr: int := owns_row(up(T), u)
+	    if restr_type$is_ge(row_hds[nr].restr) then return(true) end
+	    if col_hds[rat_mat$row_eq_col(coeffs, start, nr)].restr 
+		 =  restr_ge then
+	       return(true)
+	       end except when none: end
+	    for nr1: int in rat_mat$row_eq_rows(coeffs, start, nr) do
+		if restr_type$is_ge(row_hds[nr1].restr) then 
+		   return(true)
+		   end
+		end
+	    return(false)
+	    end resignal none
+	end equiv_to_nonneg
+
+
+    % Returns true iff \E u1 in T, s.t. u1 is nonneg restr, and 
+    % row_constraints(T) => u1 = u
+    % Signals none if u is not in T
+    
+    equiv_neg_to_nonneg = proc (T: cvt, u: unknown) returns (bool) 
+			    signals(none)
+	row_hds: head_arr := T.body.row_hds
+	col_hds: head_arr := T.body.col_hds
+	coeffs: rat_mat := T.body.coeffs
+	start: int := T.body.dcol + 1
+	begin
+	    nc: int := owns_col(up(T), u)
+	    rat_mat$negate_col(coeffs, nc)
+	    for nr: int in rat_mat$col_eq_rows(coeffs, start, nc) do
+		if restr_type$is_ge(row_hds[nr].restr) then
+		   rat_mat$negate_col(coeffs, nc)
+		   return(true)
+		   end
+	        end
+	    rat_mat$negate_col(coeffs, nc)
+	    return(false)
+	    end except when none: end
+	begin
+	    nr: int := owns_row(up(T), u)
+            rat_mat$negate_row(coeffs, nr)
+	    if col_hds[rat_mat$row_eq_col(coeffs, start, nr)].restr 
+		 =  restr_ge then
+	       rat_mat$negate_row(coeffs, nr)
+	       return(true)
+	       end except when none: end
+	    for nr1: int in rat_mat$row_eq_rows(coeffs, start, nr) do
+		if restr_type$is_ge(row_hds[nr1].restr) then 
+		   rat_mat$negate_row(coeffs, nr)
+		   return(true)
+		   end
+		end
+	    rat_mat$negate_row(coeffs, nr)
+	    return(false)
+	    end resignal none
+	end equiv_neg_to_nonneg
+       
+    
+    % Returns true iff "u" owns either a dead column or a row containing
+    % zeros in all live columns.  Signals "none" if "u" is not in "T".
+
+    % NOTE: If "T" is minimal and feasible, this procedure returns "true" iff
+    % the constraints of "T" imply "u = 0".
+    
+    is_0 = proc (T: cvt, u: unknown) returns (bool) signals (none)
+	return(owns_col(up(T), u) <= T.body.dcol)
+	   except when none: end
+        nr: int := owns_row(up(T), u) resignal none
+	return(rat_mat$is_0_row(T.body.coeffs, T.body.dcol + 1, nr))
+	end is_0
+    
+    
+    % (Internal procedure) Returns the header for "u" in "T".  Signals "none"
+    % if "u" is not in T
+    
+    get_header = proc (T: rep, u: unknown) returns (header) signals (none)
+	return(T.body.row_hds[owns_row(up(T), u)])
+	   except when none: end
+	return(T.body.col_hds[owns_col(up(T), u)])
+	   resignal none
+	end get_header
+    
+    
+    % (Internal iterator) Yields the row and column headers of "T".
+    
+    all_hds = iter (T: rep) yields (header)
+	for h: header in head_arr$elements(T.body.row_hds) do yield(h) end
+	for h: header in head_arr$elements(T.body.col_hds) do yield(h) end
+	end all_hds
+    
+        
+    % Returns pair <col, row> s.t. pivoting elt in column col with 
+    % row row is feasible, and increases the sample value of owner(nr)
+    % Signals none if no such pivot exists
+    % Signals overflow if arithmetic overflow occurs
+    
+    find_pivot = proc (T: cvt, nr: int) returns (int, int)
+		   signals (none, overflow)
+	p_col: int := find_pivot_column(T, nr) resignal none
+	p_row: int := find_pivot_row(T, nr, p_col) resignal overflow
+	return(p_col, p_row)
+	end find_pivot
+    
+    
+    % (Internal procedure)
+    % Requires: "nr" is in range
+    % Retuns nc, such that \E pivot p: <nc, x> s.t.
+    % p(T) is feasible, and sample(own(nr)) increases.
+    % Signals none if no such column exists
+    
+    find_pivot_column = proc (T: rep, nr: int) returns (int) signals (none)
+	coeffs: rat_mat := T.body.coeffs
+	for i: int in int$from_to(T.body.dcol+1, rat_mat$n_columns(coeffs)-1) do
+	    if restr_type$is_none(T.body.col_hds[i].restr) then
+	       if rat_mat$coeff(coeffs, i, nr) ~= zero then return(i) end
+	     elseif rat_mat$coeff(coeffs, i, nr) > zero then return(i)
+	     end
+	    end
+	signal none
+	end find_pivot_column
+   
+    % internal 
+    % Returns p_row, s.t. pivor <p_col, p_row> preserves feasibility,
+    % and increases the sample value of owner(nr)
+    % Signals  overflow, if arithmetic overflow occurs
+    
+    find_pivot_row = proc (T: rep, nr, p_col: int) returns (int)
+		       signals (overflow)
+	may_be_unb: bool := true
+	p_row: int
+	score: rat := big
+	a_pcol_rownum: rat := rat_mat$coeff(T.body.coeffs, p_col, nr)
+	for r_num: int in head_arr$indexes(T.body.row_hds) do
+	    h: header := T.body.row_hds[r_num]
+	    a_pcol_rnum: rat := rat_mat$coeff(T.body.coeffs, p_col, r_num)
+	    if h.restr ~= no_restr cand a_pcol_rownum * a_pcol_rnum < zero then
+	       if r_num ~= nr then
+		  may_be_unb := false
+		  c_rnum: rat := rat_mat$last_in_row(T.body.coeffs, r_num)
+		  sc: rat := (-c_rnum)/a_pcol_rnum
+		  if sc < score then
+		     score := sc
+		     p_row := r_num
+		     end
+		  end
+	       end
+	    end resignal overflow
+	if may_be_unb then p_row := nr end
+	return(p_row)
+	end find_pivot_row
+
+    
+    % Requires element of T.pre, lying in col i and row j ~= 0
+    % Modifies T
+    % Effects T.post = pivot(T.pre, i, j)
+    % NOTE constraints(T.pre) <=> constraint(T.post)
+
+    pivot = proc (T: cvt, i, j: int) signals (overflow)
+	tmp: header := T.body.row_hds[j]
+	T.body.row_hds[j] := T.body.col_hds[i]
+	T.body.col_hds[i] := tmp
+	rat_mat$pivot(T.body.coeffs, T.body.dcol + 1, i, j) 
+	   resignal overflow
+	end pivot
+
+    
+    % Returns Sample(T, nr)
+    % Signals bad_row if nr does not specify a row in T
+    
+    sample = proc (T: cvt, nr: int) returns (rat) signals (bad_row)
+	return(rat_mat$last_in_row(T.body.coeffs, nr))
+	   except when bounds: signal bad_row end
+	end sample
+    
+    
+    % Requires: T.pre is feasible.
+    %          if u owns row nr, then Sample(T, nr) <= 0
+    %          \E sequence of pivoting p, s.t. sample(p(T), nr) > 0, and
+    %          p(T) is feasible
+    % Modifies: T
+    % Effects:  u owns column nc in T.post. T.post is feasible
+    %          Returns nc
+    % Signals none if u is not in T
+    
+    make_own_col = proc (T: cvt, u: unknown) returns (int) signals (none)
+	return(owns_col(up(T), u)) except when none: end
+	return(row2column(T, owns_row(up(T), u)))
+	   resignal none
+	end make_own_col
+
+    
+    % internal
+    % Requires: T.pre is feasible., nr is a legal row in T
+    %          Sample(T, nr) <= 0
+    %          \E sequence of pivoting p, s.t. sample(p(T), nr) > 0, and
+    %          p(T) is feasible
+    % Modifies: T
+    % Effects:  owner(T.pre, nr) owns column nc in T.post. 
+    %          T.post is feasible
+    %          Returns nc
+ 
+    row2column = proc (T: rep, nr: int) returns (int)
+	while true do
+	    i: int, j: int := find_pivot(up(T), nr)
+	       except when none: fail("tableau$row2col") end
+	    if j = nr then
+	       pivot(up(T), i,j)
+	       return (i)
+	       end
+	    d: rat := rat_mat$last_in_row(T.body.coeffs,j)
+	    a: rat := rat_mat$coeff(T.body.coeffs, i, nr)
+	    b: rat := rat_mat$last_in_row(T.body.coeffs, nr)
+	    c: rat := rat_mat$coeff(T.body.coeffs, i, j)
+	    if d - (b*c)/a >= zero then
+	       %it's feasible to pivot v with col # i
+	       %note, that this is always true, if
+	       %b - (a * d)/c >= 0, & b < 0 (if pivot was the one wich 
+	       %changed sign of sample(v)
+	       pivot(up(T), i, nr)
+	       return(i)
+	       end
+	    pivot(up(T), i, j)
+	    end
+	end row2column
+     
+
+    % Modifies: T
+    % Effects:  u owns row nr in T.post.
+    %           constraints(T.post) <=> constraints(T.pre)
+    %           feasible(T.pre) & unrestricted(u, T.pre) => feasible(T.post)
+    % Returns: nr
+    % Signals: none if u is not in T
+    %          if u owns col nc and all elements of this column are 0-s,
+    %            then Signals usufficient(nc).
+    
+    make_own_row = proc (T: cvt, u: unknown) returns (int)
+		     signals (none, unsufficient(int))
+	return(owns_row(up(T), u)) 
+	   except when none: end
+	nc: int := owns_col(up(T), u)
+	   resignal none
+	return(col2row(T, nc))
+	   except when unsufficient: signal unsufficient(nc) end
+	end make_own_row
+    
+    
+    % internal procedure
+    % Requires: nc specifies a legal column in T.pre
+    % Modifies: T
+    % Effects: constraints(T.pre) <=> constraints(T.post)   
+    %          owner(T.pre, nc) owns row nr in T.post
+    % Returns: nr
+    % Signals: usufficient if all elements of column nc are 0-s.
+    %          (in this case T is not modified)
+    
+    col2row = proc (T: rep, nc: int) returns (int) signals (unsufficient)
+	i: int := 1
+	for a: rat in rat_mat$column_elements(T.body.coeffs, nc) do
+	    if a ~= zero then
+	       p_row: int := find_pivot_row(T, i, nc)
+	       pivot(up(T), nc, p_row)
+	       return(p_row)
+	       end
+	    i := i+1
+	    end
+	signal unsufficient
+	end col2row
+
+    
+    % Requires: owner(nr) is either manifastly maximized
+    %           or manifestly minimized at T, and its sample value is 0.
+    % Modifies: T
+    % Effects: If T.pre is feasible then T.post is too
+    %          all columns, s.t. the ownters are nonneg restricted,
+    %          and corresponding coefficient in nr is ~= 0 are dead 
+    %          in T.post
+    %          Yields: all pairs (ui, uj) s.t ui = uj ~\in Equates(T.pre), but
+    %          ui = uj is in Equates(T.post)
+    %          Signals impossible if \E column nc s. t. 
+    %            T(nr, nc) ~= 0, owner(nc) is 
+    %            positively restricted.
+    %          Signals bad_row if nr does not specify a row in T.pre
+     
+    kill_row = iter (T: cvt, nr: int) yields (unknown, unknown)
+		 signals (impossible, bad_row)
+	if nr < 1 cor nr > head_arr$high(T.body.row_hds) then
+	   signal bad_row 
+	   end
+	dcol: int := T.body.dcol
+	new_dcol: int := dcol
+	i: int := dcol + 1
+	for a: rat in rat_mat$row_elements(T.body.coeffs, dcol + 1, nr) do
+	    if a ~= zero then
+	       h: header := T.body.col_hds[i]
+	       if h.restr = restr_gt then signal impossible end
+	       if h.restr = restr_ge then
+		  yield(h.uns.elt, unknown$make_number(zero))
+		  swap_columns(T, new_dcol + 1, i)
+		  new_dcol := new_dcol + 1
+		  end
+	       end
+	    i := i + 1
+	    end
+	if new_dcol ~= dcol then
+	   T.body.dcol := new_dcol
+	   for u1, u2: unknown in new_pairs(T, dcol + 1) do yield(u1, u2) end
+	   end
+	end kill_row
+
+    
+    % Modifies: T
+    % Effects: If T.pre is feasible then T.post is too
+    %          column nc is dead in T.post
+    %          Yields: all pairs (ui, uj) s.t ui = uj ~\in Equates(T.pre), but
+    %          ui = uj is in Equates(T.post)
+    %          Signals impossible if owner(nc) is positively restricted.
+    %          Signals bad_col if nc does not specify a col in T.pre
+       
+    kill_column = iter (T: cvt, nc: int) yields (unknown, unknown)
+		    signals (impossible, bad_col)
+	h: header := T.body.col_hds[nc]
+	   except when bounds: signal bad_col end
+	yield(h.uns.elt, unknown$make_number(zero)) 
+	old_dcol: int := T.body.dcol
+	new_dcol: int := old_dcol +1
+	swap_columns(T, new_dcol, nc)
+	T.body.dcol := new_dcol
+	for u1, u2: unknown in new_pairs(T, old_dcol+1) do yield(u1, u2) end
+	end kill_column
+
+    
+    % internal
+    
+    % Interchanges columns "nc1" and "nc2".
+    
+    swap_columns = proc (T: rep, nc1, nc2: int) signals (bounds)
+	tmp: header := T.body.col_hds[nc1]
+	T.body.col_hds[nc1] := T.body.col_hds[nc2]
+	T.body.col_hds[nc2] := tmp
+	rat_mat$swap_columns(T.body.coeffs, nc1, nc2)
+	end swap_columns
+
+    
+    % internal
+    % Yields all pairs of unknown u1, u2, s.t.
+    %        u1 = u2 is in Equates(up(T))
+    %        u1 = u2 is not in Equates(up(T')), where T' is obtained from
+    % T by setting dcol to old_start + 1.
+    
+    new_pairs = iter (T: rep, old_start: int) yields (unknown, unknown)
+	new_start: int := T.body.dcol + 1
+	coeffs: rat_mat := T.body.coeffs
+	for nr: int, num: rat
+	      in rat_mat$num_pairs(coeffs, old_start, new_start) do
+	    yield(T.body.row_hds[nr].uns.elt, unknown$make_number(num))
+	    end
+	for i, j: int in rat_mat$row_pairs(coeffs, old_start, new_start) do
+	    yield(T.body.row_hds[i].uns.elt, T.body.row_hds[j].uns.elt)
+	    end
+	for i, j: int in rat_mat$mixed_pairs(coeffs, old_start, new_start) do
+	    yield(T.body.row_hds[i].uns.elt, T.body.col_hds[j].uns.elt)
+	    end
+	end new_pairs
+    
+    
+    % Modifies T
+    % Effects: \A j T.post[nr,j] = - T.pre[nr, j]
+    % Signals bad_row if nr does not specify a row in T
+
+    negate_row = proc (T: cvt, nr: int) signals (bad_row)
+	rat_mat$negate_row(T.body.coeffs, nr) 
+	   except when bounds: signal bad_row end
+	end negate_row
+
+    
+    % Modifies T
+    % Effects: \A j T.post[j, nc] = - T.pre[ j, nc]
+    % Signals bad_col if nc does not specify a col in T
+
+    negate_col = proc (T: cvt, nc: int) signals (bad_col)
+	rat_mat$negate_col(T.body.coeffs, nc) 
+	   except when bounds: signal bad_col end
+	end negate_col
+
+    
+    % Requires: nr specifies a row in T
+    %           owner(T, nr) is manifestly minimized or 
+    %           manifestly minimized at zero
+    % Effects: Returns true, iff \E j, s.t. owner_col(T, j) is pos restricted
+    %          and T[j, nr] ~=0.
+    % NOTE: That exactly means, that min (max) owner_col(T, j) is positive 
+    %       (negative) on S(T) (It's obviously 0 on Cl(S(T))
+    
+    possible_non_zero = proc (T: cvt, nr: int) returns (bool)
+	cols: head_arr := T.body.col_hds
+	coeffs: rat_mat := T.body.coeffs
+	for i: int in head_arr$indexes(cols) do
+	    if cols[i].restr = restr_gt 
+		 cand  rat_mat$coeff(coeffs, i, nr) ~= zero then
+	       return(true) 
+	       end
+	    end
+	return(false)
+	end possible_non_zero
+    
+    
+    save = proc (T: cvt)
+	tab_stack$push(T.u_stack, tab$copy(T.body))
+	end save
+    
+    
+    undo = proc (T: cvt) signals (empty)
+	T.body := tab_stack$pop(T.u_stack) resignal empty
+	end undo
+    
+        
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab1: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab1))
+	end _gcd
+
+    
+    unparse = proc (T: cvt) returns (string)
+	s: string := string$append(unparse_hds(T.body.col_hds), '\n')
+	s := "      " || s
+	for i: int in head_arr$indexes(T.body.row_hds) do
+	    s := s || unp_header(T.body.row_hds[i]) || " "
+		   || rat_mat$unparse_row(T.body.coeffs, i)
+	    s := string$append(s, '\n')
+	    end
+	s := s || "dcol=" || int$unparse(T.body.dcol)
+	s := string$append(s, '\n')
+	return (s)
+	end unparse
+    
+    
+    unparse_hds = proc (hds: head_arr) returns (string)
+	s: string := ""
+	for h: header in head_arr$elements(hds) do
+	    s := s || unp_header(h) || "  "
+	    end
+	return(s)
+	end unparse_hds
+    
+    
+    unp_header = proc (h: header) returns (string)
+	uns: string := unknowns$unparse(h.uns)
+	tagcase h.restr
+	    tag ge:	return(uns || " >= ")
+	    tag gt:	return(uns || " > ")
+	    tag none:	return(uns || "  ")
+	    end
+	end unp_header
+
+
+    end tableau

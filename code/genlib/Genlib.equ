@@ -1,0 +1,53 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%  Equates for genlib  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+% Arrays
+
+bool_arr 	= array[bool]
+char_arr 	= array[char]
+command_arr 	= array[command_record]
+int_arr 	= array[int]
+string_arr 	= array[string]
+
+
+% Lists
+
+bool_list	= list[bool]
+int_list	= list[int]
+
+
+% Records
+
+command_record 	= record[id, command: string]
+
+
+% Sequences
+
+bool_seq 	= sequence[bool]
+char_seq	= sequence[char]
+int_seq 	= sequence[int]
+string_seq 	= sequence[string]
+
+
+% Sets
+
+str_set		= set[string]
+
+
+% Type sets
+
+copy_type 	= {t | t has copy: proctype (t) returns (t)}
+decode_type 	= {t | t has decode: proctype (istream) returns (t)
+				       signals (end_of_file,
+						not_possible(string))}
+encode_type 	= {t | t has encode: proctype (t, istream)
+				       signals (not_possible(string))}
+equal_type   	= {t | t has equal: proctype (t, t) returns (bool)}
+gcd_type     	= {t | t has _gcd: proctype (t, gcd_tab) returns (int)}
+similar_type 	= {t | t has similar: proctype (t, t) returns (bool)}
+unparse_type 	= {t | t has unparse: proctype (t) returns (string)}
+
+
+% Default settings
+
+initial_command_prompt = "LP!: "

@@ -1,0 +1,44 @@
+\doc{The script-file setting}
+\ref{script-file-setting}
+
+The \def{script-file setting} provides a means of recording user input in a
+file.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-script-file-command} ::= \f{set script-file} \slink{../commands/execute}{file}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set script session
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{set script} command causes LP to start recording user input in a file
+named \s{file}\f{.lpscr} (unless \s{file} contains a period, in which case LP
+does not supply the suffix \fq{.lpscr}) in LP's current working
+\setlink{directory}.  Any previous contents of this log file are lost.  If LP
+was already scripting to a file, that file is closed before opening the new one
+is opened.  Scripting is ended by the \cflink{quit} or
+\dflink{../commands/unset}{unset script} command, which is not recorded in the
+script file.  
+\p
+LP annotates the script file by commenting out erroneous commands, by
+substituting the text of the executed file for an \cflink{execute} command, by
+\dlink{../commands/box}{marking} the creation of subgoals and the completion of
+proofs, and by indenting the script to reveal its proof structure.
+\p
+Script files can be replayed using the \cflink{execute} command, and they can
+be edited before being replayed.  Although a script file can be replayed
+directly using the command \fq{execute fileName.lpscr}, it is generally
+advisable to rename the script file to \fq{fileName.lp} and then replay it
+using the command \fq{execute fileName} (lest a \fq{set script} command cause
+LP to overwrite the command file being executed).
+\head{2}{See also}
+\begin{itemize}
+\item The \cflink{history} command
+\end{itemize}
+
+

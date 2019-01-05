@@ -1,0 +1,15 @@
+#extend
+
+% Processes the "quit" command by signalling "quit_lp".
+
+c_quit = proc (i: interactive) signals (quit_lp, error)
+    check_end_of_line(i.io)
+       resignal error
+    iodev$comment_out_command(i.io)
+    iodev$commit_command(i.io)
+    printer$newline(i.p)
+    printer$end_of_output(i.p)
+    signal quit_lp
+    end c_quit
+
+

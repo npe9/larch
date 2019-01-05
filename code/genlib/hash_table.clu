@@ -1,0 +1,517 @@
+#extend
+
+% A "hash-table" is a mapping from an object of type "domain" to an object of
+% type "range".  Many of its operations require a hash function "hasher" and/or
+% a procedure "equiv".  The hash function "domain$hasher" must have the
+% property that
+% 
+%      0 <= domain$hasher(d, size) <= size - 1
+% 
+% for all objects "d" of type domain, and all positive integers "size".
+% "Equiv" should return "true" iff its two arguments should be considered equal
+% for the purpose of the mapping.  In addition, "hasher" and "equiv" must be
+% related in such a way that
+% 
+%     equiv(d1, d2) implies (hasher(d1, size) = hasher(d2, size))
+% 
+% for all objects "d1" and "d2" of type domain, and all positive integers
+% "size".  It is assumed that the same "hasher" and "equiv" are passed to all
+% operations that require them, for a given "hash_table" object.
+
+hash_table = cluster [domain, range: type] is
+	new, predict, insert, image, change_image, delete, delete_all,
+	exists, any_pair, 
+	elements, size, empty, equal, similar, copy, copy1, _gcd,
+	decode, encode
+
+    % The values of the hash table are stored in the "buckets" field.  The
+    % "count" field contains the number of buckets.  (This is for efficiency;
+    % it duplicates the information provided by "buckets$size".) We store the
+    % domain and range pair <dom, ran> in the bucket that is at index
+    % "hasher(dom, r.count)", where "r" is a "rep" value.  In general, many
+    % different objects of type "domain" can get hashed to the same bucket; all
+    % such domain objects are stored in the same bucket, provided they are
+    % different from all other objects already in the bucket.  Two domain
+    % objects "d1" and "d2" are different if "equiv(d1, d2)" is "false".  The
+    % "size" field of the rep is the number of domain and range pairs in the
+    % mapping.
+
+    % When the average number of pairs in each bucket is close to one, the time
+    % complexity of the "insert", "image", "delete", and "exists" operations is
+    % almost constant (assuming "hasher" does its computation in constant
+    % time).  When the hash table becomes very full, however, the time
+    % complexity of these operations becomes linear in the number of pairs in
+    % the table.  To help avoid this inefficiency, the "insert" operation will
+    % automatically rebuild the hash table with a larger number of buckets when
+    % the number of pairs in the table becomes greater than a certain maximum,
+    % which is proportional to the number of buckets.
+
+    rep = record[buckets: buckets, count, size, max: int]
+    buckets = array[bucket]
+    bucket = array[pair]
+    pair = record[dom: domain, ran: range]
+
+    equiv_proc = proctype (domain, domain) returns (bool)
+    hash_proc = proctype (domain, int) returns (int)
+
+    hash_tab = hash_table[domain, range]
+
+    % The default assumption about the number of items to be put in the hash
+    % table, if none is specified.  Also, the number of items to create space
+    % for in the hash table when it is resized.
+    default_count = 40
+
+
+    % Returns a new, empty mapping.
+
+    new = proc () returns (cvt)
+	return(down(predict(default_count)))
+	end new
+
+
+    % Returns a new mapping, where it is predicted that at least "count" domain
+    % and range pairs will be inserted.  This may allow other operations on the
+    % returned mapping to execute somewhat faster.  Signals "nonpositive_count"
+    % if "count" is <= 0.
+
+    predict = proc (count: int) returns (cvt) signals (nonpositive_count)
+	if count <= 0 then signal nonpositive_count end
+
+	% Set up the table so that it will never get resized as long as there
+	% are never more than "count" pairs in the table.  In the literature, a
+	% popular maximum number of entries in a hash table, beyond which the
+	% hash table gets resized, is 80% (= 4/5) of the number of buckets.  We
+	% use this maximum in this implementation.  Thus, we want the number of
+	% buckets to be >= 5/4 * "count".  In addition, hash tables work well
+	% when the number of buckets is a prime number.  After multiplying
+	% "count" by 5/4, increase it to the next prime number greater than or
+	% equal to it.
+	count := next_prime((count * 5) / 4)
+
+	% The procedure "hasher" will be called in such a way that it will
+	% return a value in the range 0 to (count - 1).
+	b: buckets := buckets$predict(0, count)
+
+	for i: int in int$from_to(1, count) do
+	    buckets$addh(b, bucket$[])
+	    end
+	return(rep${buckets: b, count: count, size: 0, max: (4*count)/5})
+	end predict
+
+
+    % Inserts the pair <"d", "r"> into "m".  Signals "exists", and does not
+    % change "m", if there is already a pair <d2, r> in "m" such that "equiv(d,
+    % d2)" returns "true".
+
+    insert = proc (m: cvt, d: domain, r: range, hasher: hash_proc,
+		   equiv: equiv_proc) signals (exists)
+	b: bucket := find_bucket(m, d, hasher)
+	if exists_bucket(b, d, equiv) then signal exists end
+	bucket$addh(b, pair${dom: d, ran: r})
+	m.size := m.size + 1
+	if m.size > m.max then resize(m, hasher, equiv) end
+	end insert
+
+
+    % Returns the image of "d" under "m"; i.e., returns the range object "r" of
+    % the pair <d2, r> in "m", where "equiv(d, d2)" returns "true".  Signals
+    % "missing" if there is no such pair.
+
+    image = proc (m: cvt, d: domain, hasher: hash_proc, equiv: equiv_proc)
+	      returns (range) signals (missing)
+	for p: pair in bucket$elements(find_bucket(m, d, hasher)) do
+	    if equiv(d, p.dom) then return(p.ran) end
+	    end
+	signal missing
+	end image
+
+
+    % Finds a pair "<d2, r2>" in "m" such that "equiv(d, d2)" is "true" and
+    % changes "r2" to "r".  Inserts <"d", "r"> into "m" if there is no such
+    % pair.
+
+    change_image = proc (m: cvt, d: domain, r: range, hasher: hash_proc,
+			 equiv: equiv_proc)
+	b: bucket := find_bucket(m, d, hasher)
+	for p: pair in bucket$elements(b) do
+	    if equiv(d, p.dom) then 
+	       p.ran := r
+	       return
+	       end
+	    end
+	bucket$addh(b, pair${dom: d, ran: r})
+	m.size := m.size + 1
+	if m.size > m.max then resize(m, hasher, equiv) end
+	end change_image
+
+
+    % Deletes the pair <d2, r> from "m" and returns "r", where "equiv(d, d2)"
+    % returns "true".  Signals "missing", and does not change "m", if there is
+    % no such pair.
+
+    delete = proc (m: cvt, d: domain, hasher: hash_proc, equiv: equiv_proc)
+	       returns (range) signals (missing)
+	b: bucket := find_bucket(m, d, hasher)
+	for i: int in bucket$indexes(b) do
+	    p: pair := b[i]
+	    if equiv(d, p.dom)
+	       then m.size := m.size - 1
+		    for j: int in int$from_to(i, bucket$high(b)) do
+			b[j] := b[j + 1]
+			end
+		       except when bounds: end
+		    bucket$remh(b)
+		    return(p.ran)
+	       end
+	    end
+	signal missing
+	end delete
+
+
+    % Deletes all elements from m
+
+    delete_all = proc (m: cvt)
+	m.size := 0
+	for i: int in buckets$indexes(m.buckets) do
+	    m.buckets[i] := bucket$[]		% array$trim does not enable gc
+	    end
+	end delete_all
+
+
+    % Returns "true" iff there exists a pair <d2, r> in "m" such that "equiv(d,
+    % d2)" returns "true".
+
+    exists = proc (m: cvt, d: domain, hasher: hash_proc, equiv: equiv_proc)
+	       returns (bool)
+	return(exists_bucket(find_bucket(m, d, hasher), d, equiv))
+	end exists
+
+
+    % Returns one of the domain and range pairs in "m".  Signals "empty" if
+    % there are no pairs in "m".
+
+    any_pair = proc (m: cvt) returns (domain, range) signals (empty)
+	if m.size = 0 then signal empty end
+	for b: bucket in buckets$elements(m.buckets) do
+	    p: pair := bucket$bottom(b)
+	       except when bounds: continue end
+	    return(p.dom, p.ran)
+	    end
+	end any_pair
+
+
+    % Yields each of the domain and range pairs in "m".  Elements are yielded
+    % in the same order each time this operation is invoked on a given mapping,
+    % provided the mapping does not change between invocations.  Note: The time
+    % complexity of yielding all such pairs is somewhat greater than linear in
+    % the number of pairs in "m".
+
+    elements = iter (m: cvt) yields (domain, range)
+
+	% Specifically,  the time complexity to yield all pairs is proportional
+	% to the quantity (m.count + m.size).
+
+	for b: bucket in buckets$elements(m.buckets) do
+	    for p: pair in bucket$elements(b) do
+		yield(p.dom, p.ran)
+		end
+	    end
+	end elements
+
+
+    % Returns the number of domain and range pairs in "m".
+
+    size = proc (m: cvt) returns (int)
+	return(m.size)
+	end size
+
+
+    % Returns "true" iff there are no domain and range pairs in "m".
+
+    empty = proc (m: cvt) returns (bool)
+	return(m.size = 0)
+	end empty
+
+
+    % Returns "true" iff "m1" and "m2" are the same object.
+
+    equal = proc (m1, m2: cvt) returns (bool)
+	return(m1 = m2)
+	end equal
+
+
+    % Returns "true" iff "m1" and "m2" contain the same number of pairs, and
+    % every pair <d1, r1> of "m1" can be matched with a pair <d2, r2> of "m2",
+    % such that "equiv(d1, d2)" and "range$similar(r1, r2)" both return "true".
+
+    similar = proc (m1, m2: hash_tab, hasher: hash_proc, equiv: equiv_proc)
+		returns (bool)
+		where range in similar_type
+	if hash_tab$size(m1) ~= hash_tab$size(m2) then return(false) end
+	for d: domain, r: range in elements(m1) do
+	    if ~range$similar(hash_tab$image(m2, d, hasher, equiv), r)
+	       then return(false)
+	       end
+	       except when missing: return(false) end
+	    end
+	return(true)
+	end similar
+
+
+    % Returns a new mapping containing a copy of each of the domain, range
+    % pairs in "m".
+
+    copy = proc	(m: hash_tab, hasher: hash_proc, equiv: equiv_proc)
+	     returns (hash_tab)
+		where range in copy_type, domain in copy_type
+	new_m: hash_tab := hash_tab$predict(hash_tab$size(m))
+	   except when nonpositive_count: new_m := hash_tab$[] end
+	for d: domain, r: range in hash_tab$elements(m) do
+	    hash_tab$insert
+		(new_m, domain$copy(d), range$copy(r), hasher, equiv)
+	    end
+	return(new_m)
+	end copy
+
+
+    % Returns a new mapping containing the same domain, range pairs as in "m".
+
+    copy1 = proc (m: cvt) returns (cvt)
+	cp: buckets := buckets$predict(0, buckets$size(m.buckets))
+	for b: bucket in buckets$elements(m.buckets) do
+	    b := bucket$copy1(b)
+	    buckets$addh(cp, b)
+	    for i: int in bucket$indexes(b) do
+	        b[i] := pair$copy1(b[i])
+		end
+	    end
+	return(rep${buckets: cp, count: m.count, size: m.size, max: m.max})
+	end copy1
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where domain in gcd_type, range in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    % The following do not preserve sharing
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where domain has decode: proctype(istream) returns (domain)
+    	 	                 signals (end_of_file, not_possible(string)),
+	      range has decode: proctype(istream) returns (range)
+    	 	                signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where domain has encode: proctype(domain, istream)
+			         signals(not_possible(string)),
+	      range has encode: proctype(range, istream)
+			        signals(not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    % (Internal procedure.)  Returns the bucket to which "d" gets hashed in
+    % "m".
+
+    find_bucket = proc (m: rep, d: domain, hasher: hash_proc) returns (bucket)
+	return(m.buckets[hasher(d, m.count)])
+	   except when bounds: signal failure ("`hasher' returns bad value")
+		  end
+	end find_bucket
+
+
+    % (Internal procedure.)  Returns "true" iff there is a domain and range
+    % pair <d2, r> in "b" such that "equiv(d, d2)" returns "true".
+
+    exists_bucket = proc (b: bucket, d: domain, equiv: equiv_proc)
+		      returns (bool)
+	for p: pair in bucket$elements(b) do
+	    if equiv(d, p.dom) then return(true) end
+	    end
+	return(false)
+	end exists_bucket
+
+
+    % (Internal procedure.)  Resizes "m" so that it has more buckets, and
+    % rehashes the domain and range pairs of "m" into those new buckets.
+
+    resize = proc (m: rep, hasher: hash_proc, equiv: equiv_proc)
+	resized: hash_tab := predict(m.size + default_count)
+	for d: domain, r: range in elements(up(m)) do
+	    insert(resized, d, r, hasher, equiv)
+	    end
+	rep$r_gets_r(m, down(resized))
+	end resize
+
+
+    % (Internal procedure.)  Returns the smallest prime number that is greater
+    % than or equal to "i".  If checking for primality causes integer overflow,
+    % a very large odd number is returned, which may or may not be prime.
+
+    next_prime = proc (i: int) returns (int)
+	ai = array[int]
+
+	% The currently known odd primes.
+	own known: ai := ai$[3, 5, 7, 11, 13, 17, 19, 23, 29]
+
+	next: int := ai$top(known)
+	if i > next
+	   then
+		% The largest prime in "known" is less than "i".  Continue
+		% adding consecutive primes to "known" until one is found that
+		% is greater than or equal to "i".
+		while true do
+
+		    % If we have reached this point, "next" is odd.  There is
+		    % no need to check even numbers for primality, so try the
+		    % next odd number.
+		    next := next + 2
+
+		    for prime: int in ai$elements(known) do
+			if (prime * prime) > next
+			   then 
+				% No prime numbers up to the square root of
+				% "next" evenly divide "next", so "next" is
+				% prime.
+				ai$addh(known, next)
+				if next >= i then return(next) end
+				% Corrected 12/19/86 by adding next line
+				break
+
+				% If "next" is evenly divisible by a "prime",
+				% "next" is not prime.
+			 elseif (next // prime) = 0 then break
+			 end
+			   except when overflow: return(next) end
+			end
+		    end
+
+		% The prime "2" is not in "known", so do a special case check.
+	 elseif i <= 2 then return(2)
+	 else
+	      % We know that 2 < "i" < ai$top(known).  Find the smallest prime
+	      % in "known" that is greater than or equal to "i".
+	      for prime: int in ai$elements(known) do
+		  if prime >= i then return(prime) end
+		  end
+
+	 end
+	end next_prime
+
+
+    end hash_table
+
+
+
+% "Str_hash_table" hashes from a domain type of "string" to an arbitrary range
+% type "range".  Uses the CLU library "hash" function for strings, and uses
+% "string$equal" as the equivalance relation.  All the operations are as in
+% "hash_table", except that the hash and equivalence functions do not have to
+% be supplied as arguments.
+
+str_hash_table = cluster [range: type] is
+	new, predict, insert, image, change_image, delete, exists, any_pair, 
+	elements, size, empty, equal, similar, copy, copy1, _gcd,
+	decode, encode
+
+    rep = hash_table[string, range]
+
+    new = proc () returns (cvt)
+	return(rep$new())
+	end new
+
+    predict = proc (count: int) returns (cvt) signals (nonpositive_count)
+	return(rep$predict(count))
+	end predict
+
+    insert = proc (m: cvt, s: string, r: range) signals (exists)
+	rep$insert(m, s, r, hash, string$equal)
+	   resignal exists
+	end insert
+
+    image = proc (m: cvt, s: string) returns (range) signals (missing)
+	return(rep$image(m, s, hash, string$equal))
+	   resignal missing
+	end image
+
+    change_image = proc (m: cvt, s: string, r: range)
+	rep$change_image(m, s, r, hash, string$equal)
+	end change_image
+
+    delete = proc (m: cvt, s: string) returns (range) signals (missing)
+	return(rep$delete(m, s, hash, string$equal))
+	   resignal missing
+	end delete
+
+    exists = proc (m: cvt, s: string) returns (bool)
+	return(rep$exists(m, s, hash, string$equal))
+	end exists
+
+    any_pair = proc (m: cvt) returns (string, range) signals (empty)
+	s: string, r: range := rep$any_pair(m)
+	   resignal empty
+	return(s, r)
+	end any_pair
+
+    elements = iter (m: cvt) yields (string, range)
+	for s: string, r: range in rep$elements(m) do
+	    yield(s, r)
+	    end
+	end elements
+
+    size = proc (m: cvt) returns (int)
+	return(rep$size(m))
+	end size
+
+    empty = proc (m: cvt) returns (bool)
+	return(rep$empty(m))
+	end empty
+
+    equal = proc (m1, m2: cvt) returns (bool)
+	return(rep$equal(m1, m2))
+	end equal
+
+    similar = proc (m1, m2: cvt) returns (bool)
+		where range in similar_type
+	return(rep$similar(m1, m2, hash, string$equal))
+	end similar
+
+    copy = proc	(m: cvt) returns (cvt)
+		where range in copy_type
+	return(rep$copy(m, hash, string$equal))
+	end copy
+
+    copy1 = proc (m: cvt) returns (cvt)
+	return(rep$copy1(m))
+	end copy1
+
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where range in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    % The following do not preserve sharing
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where range has decode: proctype(istream) returns (range)
+    	 	                signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where range has encode: proctype(range, istream)
+			        signals(not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    end str_hash_table

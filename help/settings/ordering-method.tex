@@ -1,0 +1,39 @@
+\doc{The ordering-method setting}
+\ref{ordering-method-setting}
+
+The \def{ordering-method setting} specifies the method used to orient formulas
+into rewrite rules.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-ordering-method-command} ::= \f{set ordering-method} \s{ordering}
+\sd{ordering}                    ::= \s{registered-ordering} 
+                                     | \f{either-way} | \f{left-to-right} 
+                                     | \f{manual} | \f{polynomial} [ \slink{../symbols/symbols}{number} ]
+\sd{registered-ordering}         ::= \f{dsmpos} | \f{noeq-dsmpos} 
+\end{verbatim}
+
+Note: The \s{ordering} can be \dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+set ordering dsmpos
+set ordering polynomial 2
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{set ordering-method} command sets the method used to orient formulas
+into rewrite rules in the current proof context.  The methods based on the
+\dlink{../ordering/registered}{registered} and
+\dlink{../ordering/polynomial}{polynomial} orderings attempt to guarantee that
+the resulting set of rewrite rules is terminating.  The other
+\dlink{../ordering/brute-force}{brute-force} orderings give users more control
+over the direction in which equations are oriented into rewrite rules, but they
+do not guarantee termination.  The registered orderings are the easiest to use.
+The default ordering method is \fq{noeq-dsmpos}.
+\p
+When a set of rewrite rules is known to terminate (because of the ordering used
+to orient them), but the new ordering does not establish termination, LP issues
+a warning that the termination proof will be lost when the next rewrite rule is
+added to the system.

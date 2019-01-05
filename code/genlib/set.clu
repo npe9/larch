@@ -1,0 +1,338 @@
+#extend
+
+% A "set" is a collection "{e1, ..., en}" of distinct elements of type "t".  
+% When "sim" is true, two elements are regarded as distinct if they are not 
+% "t$similar"; when "sim" is false, two elements are regarded as distinct if
+% they are not "t$equal".
+
+set = cluster [t: type] is
+	new, predict, cons, insert, insert_unique, delete, delete_all, empty, 
+	exists, any_element, is_subset, merge, merge_disjoint, intersect, 
+	intersection, add, sub, elements, s2arr, arr2s, s2seq, seq2s, size, 
+	unparse, equal, similar, copy1, copy, _gcd, decode, encode
+	    where t in equal_type %, t in similar_type
+
+    rep = array[t]
+
+    % Abstraction function
+    %     A(r) = {r[i]: rep$low(r) <= i <= rep$high(r)}
+
+    % Representation invariant
+    %     r[i] ~= r[j] when rep$low(r) <= i < j <= rep$high(r)
+
+    t_arr = array[t]
+    t_seq = sequence[t]
+    t_set = set[t]
+
+    tt2bool_proc = proctype(t, t) returns (bool)
+
+%    own same: tt2bool_proc := init_same()
+
+%    init_same = proc () returns (tt2bool_proc)
+%	if sim then return(t$similar) else return(t$equal) end
+%	end init_same
+
+
+    % Returns a new, empty set.
+
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+
+    
+    % Creates and returns a new, empty set, where it is predicted that at
+    % least "num" elements will be inserted.  This may allow operations that
+    % add elements to the returned set to execute somewhat faster.  Signals
+    % "negative_size" if "num" is < 0.
+
+    predict = proc (num: int) returns (cvt) signals (negative_size)
+	if num < 0 then signal negative_size end
+	return(rep$predict(1, num))
+	end predict
+
+
+    % Returns a new set consisting of the elements in "elems".  Signals
+    % "duplicate" if any two of the elements in "elems" are "t$equal" or
+    % "t$similar", depending on the value of "sim".  This operation is provided
+    % so that a sequence-like constructor can be used to build a set.  This
+    % facility is provided by the "#extend" mode of the CLU compiler.
+
+    cons = proc (elems: t_seq) returns (t_set) signals (duplicate)
+	s: t_set := predict(t_seq$size(elems))
+	for elem: t in t_seq$elements(elems) do insert(s, elem) end
+	       except when exists: signal duplicate end
+	return(s)
+	end cons
+
+
+    % Inserts "e" into "s".  Signals "exists" if "e" is already in "s".
+
+    insert = proc (s: cvt, e: t) signals (exists)
+	if exists(up(s), e) then signal exists end
+	rep$addh(s, e)
+	end insert
+
+
+    % Inserts "e" into "s", assuming that "e" is not already in "s".  The
+    % results of further operations on "s" are not defined if "e" is in "s"
+    % prior to invoking this operation.
+
+    insert_unique = proc (s: cvt, e: t)
+	rep$addh(s, e)
+	end insert_unique
+
+
+    % Deletes "e" from "s".  Signals "missing", and leaves "s" unchanged, if
+    % "e" is not in "s" to start with.
+
+    delete = proc (s: cvt, e: t) signals (missing)
+        for i: int in rep$indexes(s) do
+	  % if same(e, s[i]) then
+          if e = s[i] then
+             delete_at_arr[t](s, i)
+             return
+             end
+          end
+	signal missing
+	end delete
+
+
+    % Deletes all elements "e" in "s" such that "cond(elem, e)" returns "true",
+    % Returns a sequence containing those deleted elements.
+
+    delete_all = proc (s: cvt, elem: t, cond: tt2bool_proc) returns (t_seq)
+	deleted: t_arr := t_arr$[]
+	keep: int := rep$low(s) - 1
+	for i: int in rep$indexes(s) do
+	    if cond(elem, s[i])
+	       then t_arr$addh(deleted, s[i])
+	       else keep := keep + 1
+		    if keep < i then s[keep] := s[i] end
+	       end
+	    end
+	rep$trim(s, 1, keep)
+	return(t_seq$a2s(deleted))
+	end delete_all
+
+
+    % Returns "true" iff "s" is empty.
+
+    empty = proc (s: cvt) returns (bool)
+	return(rep$size(s) = 0)
+	end empty
+
+
+    % Returns "true" iff "e" is in "s".
+
+    exists = proc (s: cvt, e: t) returns (bool)
+        for i: int in rep$indexes(s) do
+          % if same(e, s[i]) then return(true) end
+          if e = s[i] then
+	      return(true)
+	      end
+          end
+	return(false)
+	end exists
+
+
+    % Returns some element of "s".  Signals "empty" if "s" is empty.
+
+    any_element = proc (s: cvt) returns (t) signals (empty)
+	return(rep$bottom(s))
+	   except when bounds: signal empty end
+	end any_element
+
+
+    % Returns "true" iff "s1" is a subset of "s2".
+
+    is_subset = proc (s1, s2: t_set) returns (bool)
+        if size(s1) > size(s2) then return(false) end
+	for e: t in elements(s1) do
+	    if ~exists(s2, e) then return(false) end
+	    end
+	return(true)
+	end is_subset
+
+
+    % Inserts, into "s1", all the elements of "s2", and leaves "s2" unchanged.
+
+    merge = proc (s1, s2: t_set)
+	for e: t in elements(s2) do
+	    insert(s1, e)
+	       except when exists: end
+	    end
+	end merge
+
+
+    % Inserts, into "s1", all the elements of "s2", and leaves "s2" unchanged.
+    % ASSUMES: "s1" and "s2" are disjoint.
+    
+    merge_disjoint = proc (s1, s2: t_set)
+	for e: t in elements(s2) do
+	    insert_unique(s1, e)
+	    end
+	end merge_disjoint
+
+
+    % Returns "true" iff "s1" and "s2" share common elements.
+
+    intersect = proc (s1, s2: t_set) returns (bool)
+	for e: t in elements(s1) do
+	    if exists(s2, e) then return(true) end
+	    end
+	return(false)
+	end intersect
+
+
+    % Returns a new set consisting of the intersection of "s1" and "s2".
+
+    intersection = proc (s1, s2: t_set) returns (t_set)
+	s: t_set := new()
+	for e: t in elements(s1) do
+	    if exists(s2, e) then insert_unique(s, e) end
+	    end
+	return(s)
+	end intersection
+
+
+    % Returns a new set that is the union of "s1" and "s2".
+
+    add = proc (s1, s2: t_set) returns (t_set)
+	if rep$size(down(s1)) < rep$size(down(s2)) then s1, s2 := s2, s1 end
+	s: t_set := copy1(s1)		% Copy the larger set
+	for e: t in elements(s2) do	% Add new elements from smaller set
+	    if ~exists(s1, e) then insert_unique(s, e) end
+	    end
+	return(s)
+	end add
+
+
+    % Returns a new set containing all elements of "s1" that are not in "s2".
+
+    sub = proc (s1, s2: t_set) returns (t_set)
+	s: t_set := new()
+	for e: t in elements(s1) do
+	    if ~exists(s2, e) then insert_unique(s, e) end
+	    end
+	return(s)
+	end sub
+
+
+    % Yields each of the elements of "s".  This iterator yields elements in the
+    % same order each time it is invoked, provided that "s" does not change
+    % between invocations.
+
+    elements = iter (s: cvt) yields (t)
+	for e: t in rep$elements(s) do yield(e) end
+	end elements
+
+
+    % Returns an array consisting of all the elements in "s".
+
+    s2arr = proc (s: cvt) returns (t_arr)
+	return(rep$copy1(s))
+	end s2arr
+
+
+    % Returns a set consisting of the elements in "elems".
+    
+    arr2s = proc (elems: t_arr) returns (t_set) signals (duplicate)
+	return(cons(t_seq$a2s(elems)))
+	   resignal duplicate
+	end arr2s
+    
+
+    % Returns a sequence consisting of all the elements in "s".
+
+    s2seq = proc (s: cvt) returns (t_seq)
+	return(t_seq$a2s(s))
+	end s2seq
+
+
+    % This operation is the same as the "cons" operation; it is provided for
+    % duality with the "s2seq" operation.
+
+    seq2s = proc (elems: t_seq) returns (t_set) signals (duplicate)
+	return(cons(elems))
+	   resignal duplicate
+	end seq2s
+
+
+    % Returns the number of elements in "s".
+
+    size = proc (s: cvt) returns (int)
+	return(rep$size(s))
+	end size
+
+
+    %  Returns a string representation of "s".
+    
+    unparse = proc (s: cvt) returns (string)
+	where t in unparse_type
+	str: string := ""
+	for e: t in rep$elements(s) do
+	    if ~string$empty(str) then str := str || "\n" end
+	    str := str || t$unparse(e)
+	    end
+	return(str)
+	end unparse
+    
+
+    % Returns "true" iff "s1" and "s2" are the same object.
+
+    equal = proc (s1, s2: cvt) returns (bool)
+	return(s1 = s2)
+	end equal
+
+
+    % Returns "true" iff "s1" and "s2" contain similar elements.
+
+    similar = proc (s1, s2: cvt) returns (bool)
+		where t in similar_type
+	return(same_elements_arr[t](s1, s2, t$similar))
+	end similar
+
+
+    % Returns a new set containing the same element objects as "s".  The
+    % "elements" operation, applied to the returned set, will yield elements in
+    % the same order as when applied to "s".
+
+    copy1 = proc (s: cvt) returns (cvt)
+	return(rep$copy1(s))
+	end copy1
+
+
+    % Returns a new set containing a copy of each of the elements of "s".  The
+    % "elements" operation, applied to the returned set, will yield the
+    % corresponding elements in the same order as when applied to "s".
+
+    copy = proc (s: cvt) returns (cvt)
+		where t in copy_type
+	return(rep$copy(s))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where t in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    % The following do not preserve sharing
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where t has decode: proctype(istream) returns (t)
+    		            signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where t has encode: proctype(t, istream) signals(not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+	
+
+    end set

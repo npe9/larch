@@ -1,0 +1,777 @@
+#extend
+
+% This file containes the clusters "directed_graph" and "valued_di_graph".
+
+% A "directed_graph" is a set of objects of type "node", together with a set of
+% directed edges between those nodes.  It is required that node have both
+% "equal" and "similar" operations.
+
+directed_graph = cluster [node: type] is
+	new, cons, insert_node, insert_edge, delete_node, delete_edge,
+	is_node, is_edge, get_num_nodes, get_num_edges,
+	transitive_close, sub, add, is_subgraph, intersect,
+	predecessors, successors, nodes, edges, maximal_nodes,
+	equal, similar, copy, copy1, _gcd
+	    where node in equal_type, node in similar_type
+
+    % The rep maps a node to its "arcs", which are its sets of predecessors and
+    % successors in the directed_graph.
+
+    rep = mapping[node, arcs]
+    arcs = struct[pred, succ: node_set]
+    node_set = set[node, false]
+
+    graph = directed_graph[node]
+
+
+    % Returns a new directed_graph with no nodes or edges.
+
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+
+
+    % Returns a new directed_graph with the edges in "es".
+
+    cons = proc (es: edge_seq) returns (graph)
+	edge_seq = sequence[edge]
+	edge = struct[from, to: node]
+	g: graph := new()
+	for e: edge in edge_seq$elements(es) do
+	    insert_edge(g, e.from, e.to)
+	    end
+	return(g)
+	end cons
+
+
+    % Adds an unconnected node "n" to "g".  If "n" is already in "g", signals
+    % "exists".
+
+    insert_node = proc (g: cvt, n: node) signals (exists)
+	rep$insert(g, n, arcs${pred: node_set$[], succ: node_set$[]})
+	   resignal exists
+	end insert_node
+
+
+    % Adds an unconnected node "n" to "g".  Requires that "n" is not in "g".
+
+    insert_node_unique = proc (g: cvt, n: node)
+	rep$insert_unique(g, n, arcs${pred: node_set$[], succ: node_set$[]})
+	end insert_node_unique
+
+
+    % Adds an edge from "from" to "to" in "g".  Does nothing if this is already
+    % an edge in "g".  Adds either or both of "from" and "to" to "g" if they
+    % are not already nodes in "g".
+
+    insert_edge = proc (g: cvt, from, to: node)
+
+	% Add "to" to the successors of "from".
+	a: arcs := rep$image(g, from)
+	   except when missing:
+		       a := arcs${pred: node_set$[], succ: node_set$[]}
+		       rep$insert_unique(g, from, a)
+		  end
+	node_set$insert(a.succ, to)
+	   % Since edges are always recorded among both the successors of the
+	   % source node and the predecessors of the target node, we already
+	   % know that "from" is recorded as a predecessor to "to" if we find
+	   % that "to" is a successor of "from".
+	   except when exists: return end
+
+	% Add "from" to the predecessors of "to".  No need to catch the
+	% "exists" signal from "node_set$insert", since we know the edge was
+	% not recorded in "from", so it won't be recorded in "to".
+	a := rep$image(g, to)
+	   except when missing:
+		       a := arcs${pred: node_set$[], succ: node_set$[]}
+		       rep$insert_unique(g, to, a)
+		  end
+	node_set$insert_unique(a.pred, from)
+	end insert_edge
+
+    insert_edge_unique = proc (g: cvt, from: node, to: node)
+
+	% Add "to" to the successors of "from".
+	a: arcs := rep$image(g, from)
+	   except when missing:
+		       a := arcs${pred: node_set$[], succ: node_set$[]}
+		       rep$insert_unique(g, from, a)
+		  end
+	node_set$insert_unique(a.succ, to)
+
+	a := rep$image(g, to)
+	   except when missing:
+		       a := arcs${pred: node_set$[], succ: node_set$[]}
+		       rep$insert_unique(g, to, a)
+		  end
+	node_set$insert_unique(a.pred, from)
+	end insert_edge_unique
+
+
+    % Deletes the node "n" from "g".  Signals "missing" if "n" is not in "g".
+
+    delete_node = proc (g: cvt, n: node) signals (missing)
+	a: arcs := rep$delete(g, n)
+	   resignal missing
+
+	% Remove the edges coming into "n".
+	for pred: node in node_set$elements(a.pred) do
+	    node_set$delete(rep$image(g, pred).succ, n)
+	       except when missing: end
+	    end
+
+	% Remove the edges leaving "n".
+	for succ: node in node_set$elements(a.succ) do
+	    node_set$delete(rep$image(g, succ).pred, n)
+	       except when missing: end
+	    end
+	end delete_node
+
+
+    % Deletes the edge from "from" to "to" in "g".  Signals "missing" if there
+    % is no such edge in "g".
+
+    delete_edge = proc (g: cvt, from, to: node) signals (missing)
+
+	% The "missing" signal can originate from "rep$image", if "from" is not
+	% a node in "g", or from "node_set$delete", if this is not an edge in
+	% "g".
+	node_set$delete(rep$image(g, from).succ, to)
+	   resignal missing
+
+	% No need to catch the "missing" signal from "rep$image" or
+	% "node_set$delete", since we know that "to" is a node in "g" and that
+	% "from" is a predecessor of "to", because we established above that
+	% "to" was among the successors of "from".
+	node_set$delete(rep$image(g, to).pred, from)
+	end delete_edge
+
+
+    % Returns "true" iff "n" is a node in "g".
+
+    is_node = proc (g: cvt, n: node) returns (bool)
+	return(rep$exists(g, n))
+	end is_node
+
+
+    % Returns "true" iff there is an edge in "g" from "from" to "to".
+
+    is_edge = proc (g: cvt, from, to: node) returns (bool)
+	return(node_set$exists(rep$image(g, from).succ, to))
+	   except when missing: return(false) end
+	end is_edge
+
+
+    % Returns the number of nodes in "g".
+
+    get_num_nodes = proc (g: cvt) returns (int)
+	return(rep$size(g))
+	end get_num_nodes
+
+
+    % Returns the number of edges in "g".
+
+    get_num_edges = proc (g: cvt) returns (int)
+	n_edges: int := 0
+	for n: node, a: arcs in rep$elements(g) do
+	    n_edges := n_edges + node_set$size(a.succ)
+	    end
+	return(n_edges)
+	end get_num_edges
+
+
+    % Modifies "g" so that it is transitively closed: if both "<n1, n2>" and
+    % "<n2, n3>" are edges in "g", then "<n1, n3>" is also an edge.  Uses an
+    % algorithm from "The Design and Analysis of Computer Algorithms," by Aho,
+    % Hopcroft, and Ullman, pages 198-9.
+
+    transitive_close = proc (g: graph)
+	node_arr = array[node]
+
+	na: node_arr := node_arr$[]
+	for n: node in nodes(g) do
+	    node_arr$addh(na, n)
+	    end
+	for k: int in node_arr$indexes(na) do
+	    for i: int in node_arr$indexes(na) do
+		for j: int in node_arr$indexes(na) do
+		    if is_edge(g, na[i], na[j]) then continue end
+		    if is_edge(g, na[i], na[k]) cand is_edge(g, na[k], na[j])
+		       then insert_edge(g, na[i], na[j])
+		       end
+		    end
+		end
+	    end
+	end transitive_close
+
+
+    % Returns a graph containing the edges that are in "g1" but not in "g2".
+
+    sub = proc (g1, g2: graph) returns (graph)
+	g: graph := graph$[]
+	for n1, n2: node in edges(g1) do
+	    if ~is_edge(g2, n1, n2) then insert_edge(g, n1, n2) end
+	    end
+	return(g)
+	end sub
+
+
+    % Returns a graph containing the edges that are either in "g1" or in "g2".
+
+    add = proc (g1, g2: graph) returns (graph)
+	g: graph := graph$copy1(g1)
+	for n1, n2: node in edges(g2) do insert_edge(g, n1, n2) end
+	return(g)
+	end add
+
+
+    % Returns "true" iff every edge in "g1" is also in "g2".
+
+    is_subgraph = proc (g1, g2: graph) returns (bool)
+	for n1, n2: node in edges(g1) do
+	    if ~is_edge(g2, n1, n2) then return(false) end
+	    end
+	return(true)
+	end is_subgraph
+
+
+    % Returns "true" iff there is some edge in "g1" that is also in "g2".  Is
+    % more efficient if "g1" is the smaller of the two.
+
+    intersect = proc (g1, g2: graph) returns (bool)
+	for n1, n2: node in edges(g1) do
+	    if is_edge(g2, n1, n2) then return(true) end
+	    end
+	return(false)
+	end intersect
+
+
+    % Returns a set consisting of all node objects "s" such that <"n", "s"> is
+    % an edge in "g".  Signals "missing" if "n" is not a node in "g".
+
+    successors = proc (g: cvt, n: node) returns (node_set) signals (missing)
+	return(node_set$copy1(rep$image(g, n).succ))
+	   resignal missing
+	end successors
+
+
+    % Returns a set consisting of all node objects "p" such that <"p", "n"> is
+    % an edge in "g".  Signals "missing" if "n" is not a node in "g".
+
+    predecessors = proc (g: cvt, n: node) returns (node_set) signals (missing)
+	return(node_set$copy1(rep$image(g, n).pred))
+	   resignal missing
+	end predecessors
+
+
+    % Yields each of the nodes in "g".
+
+    nodes = iter (g: cvt) yields (node)
+	for n: node, a: arcs in rep$elements(g) do yield(n) end
+	end nodes
+
+
+    % Returns the set of nodes in "dg" that have no successors.
+
+    maximal_nodes = proc (dg: cvt) returns (node_set)
+	max: node_set := node_set$[]
+	for n: node in node_set$elements(rep$domain(dg)) do
+	    if node_set$empty(successors(up(dg), n)) then
+	       node_set$insert_unique(max, n)
+	       end
+	    end
+	return(max)
+	end maximal_nodes
+
+
+    % Yields each of the pairs of nodes such that there is an edge from the
+    % first node to the second node in "g".
+
+    edges = iter (g: cvt) yields (node, node)
+	for n: node, a: arcs in rep$elements(g) do
+	    for succ: node in node_set$elements(a.succ) do yield(n, succ) end
+	    end
+	end edges
+
+
+    % Returns "true" iff "g1" and "g2" are the same object.
+
+    equal = proc (g1, g2: cvt) returns (bool)
+	return(g1 = g2)
+	end equal
+
+
+    % Returns "true" iff "g1" and "g2" contain similar nodes and edges.
+
+    similar = proc (g1, g2: cvt) returns (bool)
+	pair = struct[node: node, succ: node_set]
+	ap = array[pair]
+
+	% We could just use "rep$similar".  However, comparing all the
+	% predecessors and successors is redundant, so we can just look at the
+	% successors to make this check more efficient.
+	ap1: ap := ap$predict(1, rep$size(g1))
+	for n: node, a: arcs in rep$elements(g1) do
+	    ap$addh(ap1, pair${node: n, succ: a.succ})
+	    end
+	ap2: ap := ap$predict(1, rep$size(g2))
+	for n: node, a: arcs in rep$elements(g2) do
+	    ap$addh(ap2, pair${node: n, succ: a.succ})
+	    end
+	return(same_elements_arr[pair](ap1, ap2, pair$similar))
+	end similar
+
+
+    % Returns a new directed_graph containing a copy of the nodes and edges in
+    % "g".
+
+    copy = proc (g: cvt) returns (graph)
+		where node in copy_type
+	map = mapping[node, node]
+	cpy: graph := graph$[]
+	m: map := map$predict(rep$size(g))
+	for from, to: node in edges(up(g)) do
+	    f: node := map$image(m, from)
+	       except when missing: f := node$copy(from)
+				    map$insert_unique(m, from, f)
+		      end
+	    t: node := map$image(m, to)
+	       except when missing: t := node$copy(to)
+				    map$insert_unique(m, to, t)
+		      end
+	    insert_edge(cpy, f, t)
+	    end
+	return(cpy)
+	end copy
+
+
+    % Returns a new directed_graph containing the same nodes and edges as "g".
+
+    copy1 = proc (g: cvt) returns (cvt)
+	cpy: rep := rep$[]
+	for n: node, a: arcs in rep$elements(g) do
+	    rep$insert_unique(cpy, n, arcs${pred: node_set$copy1(a.pred),
+					    succ: node_set$copy1(a.succ)})
+	    end
+	return(cpy)
+	end copy1
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where node in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    end directed_graph
+
+
+% A "valued_di_graph" is a set of objects of type "node", together with a set
+% of directed edges with labels of type "edge" between those nodes.  It is
+% required that both "node" and "edge" have both "equal" and "similar"
+% operations.
+
+valued_di_graph = cluster [node, edge: type] is
+	new, cons, insert_node, insert_edge, change_edge,
+	delete_node, delete_edge, is_node, is_edge, edge_value,
+	get_num_nodes, get_num_edges, sub, add, is_subgraph, intersect,
+	successors, predecessors,
+	nodes, edges, equal, similar, copy, copy1, _gcd, decode, encode
+	    where node in equal_type, node in similar_type,
+		  edge in equal_type, edge in similar_type
+
+    % The rep maps a node to its "arcs", which are its sets of predecessors and
+    % successors in the directed_graph.
+
+    rep = mapping[node, arcs]
+    arcs = struct[pred, succ: edge_map]
+    edge_map = mapping[node, edge]
+
+    graph = valued_di_graph[node, edge]
+
+
+    % Returns a new directed_graph with no nodes or edges.
+
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+
+
+    % Returns a new directed_graph with the edges in "es".  Signals
+    % "inconsistent" if "es" specifies two different labels for the same edge.
+
+    cons = proc (es: val_edge_seq) returns (graph) signals (inconsistent)
+	val_edge_seq = sequence[val_edge]
+	val_edge = struct[from: node, val: edge, to: node]
+	g: graph := new()
+	for e: val_edge in val_edge_seq$elements(es) do
+	    insert_edge(g, e.from, e.val, e.to)
+	       except when exists: if e.val ~= edge_value(g, e.from, e.to) 
+				      then signal inconsistent end
+		      end
+	    end
+	return(g)
+	end cons
+
+
+    % Adds an unconnected node "n" to "g".  If "n" is already in "g", signals
+    % "exists".
+
+    insert_node = proc (g: cvt, n: node) signals (exists)
+	rep$insert(g, n, arcs${pred: edge_map$[], succ: edge_map$[]})
+	   resignal exists
+	end insert_node
+
+
+    % Adds an unconnected node "n" to "g".  Requires that "n" is not in "g".
+
+    insert_node_unique = proc (g: cvt, n: node)
+	rep$insert_unique(g, n, arcs${pred: edge_map$[], succ: edge_map$[]})
+	end insert_node_unique
+
+
+    % Adds an edge from "from" to "to" with label "val" in "g".  Signals
+    % "exists" if there is already an edge from "from" to "to" in "g".  Adds
+    % either or both of "from" and "to" to "g" if they are not already nodes in
+    % "g".
+
+    insert_edge = proc (g: cvt, from: node, val: edge, to: node)
+		    signals (exists)
+
+	% Add "to" to the successors of "from".
+	a: arcs := rep$image(g, from)
+	   except when missing:
+		       a := arcs${pred: edge_map$[], succ: edge_map$[]}
+		       rep$insert_unique(g, from, a)
+		  end
+	edge_map$insert(a.succ, to, val)
+	   resignal exists
+
+	% Add "from" to the predecessors of "to".  No need to catch the
+	% "exists" signal from "edge_map$insert", since we know the edge was
+	% not recorded in "from", so it won't be recorded in "to".
+	a := rep$image(g, to)
+	   except when missing:
+		       a := arcs${pred: edge_map$[], succ: edge_map$[]}
+		       rep$insert_unique(g, to, a)
+		  end
+	edge_map$insert_unique(a.pred, from, val)
+	end insert_edge
+
+    insert_edge_unique = proc (g: cvt, from: node, val: edge, to: node)
+
+	% Add "to" to the successors of "from".
+	a: arcs := rep$image(g, from)
+	   except when missing:
+		       a := arcs${pred: edge_map$[], succ: edge_map$[]}
+		       rep$insert_unique(g, from, a)
+		  end
+	edge_map$insert_unique(a.succ, to, val)
+
+	a := rep$image(g, to)
+	   except when missing:
+		       a := arcs${pred: edge_map$[], succ: edge_map$[]}
+		       rep$insert_unique(g, to, a)
+		  end
+	edge_map$insert_unique(a.pred, from, val)
+	end insert_edge_unique
+
+
+    % If there is already an edge in "g" from "from" to "to", changes its label
+    % to "val".  If not, adds the edge.  Adds either or both of "from" and "to"
+    % to "g" if they are not already nodes in "g".
+
+    change_edge = proc (g: cvt, from: node, val: edge, to: node)
+
+	% Add "to" to the successors of "from".
+	a: arcs := rep$image(g, from)
+	   except when missing:
+		       a := arcs${pred: edge_map$[], succ: edge_map$[]}
+		       rep$insert_unique(g, from, a)
+		  end
+	edge_map$change(a.succ, to, val)
+
+	% Add "from" to the predecessors of "to".  No need to catch the
+	% "exists" signal from "edge_map$insert", since we know the edge was
+	% not recorded in "from", so it won't be recorded in "to".
+	a := rep$image(g, to)
+	   except when missing:
+		       a := arcs${pred: edge_map$[], succ: edge_map$[]}
+		       rep$insert_unique(g, to, a)
+		  end
+	edge_map$change(a.pred, from, val)
+	end change_edge
+
+
+    % Deletes the node "n" from "g".  Signals "missing" if "n" is not in "g".
+
+    delete_node = proc (g: cvt, n: node) signals (missing)
+	a: arcs := rep$delete(g, n)
+	   resignal missing
+
+	% Remove the edges coming into "n".
+	for from: node, e: edge in edge_map$elements(a.pred) do
+	    edge_map$delete(rep$image(g, from).succ, n)
+	       except when missing: end
+	    end
+
+	% Remove the edges leaving "n".
+	for to: node, e: edge in edge_map$elements(a.succ) do
+	    edge_map$delete(rep$image(g, to).pred, to)
+	       except when missing: end
+	    end
+	end delete_node
+
+
+    % Deletes the edge from "from" to "to" in "g".  Signals "missing" if there
+    % is no such edge in "g".
+
+    delete_edge = proc (g: cvt, from, to: node) signals (missing)
+
+	% The "missing" signal can originate from "rep$image", if "from" is not
+	% a node in "g", or from "edge_map$delete", if this is not an edge in
+	% "g".
+	edge_map$delete(rep$image(g, from).succ, to)
+	   resignal missing
+
+	% No need to catch the "missing" signal from "rep$image" or
+	% "edge_map$delete", since we know that "to" is a node in "g" and that
+	% "from" is a predecessor of "to", because we established above that
+	% "to" was among the successors of "from".
+	edge_map$delete(rep$image(g, to).pred, from)
+	end delete_edge
+
+
+    % Returns "true" iff "n" is a node in "g".
+
+    is_node = proc (g: cvt, n: node) returns (bool)
+	return(rep$exists(g, n))
+	end is_node
+
+
+    % Returns "true" iff there is an edge in "g" from "from" to "to".
+
+    is_edge = proc (g: cvt, from: node, to: node) returns (bool)
+	return(edge_map$exists(rep$image(g, from).succ, to))
+	   except when missing: return(false) end
+	end is_edge
+
+
+    % Returns the label associated with the edge in "g" from "from" to "to".
+    % Signals "missing" if there is no such edge in "g".
+
+    edge_value = proc (g: cvt, from: node, to: node) returns (edge)
+		   signals (missing)
+	return(edge_map$image(rep$image(g, from).succ, to))
+	   resignal missing
+	end edge_value
+
+
+    % Returns the number of nodes in "g".
+
+    get_num_nodes = proc (g: cvt) returns (int)
+	return(rep$size(g))
+	end get_num_nodes
+
+
+    % Returns the number of edges in "g".
+
+    get_num_edges = proc (g: cvt) returns (int)
+	n_edges: int := 0
+	for n: node, a: arcs in rep$elements(g) do
+	    n_edges := n_edges + edge_map$size(a.succ)
+	    end
+	return(n_edges)
+	end get_num_edges
+
+
+    % Returns a graph containing the labelled edges that are in "g1" but not in
+    % "g2".
+
+    sub = proc (g1, g2: graph) returns (graph)
+	g: graph := graph$[]
+	for n1: node, val: edge, n2: node in edges(g1) do
+	    if ~is_edge(g2, n1, n2) cor val ~= edge_value(g2, n1, n2) then
+	       insert_edge(g, n1, val, n2)
+	       end
+	    end
+	return(g)
+	end sub
+
+
+    % Returns a graph containing the labelled edges that are either in "g1" or
+    % in "g2".  Signals "inconsistent" if "g1" and "g2" contain edges with
+    % different labels between two nodes.
+
+    add = proc (g1, g2: graph) returns (graph) signals (inconsistent)
+	g: graph := graph$copy1(g1)
+	for n1: node, val: edge, n2: node in edges(g2) do
+	    if ~is_edge(g1, n1, n2) then
+	       insert_edge_unique(g, n1, val, n2)
+	     elseif val ~= edge_value(g1, n1, n2) then
+	       signal inconsistent
+	     end
+	    end
+	return(g)
+	end add
+
+
+    % Returns "true" iff every edge in "g1" is also in "g2".
+
+    is_subgraph = proc (g1, g2: graph) returns (bool)
+	for n1: node, val: edge, n2: node in edges(g1) do
+	    if val ~= edge_value(g2, n1, n2) then return(false) end
+	       except when missing: return(false) end
+	    end
+	return(true)
+	end is_subgraph
+
+
+    % Returns "true" iff there is some edge in "g1" that is also in "g2".  Is
+    % more efficient if "g1" is the smaller of the two graphs.
+
+    intersect = proc (g1, g2: graph) returns (bool)
+	for n1: node, val: edge, n2: node in edges(g1) do
+	    if val = edge_value(g2, n1, n2) then return(true) end
+	       except when missing: end
+	    end
+	return(false)
+	end intersect
+
+
+    % Yields all the pairs <"to", "e"> such that there is an edge in "g" from
+    % "n" to "to" with label "e".
+
+    successors = iter (g: cvt, n: node) yields (node, edge)
+	for to: node, e: edge in edge_map$elements(rep$image(g, n).succ) do
+	    yield(to, e)
+	    end except when missing: end
+	end successors
+
+
+    % Yields all the pairs <"from", "e"> such that there is an edge in "g" from
+    % "from" to "n" with label "e".
+
+    predecessors = iter (g: cvt, n: node) yields (node, edge)
+	for from: node, e: edge in edge_map$elements(rep$image(g, n).pred) do
+	    yield(from, e)
+	    end except when missing: end
+	end predecessors
+
+
+    % Yields each of the nodes in "g".
+
+    nodes = iter (g: cvt) yields (node)
+	for n: node, a: arcs in rep$elements(g) do yield(n) end
+	end nodes
+
+
+    % Yields each of the pairs of nodes such that there is an edge from the
+    % first node to the second node in "g".
+
+    edges = iter (g: cvt) yields (node, edge, node)
+	for from: node, a: arcs in rep$elements(g) do
+	    for to: node, e: edge in edge_map$elements(a.succ) do
+		yield(from, e, to)
+		end
+	    end
+	end edges
+
+
+    % Returns "true" iff "g1" and "g2" are the same object.
+
+    equal = proc (g1, g2: cvt) returns (bool)
+	return(g1 = g2)
+	end equal
+
+
+    % Returns "true" iff "g1" and "g2" contain similar nodes and edges.
+
+    similar = proc (g1, g2: cvt) returns (bool)
+	pair = struct[node: node, succ: edge_map]
+	ap = array[pair]
+
+	% We could just use "rep$similar".  However, comparing all the
+	% predecessors and successors is redundant, so we can just look at the
+	% successors to make this check more efficient.
+	ap1: ap := ap$predict(1, rep$size(g1))
+	for n: node, a: arcs in rep$elements(g1) do
+	    ap$addh(ap1, pair${node: n, succ: a.succ})
+	    end
+	ap2: ap := ap$predict(1, rep$size(g2))
+	for n: node, a: arcs in rep$elements(g2) do
+	    ap$addh(ap2, pair${node: n, succ: a.succ})
+	    end
+	return(same_elements_arr[pair](ap1, ap2, pair$similar))
+	end similar
+
+
+    % Returns a new directed_graph containing a copy of the nodes and edges in
+    % "g".  Assumes that "node" and "edge" are different types (or that no node
+    % in "g" is also a label for an edge).
+
+    copy = proc (g: graph) returns (graph)
+		where node in copy_type, edge in copy_type
+	nmap = mapping[node, node]
+	emap = mapping[edge, edge]
+	nm: nmap := nmap$predict(rep$size(down(g)))
+	em: emap := emap$[]
+	cpy: graph := graph$[]
+	for n: node in nodes(g) do
+	    n1: node := node$copy(n)
+	    nmap$insert_unique(nm, n, n1)
+	    insert_node_unique(cpy, n1)
+	    end
+	for from: node, val: edge, to: node in edges(g) do
+	    v1: edge := emap$image(em, val)
+	       except when missing: v1 := edge$copy(val)
+				    emap$insert_unique(em, val, v1)
+		      end
+	    insert_edge_unique(cpy, nmap$image(nm, from), v1, 
+			       nmap$image(nm, to))
+	    end
+	return(cpy)
+	end copy
+
+
+    % Returns a new directed_graph containing the same nodes and edges as "g".
+
+    copy1 = proc (g: cvt) returns (cvt)
+	cpy: rep := rep$[]
+	for n: node, a: arcs in rep$elements(g) do
+	    rep$insert_unique(cpy, n, arcs${pred: edge_map$copy1(a.pred),
+					    succ: edge_map$copy1(a.succ)})
+	    end
+	return(cpy)
+	end copy1
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where node in gcd_type, edge in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where node has decode: proctype(istream) returns (node)
+    	 	               signals (end_of_file, not_possible(string)),
+	      edge has decode: proctype(istream) returns (edge)
+    	 	               signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where node has encode: proctype(node, istream)
+			       signals(not_possible(string)),
+	      edge has encode: proctype(edge, istream)
+			       signals(not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    end valued_di_graph

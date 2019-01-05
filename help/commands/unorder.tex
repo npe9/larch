@@ -1,0 +1,27 @@
+\doc{The unorder command}
+\ref{unorder-command}
+
+The \def{unorder command} turns rewrite rules back into formulas.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{unorder-command} ::= \f{unorder} [ \slink{../misc/names}{names} ]
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+unorder
+unorder nat
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{unorder} command causes LP to turn the named rewrite rules back into
+formulas.  If no names are specified, LP unorders all rewrite rules.
+\p
+Even if the \setlink{automatic-ordering} setting is \fq{on}, the unordered
+formulas are not immediately reordered into rewrite rules.  This gives users an
+opportunity to change the \setlink{ordering-method} or the
+\dlink{register}{registry}.  The formulas will be oriented into
+rewrite rules in response to an explicit \cflink{order} command or in response
+to some other command that would invoke LP's automatic ordering (for example,
+the \cflink{assert} command).

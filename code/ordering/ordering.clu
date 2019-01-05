@@ -1,0 +1,300 @@
+#extend
+
+% An "ordering" consists of 
+% (a) three ordering procedures,
+% (b) a warranty procedure that checks whether a rewrite rule produced by 
+%     the ordering procedures is guaranteed to terminate, and
+% (c) a boolean value "is_registered" that tells whether the ordering is based 
+%     on a registry and can generate suggestions for extending that registry.
+
+
+ordering = cluster is default, dsmpos, either_way, l2r, manual, noeq_dsmpos, 
+    		      poly, get_auto, get_is_registered, get_name, get_quiet,
+		      get_size, get_user, is_poly, possibilities, warrants, 
+		      equal, copy, _gcd, decode, encode
+
+    % The rep contains an "ordering_id" rather than "ordering_info" because 
+    % "ordering_info" contains procedure objects and is not gc-dumpable.  The
+    % "size" is applicable only for the polynmial ordering.
+    
+    rep = struct[id: ordering_id, size: int]
+    ordering_id = int
+    
+    dsmpos_id = 1
+    l2r_id = 2
+    manual_id = 3
+    noeq_dsmpos_id = 4
+    poly_id = 5
+    either_way_id = 6
+    
+    library = sequence[ordering_info]
+    ordering_info = struct[auto: auto_proc, id: ordering_id,
+			   is_registered: bool, name: string, 
+			   quiet: quiet_proc, user: user_proc,
+			   warranty: warranty_proc]
+    warranty_proc = proctype (rewrite_rule, op_system, registry) returns (bool)
+	
+    % New orderings should always be added at the end of "ordering_lib", so
+    % that the association between an ordering and its index will not be
+    % changed, since this would cause dumped files to become out of date.
+
+    % The "dsmpos" ordering is based on the recursive path ordering with status
+    % (RPOS).  When RPOS can't order an equation, DSMPOS suggests sets of
+    % minimal extensions to the precedence and status that order the equation
+    % in each direction.  The "noeq_dsmpos" ordering is a more efficient, but
+    % less powerful, variant that does not make suggestions of equivalence.
+
+    own dsmpos_info: ordering_info := 
+	    ordering_info${warranty: dsmpos_warranty,
+			   quiet: dsmpos_quiet[true],
+			   user: dsmpos_user[true],
+			   auto: dsmpos_auto[true],
+			   is_registered: true,
+			   id: dsmpos_id,
+			   name: "dsmpos"}
+
+    own noeq_dsmpos_info: ordering_info := 
+            ordering_info${warranty: dsmpos_warranty,
+			   quiet: dsmpos_quiet[false],
+			   user: dsmpos_user[false],
+			   auto: dsmpos_auto[false],
+			   is_registered: true,
+			   id: noeq_dsmpos_id,
+			   name: "noeq-dsmpos"}
+
+
+    % The "l2r" ordering orders equations from left to right.  It does not 
+    % guarantee termination.
+
+    own l2r_info: ordering_info := 
+	    ordering_info${warranty: no_warranty,
+			   quiet: l2r_quiet,
+			   user: l2r_user,
+			   auto: l2r_auto,
+			   is_registered: false,
+			   id: l2r_id,
+			   name: "left-to-right"}
+
+
+    % The "either_way" ordering orders equations from left to right or, failing
+    % that, from right to left.  It does not guarantee termination.
+
+    own either_way_info: ordering_info := 
+	    ordering_info${warranty: no_warranty,
+			   quiet: either_way_quiet,
+			   user: either_way_user,
+			   auto: either_way_auto,
+			   is_registered: false,
+			   id: either_way_id,
+			   name: "either-way"}
+
+
+    % The "manual" ordering asks the user to hand-order every equation.  It
+    % does not guarantee termination.
+
+    own manual_info: ordering_info := 
+	    ordering_info${warranty: no_warranty,
+			   quiet: man_quiet,
+			   user: man_user,
+			   auto: man_auto,
+			   is_registered: false,
+			   id: manual_id,
+			   name: "manual"}
+
+
+    % The "poly_ordering" interprets operators using tuples of polynomials.  It
+    % interprets an equation by constructing two tuples of polynomials
+    % corresponding to left and right-hand sides of the equation.  If one of
+    % these tuples can be shown to be lexicographically greater than the other,
+    % then the equation can be ordered.
+
+    own poly_info: ordering_info := 
+	    ordering_info${warranty: good_warranty,
+			   quiet: poly_quiet,
+			   user: poly_user,
+			   auto: poly_auto,
+			   is_registered: false,
+			   id: poly_id,
+			   name: "polynomial"}
+
+    own ordering_lib: library := 
+	    library$[dsmpos_info, l2r_info, manual_info, noeq_dsmpos_info,
+		     poly_info, either_way_info]
+
+
+
+    % Returns the default ordering.
+    
+    default = proc () returns (ordering)
+	return(noeq_dsmpos())
+	end default
+    
+
+    % Returns the "dsmpos" ordering.
+
+    dsmpos = proc () returns (cvt)
+	return(rep${id: dsmpos_info.id, size: 0})
+	end dsmpos
+
+
+    % Returns the "either_way" ordering.
+
+    either_way = proc () returns (cvt)
+	return(rep${id: either_way_info.id, size: 0})
+	end either_way
+
+
+    % Returns the "l2r" ordering.
+
+    l2r = proc () returns (cvt)
+	return(rep${id: l2r_info.id, size: 0})
+	end l2r
+
+
+    % Returns the "manual" ordering.
+
+    manual = proc () returns (cvt)
+	return(rep${id: manual_info.id, size: 0})
+	end manual
+
+
+    % Returns the "noeq_dsmpos" ordering.
+
+    noeq_dsmpos = proc () returns (cvt)
+	return(rep${id: noeq_dsmpos_info.id, size: 0})
+	end noeq_dsmpos
+
+
+    % Returns the "poly" ordering based on a sequence of "n" polynomials.
+
+    poly = proc (n: int) returns (cvt)
+	return(rep${id: poly_info.id, size: n})
+	end poly
+
+    
+    % Returns the automatic ordering procedure associated with "ord".
+    
+    get_auto = proc (ord: cvt) returns (auto_proc)
+	return(ordering_lib[ord.id].auto)
+	end get_auto
+    
+
+    % Returns "true" if "ord" is a registered ordering.
+    
+    get_is_registered = proc (ord: cvt) returns (bool)
+	return(ordering_lib[ord.id].is_registered)
+	end get_is_registered
+    
+    
+    % Returns the name of "ord".
+    
+    get_name = proc (ord: cvt) returns (string)
+	name: string := ordering_lib[ord.id].name
+	if ord.id = poly_id cand ord.size > 1 then 
+	   name := name || " " || int$unparse(ord.size)
+	   end
+	return(name)
+	end get_name
+    
+    
+    % Returns the quiet ordering procedure associated with "ord".
+    
+    get_quiet = proc (ord: cvt) returns (quiet_proc)
+	return(ordering_lib[ord.id].quiet)
+	end get_quiet
+
+    
+    % Returns the number of polynomials to be used for the polynomial ordering
+    % "ord".  Signals "not_poly" if "ord" is not a polynomial ordering.
+    
+    get_size = proc (ord: cvt) returns (int) signals (not_poly)
+	if ord.id ~= poly_id then signal not_poly end
+	return(ord.size)
+	end get_size
+    
+    
+    % Returns the user ordering procedure associated with "ord".
+    
+    get_user = proc (ord: cvt) returns (user_proc)
+	return(ordering_lib[ord.id].user)
+	end get_user
+    
+    
+    % Returns "true" if "ord" is a polynomial ordering.
+    
+    is_poly = proc (ord: cvt) returns (bool)
+	return(ord.id = poly_id)
+	end is_poly
+    
+    
+    % Returns a sequence containing the possible orderings.
+    
+    possibilities = proc () returns (ord_seq)
+	ord_seq = sequence[ordering]
+	own ords: ord_seq := ord_seq$[dsmpos(), either_way(), l2r(), manual(),
+				      noeq_dsmpos(), poly(1)]
+	return(ords)
+	end possibilities
+
+
+    % Returns "true" if the rewrite rule "rr", which is assumed to have been
+    % produced by the ordering procedures of "ord", is guaranteed to terminate.
+    
+    warrants = proc (ord: cvt, rr: rewrite_rule, osys: op_system, 
+	             reg: registry) returns (bool)
+	return(ordering_lib[ord.id].warranty(rr, osys, reg))
+	end warrants
+    
+    
+    % Returns "true" if "ord1" and "ord2" are the same ordering.
+    
+    equal = proc (ord1, ord2: cvt) returns (bool)
+	return(ord1 = ord2)
+	end equal
+    
+
+    % Returns "ord", which is immutable.
+    
+    copy = proc (ord: cvt) returns (cvt)
+	return(ord)
+	end copy
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    % Generic warranty procedures procedures
+    
+    % Returns "true" of the right side of "rr" cannot be rewritten further
+    % (because it is a logical constant).  ENHANCE: Return "true" in other
+    % simple cases, e.g., when the right side of "rr" is a proper subterm of
+    % the left.
+    
+    no_warranty = proc (rr: rewrite_rule, osys: op_system, reg: registry)
+		    returns (bool)
+	return(is_logical_constant(rr.right))
+	end no_warranty
+    
+    
+    % Returns "true".
+    
+    good_warranty = proc (rr: rewrite_rule, osys: op_system, reg: registry)
+		      returns (bool)
+	return(true)
+	end good_warranty
+    
+    end ordering

@@ -1,0 +1,100 @@
+#extend
+
+real_sort = proc () returns (sort)
+    own so: sort := sort$make_simple("Real")
+    return(so)
+    end real_sort
+
+int_sort = proc () returns (sort)
+    own so: sort := sort$make_simple("Int")
+    return(so)
+    end int_sort
+
+nat_sort = proc () returns (sort)
+    own so: sort := sort$make_simple("Nat")
+    return(so)
+    end nat_sort
+
+
+make_real_ops = proc (stab: symtab, so: sort) returns (real_ops)
+    return(real_ops${add:    symtab$enter_op(stab, op_add(so)),
+		     mul:    symtab$enter_op(stab, op_mul(so)),
+		     div:    symtab$enter_op(stab, op_div(so)),
+		     minus:  symtab$enter_op(stab, op_minus(so)),
+		     sub:    symtab$enter_op(stab, op_sub(so)),
+		     gt:     symtab$enter_op(stab, op_gt(so)),
+		     ge:     symtab$enter_op(stab, op_ge(so)),
+		     lt:     symtab$enter_op(stab, op_lt(so)),
+		     le:     symtab$enter_op(stab, op_le(so)),
+		     equals: symtab$enter_op(stab, op_eq(so))})
+    end make_real_ops
+
+make_int_ops = proc (stab: symtab, so: sort) returns (int_ops)
+    return(int_ops${add:    symtab$enter_op(stab, op_add(so)),
+		    mul:    symtab$enter_op(stab, op_mul(so)),
+		    minus:  symtab$enter_op(stab, op_minus(so)),
+		    sub:    symtab$enter_op(stab, op_sub(so)),
+		    gt:     symtab$enter_op(stab, op_gt(so)),
+		    ge:     symtab$enter_op(stab, op_ge(so)),
+		    lt:     symtab$enter_op(stab, op_lt(so)),
+		    le:     symtab$enter_op(stab, op_le(so)),
+		    equals: symtab$enter_op(stab, op_eq(so))})
+    end make_int_ops
+
+make_nat_ops = proc (stab: symtab, so: sort) returns (nat_ops)
+    return(nat_ops${add:    symtab$enter_op(stab, op_add(so)),
+		    mul:    symtab$enter_op(stab, op_mul(so)),
+		    gt:     symtab$enter_op(stab, op_gt(so)),
+		    ge:     symtab$enter_op(stab, op_ge(so)),
+		    lt:     symtab$enter_op(stab, op_lt(so)),
+		    le:     symtab$enter_op(stab, op_le(so)),
+		    equals: symtab$enter_op(stab, op_eq(so))})
+    end make_nat_ops		 
+
+sig_binary_op = proc (so: sort) returns (signature)
+    return(signature${dom: sort_seq$[so, so], rng: so})
+    end sig_binary_op
+
+sig_unary_op = proc (so: sort) returns (signature)
+    return(signature${dom: sort_seq$[so], rng: so})
+    end sig_unary_op
+
+op_add = proc (so: sort) returns (operator)
+    return(operator${id: identifier$make_infix("+"), sig: sig_binary_op(so)})
+    end op_add
+
+op_sub = proc (so: sort) returns (operator)
+    return(operator${id: identifier$make_infix("-"), sig: sig_binary_op(so)})
+    end op_sub
+
+op_mul = proc (so: sort) returns (operator)
+    return(operator${id: identifier$make_infix("*"), sig: sig_binary_op(so)})
+    end op_mul
+
+op_div = proc (so: sort) returns (operator)
+    return(operator${id: identifier$make_infix("/"), sig: sig_binary_op(so)})
+    end op_div
+
+op_minus = proc (so: sort) returns (operator)
+    return(operator${id: identifier$make_prefix("-"), sig: sig_unary_op(so)})
+    end op_minus
+
+op_gt = proc (so: sort) returns (operator)
+    return(operator${id: identifier$make_infix(">"), sig: sig_equals(so)})
+    end op_gt
+
+op_ge = proc (so: sort) returns (operator)
+    return(operator${id: identifier$make_infix(">="), sig: sig_equals(so)})
+    end op_ge
+
+op_lt = proc (so: sort) returns (operator)
+    return(operator${id: identifier$make_infix("<"), sig: sig_equals(so)})
+    end op_lt
+
+op_le = proc (so: sort) returns (operator)
+    return(operator${id: identifier$make_infix("<="), sig: sig_equals(so)})
+    end op_le
+
+op_eq = proc (so: sort) returns (operator)
+    return(operator${id: identifier$eqOp(), sig: sig_equals(so)})
+    end op_eq

@@ -1,0 +1,223 @@
+#extend
+
+% Each sort in multisorted first-order logic represents a nonempty domain of
+% objects.  The domains associated with different sorts are disjoint.
+
+
+sort = cluster is make_simple, make_composite, is_simple, is_composite,
+                  get_id, get_args, print, read, unparse, 
+		  lt, le, gt, ge, equal, similar, copy, _gcd, decode, encode,
+		  get_owns, set_owns, encode_owns, decode_owns
+
+    rep = struct[kind: sort_kind, % simple of composite sort
+                 key: int,	  % unique key for sort
+		 str: string]	  % unique string representation for sort
+		 
+    sort_kind      = oneof[simple: string, composite: composite_sort]
+    composite_sort = struct[id: string, args: sort_seq]
+
+    own all_sorts: sort_arr := sort_arr$[]	% all existing sorts
+						% elem key = index in array
+
+    % Returns a simple sort identified by "s".
+
+    make_simple = proc (s: string) returns (sort)
+	for srt: sort in sort_arr$elements(all_sorts) do
+	    if down(srt).str = s then return(srt) end
+	    end
+	srt: sort := up(rep${kind: sort_kind$make_simple(s), 
+		        key: sort_arr$high(all_sorts) + 1,
+		        str: s})
+	sort_arr$addh(all_sorts, srt)
+	return(srt)
+	end make_simple
+
+
+    % Returns a composite sort identified by "s" applied to the sequence "ss"
+    % of sorts.
+
+    make_composite = proc (s: string, ss: sort_seq) returns (sort)
+	for srt: sort in sort_arr$elements(all_sorts) do
+	    cs: composite_sort := sort_kind$value_composite(down(srt).kind)
+	      except when wrong_tag: continue end
+	    if cs.id = s cand cs.args = ss then return(srt) end
+	    end
+	cs: composite_sort := composite_sort${id: s, args: ss}
+	str: string := s || "("
+	first: bool := true
+	for so: sort in sort_seq$elements(ss) do
+	    if ~first then str := str || "'" end
+	    first := false
+	    str := str || down(so).str
+	    end
+	str := str || ")"
+	srt: sort := up(rep${kind: sort_kind$make_composite(cs),
+			key: sort_arr$high(all_sorts) + 1,
+			str: str})
+	sort_arr$addh(all_sorts, srt)
+	return(srt)
+	end make_composite
+    
+    
+    % Returns "true" if "so" is simple.
+    
+    is_simple = proc (so: cvt) returns (bool)
+	return(sort_kind$is_simple(so.kind))
+	end is_simple
+    
+    
+    % Returns "true" if "so" is composite.
+    
+    is_composite = proc (so: cvt) returns (bool)
+	return(sort_kind$is_composite(so.kind))
+	end is_composite
+    
+    
+    % Returns the string representing a simple sort, or the string representing
+    % the constructor for a composite sort.
+    
+    get_id = proc (so: cvt) returns (string)
+	tagcase so.kind
+	   tag simple (s: string): return(s)
+	   tag composite (cs: composite_sort): return(cs.id)
+	   end
+	end get_id
+
+    
+    % Returns the sequence of arguments for a composite sort "so".  Signals
+    % "wrong_tag" if "so" is a simple sort.
+    
+    get_args = proc (so: cvt) returns (sort_seq) signals (wrong_tag)
+	tagcase so.kind
+	   tag simple: signal wrong_tag
+	   tag composite (cs: composite_sort): return(cs.args)
+	   end
+	end get_args
+    
+    
+    % Prettyprints "so" on "p".
+    
+    print = proc (p: printer, so: sort)
+	psort$print(p, so)
+	end print
+    
+    
+    % Scans and returns a sort in "stab" from "scan".  Writes a message to
+    % "scan", and signals "error", if "scan" does not begin with a sort in
+    % "stab".
+    
+    read = proc (scan: scanner, stab: symtab) returns (sort) signals (error)
+	return(psort$read(scan, stab))
+	   resignal error
+	end read
+    
+    
+    % Returns an internal string representation for "so".
+
+    unparse = proc (so: cvt) returns (string)
+	return(so.str)
+	end unparse
+
+
+    % The following procedures order sorts by ordering their identifiers.
+    
+    lt = proc (so1, so2: cvt) returns (bool)
+	return(so1.str < so2.str)
+	end lt
+    
+
+    le = proc (so1, so2: cvt) returns (bool)
+	return(so1.str <= so2.str)
+	end le
+    
+
+    gt = proc (so1, so2: cvt) returns (bool)
+	return(so1.str > so2.str)
+	end gt
+    
+
+    ge = proc (so1, so2: cvt) returns (bool)
+	return(so1.str >= so2.str)
+	end ge
+    
+
+    % Returns "true" iff "so1" and "so2" represent the same sort.
+    
+    equal = proc (so1, so2: cvt) returns (bool)
+	return(so1.key = so2.key)
+	end equal
+
+    
+    % Returns "true" if "so1" and "so2" represent the same sort.
+    
+    similar = proc (so1, so2: cvt) returns (bool)
+	return(so1.str = so2.str)
+	end similar
+
+    
+    % Returns "so", which is immutable.
+    
+    copy = proc (so: cvt) returns (cvt)
+	return(so)
+	end copy
+
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (sort)
+    		signals (end_of_file, not_possible(string))
+	return(all_sorts[int$decode(s)]) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (srt: cvt, s: istream) signals (not_possible(string))
+	int$encode(srt.key, s) resignal not_possible
+	end encode
+
+    get_owns = proc () returns (sort_seq)
+	return(sort_seq$a2s(all_sorts))
+	end get_owns
+
+    set_owns = proc (so: sort_seq)
+	all_sorts := sort_seq$s2a(so)
+	end set_owns
+
+% This code is a bit complicated because of composite sorts.  It relies on
+% the invariant that the key of a composite sort is greater than the keys
+% of its contituent sorts.
+
+    decode_owns = proc (s: istream) returns (sort_seq)
+    		signals (end_of_file, not_possible(string))
+	save: sort_arr := all_sorts
+	all_sorts := sort_arr$[]
+	for i: int in int$from_to(1, int$decode(s)) do
+	    sort_arr$addh(all_sorts, up(rep$decode(s)))
+	    end
+	   except when end_of_file:
+		       all_sorts := save
+		       signal end_of_file
+		  when not_possible (why: string):
+		       all_sorts := save
+		       signal not_possible(why)
+		  end
+	ans: sort_seq := sort_seq$a2s(all_sorts)
+	all_sorts := save
+	return(ans)
+	end decode_owns
+
+    encode_owns = proc (so: sort_seq, i: istream)
+		    signals (not_possible(string))
+	begin
+	   int$encode(sort_seq$size(so), i)
+	   for s: sort in sort_seq$elements(so) do
+	       rep$encode(down(s), i)
+	       end
+	  end resignal not_possible
+	end encode_owns
+
+
+    end sort

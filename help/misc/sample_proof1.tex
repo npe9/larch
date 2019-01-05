@@ -1,0 +1,41 @@
+\doc{Sample proofs: two easy theorems}
+
+The proof of the first theorem in \dflink{set1.lp}{set1.lp} is straightforward.
+\begin{verbatim}
+set name setTheorems
+prove e \in {e}
+qed
+\end{verbatim}
+
+The \clink{prove} command directs LP to initiate the proof of a conjecture, and
+the \clink{qed} command directs LP to confirm that its proof is complete.  LP
+proves this conjecture automatically by using the user-supplied axioms as
+\llink{rewrite-rule}{rewrite rules}.  When using a formula as a rewrite rule,
+either LP rewrites terms \olink{match}{matching} the entire formula to
+\fq{true} or, when the principal connective of the formula is  \f{=} (equals) 
+or \f{<=>} (if and only if), LP rewrites terms matching the left side of the
+formula to terms matching the right.  Occasionally LP will reverse the order of
+terms in an equality to ensure that the resulting set of rewrite rules does not
+produce nonterminating (i.e., infinite) rewriting sequences.  Here's how LP
+proves the first conjecture:
+\begin{verbatim}
+e \in {e} ~> e \in insert(e, {})    by setAxioms.2
+          ~> e = e \/ e \in {}      by setAxioms.4
+          ~> true \/ e \in {}       by a hardwired axiom for =
+          ~> true                   by a hardwired axiom for \/
+\end{verbatim}
+
+Most proofs require user guidance.  For example, to prove that for any two
+elements \fq{e1} and \fq{e2}, there is a set that contains exactly these two
+elements, the user must provide a ``witness'' for the existential quantifier in
+the second conjecture:
+
+\begin{verbatim}
+prove \E x \A e (e \in x <=> e = e1 \/ e = e2)
+  resume by specializing x to insert(e2, {e1})
+qed
+\end{verbatim}
+Users can specify a \plink{methods}{proof method} for a conjecture either as
+part of the \clink{prove} command or in a separate \clink{resume} command,
+which continues the proof of the conjecture.
+

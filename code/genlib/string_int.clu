@@ -1,0 +1,273 @@
+#extend
+
+% This file contains operations on strings, chars, and ints.
+
+
+% Replaces tabs by spaces in "s".
+
+detab = proc (s: string) returns (string)
+    own spaces: string := "        "
+    while true do
+	n: int := string$indexc('\t', s)
+	if n = 0 then return(s) end
+	head: string := string$substr(s, 1, n - 1)
+	tail: string := string$rest(s, n + 1)
+	m: int := int$mod(n - 1, 8)
+	s := head || string$substr(spaces, 1, 8 - m) || tail
+	end
+    end detab
+
+
+% Returns two strings consisting of the characters before the first space in
+% "s" and the characters after the first substring of spaces in "s".  The
+% second string is empty if "s" contains no spaces.
+
+word_from_string = proc (s: string) returns (string, string)
+    n: int := string$indexc(' ', s)
+    if n = 0
+       then return(s, "")
+       else return(string$substr(s, 1, n-1), trim_head(string$rest(s, n+1)))
+       end
+    end word_from_string
+
+
+% Returns three strings whose concatentation is "s": a prefix consisting of the
+% longest initial prefix of "s" not containing any character in "delims", a
+% delimiter consisting of the first character in "s" that is in "delims", and
+% the tail of "s" after the delimiter.  Any of the above can be the empty
+% string.
+
+string_divide = proc (s, delims: string) returns (string, string, string)
+    first_delim: int := string$size(s) + 1
+    for c: char in string$chars(delims) do
+	this_delim: int := string$indexc(c, s)
+	if this_delim ~= 0
+	   then first_delim := int$min(first_delim, this_delim)
+	   end
+	end
+    if first_delim > string$size(s)
+       then return(s, "", "")  % No occurence
+       else return(string$substr(s, 1, first_delim-1),
+		   string$c2s(s[first_delim]),
+		   string$rest(s, first_delim+1))
+       end
+    end string_divide
+
+
+% Returns "s" with linefeeds inserted so that no individual line is longer than
+% "length" and that the first line is not longer than "length" - "used".
+% Linefeeds already in "s" are handled "correctly": a linefeed in "s" will be
+% copied to the returned string and will reset the line-length counter.
+% Signals "contains_tabs" if "s" contains a tab, because tabs make it
+% impossible to split "s" properly.
+
+string_split_lines = proc (s: string, length, used: int) returns (string) 
+		       signals (contains_tabs)
+    space = ' '
+    if string$indexc('\t', s) > 0 then signal contains_tabs end
+    new: string := ""
+    while true do
+	if string$size(s) <= length - used then return(new || s) end
+	first_line_feed: int := string$indexc('\n', s)
+	n: int
+	if 0 < first_line_feed cand first_line_feed <= length - used
+	   then n := first_line_feed
+		new := new || string$substr(s, 1, n)
+	   else n := int$max(0, length - used + 1)
+		while n > 0 cand s[n] ~= space do n := n - 1 end
+		while n > 0 cand s[n] = space do n := n - 1 end
+		if n = 0 cand used = 0 then n := length end
+		new := new || string$substr(s, 1, n) || "\n"
+	   end
+	used := 0
+	s := trim_head(string$rest(s, n + 1))
+	end
+    end string_split_lines
+
+
+% Returns "true" if "s1" is an initial substring of "s2".
+
+is_initial_substring = proc (s1, s2: string) returns (bool)
+    return(s1 = string$substr(s2, 1, string$size(s1)))
+       except when bounds: return(false) end
+    end is_initial_substring
+
+
+% Returns the "numeric ordinal" string form of "i".  That is, the unparsed form
+% of "i" followed by the appropriate suffix: "th" 10 <= i <= 19 or the decimal
+% form of "i" ends in 0, 4, 5 ,6, 7, 8, or 9; otherwise, if the decimal form of
+% "i" ends in 1, then "st", 2, "nd", or 3, "rd".
+
+int_ordinal = proc (i: int) returns (string)
+    suffix: string := ""
+    if 4 <= i cand i <= 20
+       then suffix := "th"
+       else i_suffix: int := i // 10
+	    if i_suffix >= 4 cor i_suffix = 0
+	       then suffix := "th"
+	     elseif i_suffix = 1
+	       then suffix := "st"
+	     elseif i_suffix = 2
+	       then suffix := "nd"
+	     else suffix := "rd"
+	     end
+       end
+    return(int$unparse(i) || suffix)
+    end int_ordinal
+
+
+% Returns a string representing the integer "n", right justified in a field of
+% width at least "width".  Commas are inserted between adjacent three-digit
+% groups.
+
+int_format = proc (n, width: int) returns (string)
+    negative: bool := (n < 0)
+    n := int$abs(n)
+    s: string := ""
+    while true do
+	s := int$unparse(n // 10) || s
+	n := n/10
+	if n = 0 then break end
+	if string$size(s) // 4 = 3 then s := "," || s end
+	end
+    if negative then s := "-" || s end
+    for i: int in int$from_to(string$size(s)+1, width) do s := " " || s end
+    return(s)
+    end int_format
+
+
+% Returns the maximum integer that can be represented.
+
+maxint = proc () returns (int)
+    own m: int := 1
+    if m ~= 1 then return(m) end
+    while true do m := 2 * m end
+       except when overflow: end
+    m := m + (m - 1)
+       except when overflow: end
+    return(m)
+    end maxint
+
+
+% Returns "on" if "b" is "true" and "off" if "b" is "false".
+    
+on_off = proc (b: bool) returns (string)
+    if b then return("on") else return("off") end
+    end on_off
+    
+
+% Returns "s1" if "test" is true, "s2" if "test" is false.
+
+pick_string = proc (test: bool, s1, s2: string) returns (string)
+    if test then return(s1) else return(s2) end
+    end pick_string
+
+
+% Returns the substring of "s" beginning with the first character not in
+% "chars".
+
+trim_chars = proc (s: string, chars: string) returns (string)
+    for i: int in int$from_to(1, string$size(s)) do
+	if string$indexc(s[i], chars) = 0 then return(string$rest(s, i)) end
+	end
+    return("")
+    end trim_chars
+
+
+% Returns a string consisting of "n" copies of the character "c".
+
+string_fill = proc (c: char, n: int) returns (string)
+    return(string$ac2s(char_arr$fill(1, n, c)))
+    end string_fill
+
+
+% Returns the representation of "n" followed by a space and "s" if "n" = 1;
+% otherwise returns this string with the letter 's' appended.
+
+plural_noun = proc (s: string, n: int) returns (string)
+    s := int$unparse(n) || " " || s
+    if n = 1 then return(s) else return (s || "s") end
+    end plural_noun
+
+
+% Prefixes "s" by the appropriate article, i.e., by "an" if the first character
+% in "s" is a vowel and by "a" otherwise.  ASSUMES: "s" begins with a
+% lower-case letter.
+
+supply_article = proc (s: string) returns (string)
+    c: char := s[1]
+       except when bounds: fail("supply_article: empty string") end
+    if ~('a' <= c cand c <= 'z') then fail("supply_article: `" || s || "'") end
+    if c = 'a' cor c = 'e' cor c = 'i' cor c = 'o' cor c = 'u' 
+       then return("an " || s)
+       else return("a " || s)
+       end
+    end supply_article
+
+
+% Returns "true" if "c" is a letter.
+
+is_letter = proc (c: char) returns (bool)
+    return(('a' <= c cand c <= 'z') cor ('A' <= c cand c <= 'Z'))
+    end is_letter
+
+
+% Returns "true" if "c" is a digit.
+
+is_digit = proc (c: char) returns (bool)
+    return('0' <= c cand c <= '9')
+    end is_digit
+
+
+% Suffixes "s" by " are " if the last character in "s" is the letter `s' and
+% the second last character is not.  Otherwise suffixes "s" by " is ".
+
+supply_is_are = proc (s: string) returns (string)
+    n: int := string$size(s)
+    if s[n] = 's' cand s[n-1] ~= 's' then return(s || " are ") end
+       except when bounds: end
+    return(s || " is ")
+    end supply_is_are
+
+
+% Returns "str" with all occurrences of the character "c" replaced by the
+% string "s".
+
+string_replace_char = proc (str: string, c: char, s: string) returns (string)
+    head: string := ""
+    while true do
+	n: int := string$indexc(c, str)
+	if n = 0 then return(head || str) end
+	head := head || string$substr(str, 1, n-1) || s
+	str := string$rest(str, n+1)
+	end
+    end string_replace_char
+
+
+% Returns the number of occurrences of "c" in "s".
+
+string_count_char = proc (str: string, c: char) returns (int)
+    n: int := 0
+    for c1: char in string$chars(str) do
+	if c = c1 then n := n + 1 end
+	end
+    return(n)
+    end string_count_char
+
+
+% Returns the number of occurrences of "c" at the beginning of "s".
+
+string_prefix_size = proc (str: string, c: char) returns (int)
+    n: int := 0
+    for c1: char in string$chars(str) do
+	if c = c1 then n := n + 1 else break end
+	end
+    return(n)
+    end string_prefix_size
+    
+
+% Returns "s" surrounded by single quotation marks.
+
+quote = proc (s: string) returns (string)
+    return("`" || s || "'")
+    end quote

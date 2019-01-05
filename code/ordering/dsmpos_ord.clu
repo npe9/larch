@@ -1,0 +1,281 @@
+#extend
+
+% The procedures "dsmpos_quiet", "dsmpos_user", and "dsmpos_auto" in this file
+% comprise the "dsmpos_ordering".  This ordering is based on MPOS, the
+% monotonic path ordering with status; when MPOS can't order two terms, DSMPOS
+% generates sets of minimal extensions to the precedence and status that order
+% the equation in each direction.  The user is then asked to choose a
+% suggestion from among these.
+
+
+% If "eq" can be ordered using DSMPOS with the information in "reg" (from left
+% to right if the user has constrained the ordering in this fashion, and in
+% either direction if not), returns the result of ordering it into a rewrite
+% rule; otherwise, signals "cannot_orient".
+
+dsmpos_quiet = proc [use_eq: bool] (reg: registry, eq: equation)
+		 returns (rewrite_rule) signals (cannot_orient)
+    dsmpos_attempt(use_eq, false, reg, eq)
+       except when l2r, r2l (rr: rewrite_rule): return(rr)
+	      others:                           signal cannot_orient
+	      end
+    end dsmpos_quiet
+
+
+% Attempts to order "eq".  First attempts to order "eq" without user
+% interaction.  If this fails, presents an appropriate list of actions to the
+% user (see the "ordering_choice" procedure).  This list contains reversing the
+% equation if it is orderable in the reverse direction with the present
+% registry, but cannot be ordered in this way because the user constrained the
+% equation to be ordered from left to right.
+
+% If DSMPOS is unable to order the equation in either direction, it will return
+% the complete sets of minimal precedence and status suggestions that order the
+% equation in each direction.  If there are any such suggestions, they are
+% shown to the user with numbers associated with them, and "#" is offered as an
+% option, meaning that the user should enter a suggestion number.  
+
+dsmpos_user = proc [use_eq: bool] (p: printer, reg: registry, stab: symtab, 
+			           eq: equation) returns (order_action)
+    l2r: suggestions := suggestions$[]
+    r2l: suggestions := suggestions$[]
+    reverse: bool := false
+    crr: bool := false
+    tracer$present_equation(eq)
+    dsmpos_attempt(use_eq, true, reg, eq)
+       except 
+	  when l2r (rr: rewrite_rule):
+	       printer$text(p, "\nOrdered automatically.\n")
+	       return(order_action$make_auto(rr))
+	  when r2l (rr: rewrite_rule):
+	       printer$text(p, "\nOrdered automatically from right to left.\n")
+	       return(order_action$make_auto(rr))
+	  when cannot_orient:  % NOTE: "eq" cannot be conditional
+	  when reversible: reverse := true
+	  when suggest (l2r_2, r2l_2: suggestions, crr1: bool):
+	       l2r := l2r_2
+	       r2l := r2l_2
+	       crr := crr1
+	  end
+    return(ordering_choice[suggestions]
+	       (eq, reg, p, stab, l2r, r2l, reverse, crr, dsmpos_choice))
+    end dsmpos_user
+
+
+% Signals "bad_choice" if "choice" does not correspond to a set of precedence
+% and status suggestions in "l2r" or "r2l".  Otherwise, adds the chosen
+% suggestions to "reg" and returns "eq" ordered into a rewrite rule (which is
+% conditional if "crr" is true) together the suggestions that were used.
+% ASSUMES: "eq" can be oriented into a conditional rewrite rule if "crr" is
+% true.
+
+dsmpos_choice = proc (choice: int, reg: registry, eq: equation, crr: bool,
+		      l2r, r2l: suggestions)
+		  returns (rewrite_rule, suggestions) signals (bad_choice)
+    l2r_size: int := suggestions$size(l2r)
+    r2l_size: int := suggestions$size(r2l)
+    if choice < 1 cor choice > (l2r_size + r2l_size) then signal bad_choice end
+    rr: rewrite_rule
+    ssa: ss_arr
+    if choice > l2r_size
+       then ssa := r2l[choice - l2r_size]
+            if crr
+               then rr := equation$e2cr_reversed(eq)
+               else rr := equation$e2r_reversed(eq)
+	       end except when user_prevents (rr1: rewrite_rule): rr := rr1 end
+       else ssa := l2r[choice]
+            if crr
+               then rr := equation$e2cr(eq)
+               else rr := equation$e2r(eq)
+               end
+       end
+    for ssug: single_suggest in ss_arr$elements(ssa) do
+	tagcase ssug
+	   tag prec (ps: prec_sug):
+	       tagcase ps.val
+		  tag gt:    registry$make_higher(reg, ps.gt, ps.lt)
+		  tag gt_eq: registry$make_higher_or_equal(reg, ps.gt, ps.lt)
+		  tag eq:    registry$make_equal(reg, ps.gt, ps.lt)
+		  end
+	   tag stat (ss: stat_sug):
+	       registry$set_status(reg, ss.op, ss.stat)
+	   end except when redundant: end
+	end
+    return(rr, suggestions$make_single(ssa))
+    end dsmpos_choice
+
+
+% An "automatic" version of DSMPOS.  If "eq" can be ordered using the registry
+% "reg", returns the resulting rewrite rule.  Otherwise, DSMPOS provides a
+% sequence of suggestions for modifying the registry to make the equation
+% orderable, with suggestions for left-to-right ordering preceding those for
+% right-to-left.  "Choice" represents an index into this sequence.  If "choice"
+% is greater than the number of suggestions, or if the user has constrained
+% "eq" to be ordered from left-to-right and "choice" is the number of a
+% right-to-left ordering suggestion, signals "cannot_orient".  Otherwise,
+% modifies "reg" according to the suggestion indicated by "choice", and signals
+% "modified_registry(rr, sug)", where "rr" is the ordered rewrite rule and
+% "sug" is an array of strings representing the accepted suggestion.
+
+dsmpos_auto = proc [use_eq: bool] (reg: registry, eq: equation, choice: int)
+		returns (rewrite_rule)
+		signals (cannot_orient, modified_registry(rewrite_rule))
+    return(dsmpos_quiet[use_eq](reg, eq))
+       except when cannot_orient: end
+    l2r: suggestions := suggestions$[]
+    r2l: suggestions := suggestions$[]
+    crr: bool := false
+    dsmpos_attempt(use_eq, true, reg, eq)
+       except
+	  when l2r, r2l (rr: rewrite_rule): return(rr)
+	  when cannot_orient, reversible:   signal cannot_orient
+	  when suggest (l2r_2, r2l_2: suggestions, crr1: bool):
+	       l2r := l2r_2
+	       crr := crr1
+	       if crr1
+		  then if equation$can_be_cr_reversed(eq) then r2l := r2l_2 end
+		  else equation$e2r_reversed(eq)
+		       r2l := r2l_2
+		  end except when invalid_rule, user_prevents (*): end
+	  end
+    rr: rewrite_rule, s: suggestions :=
+	dsmpos_choice(choice, reg, eq, crr, l2r, r2l)
+       except when bad_choice: signal cannot_orient end
+    tracer$accepted_suggestions(s)
+    signal modified_registry(rr)
+    end dsmpos_auto
+
+
+% Attempts to order "eq" using DSMPOS and the information in "reg" into a
+% conditional rewrite rule or, failing that, an unconditional rewrite rule.
+% Signals "l2r" or "r2l" with the resulting rule if successful, unless
+% suggestions might enable "eq" to be ordered into a conditional rewrite rule.
+% Signals "reversible" if "eq" can be ordered into an unconditional rewrite
+% rule from right to left, but the user has constrained it to be ordered from
+% left to right.  Signals "suggest(s1, s2, crr)" if "sug" is true and "reg" can
+% be extended by the suggestions in "s1" to order "eq" from left to right or by
+% the suggestions in "s2" to order "eq" from right to left; in this case, "crr"
+% is true if the resulting rewrite rule is conditional.  Otherwise signals
+% "cannot_orient".
+
+dsmpos_attempt = proc (use_eq: bool, sug: bool, reg: registry, eq: equation) 
+		   signals (l2r(rewrite_rule), r2l(rewrite_rule), 
+                            cannot_orient, reversible,
+                            suggest(suggestions, suggestions, bool))
+    begin
+	l2r: bool := false
+	r2l: bool := false
+	reversed: bool := false
+	suggested: bool := false
+	l2r_sug, r2l_sug: suggestions 
+        if sug then
+           l2r_sug := suggestions$[]
+   	   r2l_sug := suggestions$[]
+           end
+	rr: rewrite_rule := rewrite_rule$e2cr(eq)
+	   except when impossible: rr := rewrite_rule$e2cr_reversed(eq)
+	      			   % Signal caught below if eq cannot be crr
+				   reversed := true
+		  end
+	left: term := term$replace_quantifiers(rr.left)
+	right: term := term$replace_quantifiers(rr.right)
+	tagcase dsmpos_ext(use_eq, sug, left, right, reg)
+	   tag gt: l2r := true
+	   tag lt: if reversed then exit cannot_orient_crr end
+		   rr := rewrite_rule$e2cr_reversed(eq)
+		   reversed := true
+		   l2r := true
+	   others: exit try_with_sug
+	   end except when suggest (l2r2, r2l2: suggestions):
+		           if ~suggestions$empty(l2r2) then 
+			      l2r := true
+			      l2r_sug := l2r2
+			      end
+		           if ~reversed cand ~suggestions$empty(r2l2)
+				cand rewrite_rule$can_be_cr_reversed(eq) then
+			      r2l := true
+			      r2l_sug := r2l2
+			      end
+			   suggested := true
+		      end
+	for t: term in rewrite_rule$conditions(rr) do
+	    t := term$replace_quantifiers(t)
+	    if l2r then
+	       tagcase dsmpos_ext(use_eq, sug, left, t, reg)
+		  tag gt:
+		  others: l2r := false
+		  end except when suggest (l2r2, r2l2: suggestions):
+			          l2r_sug := l2r_sug || l2r2
+				  suggested := true
+			     end
+	       end
+	    if r2l then
+	       tagcase dsmpos_ext(use_eq, sug, right, t, reg)
+		  tag gt:
+		  others: r2l := false
+		  end except when suggest (l2r2, r2l2: suggestions):
+				  r2l_sug := r2l_sug || l2r2
+				  suggested := true
+			     end
+	       end
+	    if ~l2r cand ~r2l then exit try_with_sug end
+	    if suggested cand suggestions$empty(l2r_sug) cand
+	       suggestions$empty(r2l_sug) then exit cannot_orient_crr end
+	    end
+	if suggested then 
+	   if sug 
+	      then if reversed 
+		      then signal suggest(r2l_sug, l2r_sug, true)
+		      else signal suggest(l2r_sug, r2l_sug, true) 
+		      end
+	      else signal cannot_orient
+	      end
+	   end
+        if l2r cand ~reversed then signal l2r(rr) end
+        if r2l cor (l2r cand reversed) then signal r2l(rr) end
+	end except when impossible, cannot_orient_crr: 
+                   when try_with_sug: if ~sug then signal cannot_orient end
+                   end
+
+    left: term := term$replace_quantifiers(eq.left)
+    right: term := term$replace_quantifiers(eq.right)
+    tagcase dsmpos_ext(use_eq, sug, left, right, reg)
+       tag gt: signal l2r(rewrite_rule$e2r(eq))
+       tag lt: signal r2l(rewrite_rule$e2r_reversed(eq))
+       tag undefined: signal cannot_orient
+       end except when invalid_rule: signal cannot_orient
+	          when user_prevents (*): signal reversible
+		  when suggest (l2r, r2l: suggestions):
+                       signal suggest(l2r, r2l, false)
+		  end
+    end dsmpos_attempt
+
+
+% Returns "true" if "rr" is guaranteed to terminate when oriented by dsmpos,
+% which is the case if either the left or the right side of "rr" contains no ac
+% operators.  ENHANCE: Provide more guarantees by checking each subterm of 
+% "rr.left" headed by an ac operator against the subterms of "rr.right" headed
+% by equivalent (in the precedence) operators with which it was compared in a
+% multiset comparison.  Termination is guaranteed if each such subterm of 
+% "rr.left" is used to take care of at most one subterm of "rr.right", or if it
+% contains an operator greater than its root in the precedence.
+
+dsmpos_warranty = proc (rr: rewrite_rule, osys: op_system, reg: registry)
+		    returns (bool)
+    % Return "true" if experimental ac-dsmpos is in use.
+    if interactive$get_debug() then return(true) end
+    right_ac: bool := false
+    for op: operator in op_set$elements(rr.right.ops) do
+	if op_theory$is_ac(op_system$lookup_theory_quickly(osys, op)) then
+	    right_ac := true
+	    break
+	    end
+	end
+    if ~right_ac then return(true) end
+    for op: operator in op_set$elements(rr.left.ops) do
+	if op_theory$is_ac(op_system$lookup_theory_quickly(osys, op)) then
+	    return(false)
+	    end
+	end
+    return(true)
+    end dsmpos_warranty

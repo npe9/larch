@@ -1,0 +1,256 @@
+#extend
+
+% This file contains procedures for eliminating quantifiers from formulas.
+
+% Returns the formula obtained from "f" by eliminating the unique accessible
+% prenex-existential quantifier (if "is_e" is true), or the unique accessible
+% prenex-universal quantifier (if "is_e" is false), that binds "v" in "f" and 
+% by substituting "vt" for the occurrences of "v" bound by that quantifier.  
+% Signals
+% (1) "missing" if "v" is not bound by any such quantifier in "f"
+% (2) "ambiguous" if "v" is bound by more than one such quantifier in "f"
+% (4) "need_vars" if the free variables in "vt" do not include all the free
+%     variables in "f" as well as all variables quantified by prenex-universal 
+%     quantifiers in whose scope the eliminated quantifier occurs, except for
+%     those variables that are rebound by intervening prenex-existential 
+%     quantifiers.
+% Changes bound variables, if necessary, in "f" to avoid some free variable in
+% "vt" from being bound.
+
+% NOTE: It is the responsibility of the caller to ensure that "t" has the form
+% "sk(v1, ..., vn)", where "sk" is a fresh function identifier.
+
+exists_elimination = proc (f: formula, v: variable, vt: term, is_e: bool,
+		  	   osys: op_system, stab: symtab) 
+		       returns (formula)
+		       signals (missing, ambiguous, need_vars)
+    t: term := f.formula
+    if var_set$exists(t.fvars, v) then
+       if is_e
+	  then % Any quantifier on "v" is inaccessible.
+	       signal missing  
+	  else % Eliminate implicit quantifier binding the free variable
+	       sigma: substitution := substitution$[]
+	       sigma[v] := vt
+	       return(formula$create(substitution$apply(sigma, t, stab)))
+	  end
+       end
+    t := flatten(e_elim_term(t, v, vt, is_e, t.fvars, stab), osys)
+       resignal missing, ambiguous, need_vars
+    return(formula$create(t))
+    end exists_elimination
+
+
+% Returns the term obtained from "t" by eliminating the unique accessible
+% prenex-existential quantifier (if "is_e" is true), or the unique accessible
+% prenex-universal quantifier (if "is_e" is false), that binds "v" in "e" and
+% by substituting "vt" for the occurrences of "v" bound by that quantifier.
+% Quantifiers over variables in "vars" are regarded as inaccessible.  Signals
+% as for "exists_elimination" (with "t" in place of "f" and with "vars" in
+% place of `all the free variables in "f"').
+
+% Assumes: "vars" is a subset of "t.fvars"
+
+e_elim_term = proc (t: term, v: variable, vt: term, is_e: bool, vars: var_set,
+		    stab: symtab)
+		returns (term) signals (missing, ambiguous, need_vars)
+    if ~var_set$exists(t.bvars, v) then signal missing end
+    tagcase t
+       tag funct:
+	   op: operator := t.root
+	   if op = op_not() then
+	      t := e_elim_term(t.args[1], v, vt, ~is_e, vars, stab)
+	      return(term1(op, t))
+	    elseif op = op_and() cor op = op_or() then
+	      args: term_seq := e_elim_ts(t.args, v, vt, is_e, vars, stab)
+	      return(term$make_funct(op, args))
+	    elseif op = op_implies() then
+	      left: term := t.args[1]
+	      right: term := t.args[2]
+	      changes: int := 2
+	      left := e_elim_term(left, v, vt, ~is_e, vars, stab)
+		 except when missing: changes := changes - 1 end
+	      right := e_elim_term(right, v, vt, is_e, vars, stab)
+		 except when missing: changes := changes - 1 end
+	      if changes = 0 then signal missing
+	       elseif changes = 1 then return(term2(op, left, right))
+	       else signal ambiguous
+	       end
+	    else signal missing
+	    end
+       tag quant:
+	   q: quantifier := t.quant
+	   if q.var = v
+	      then if q.is_universal = is_e then signal missing
+		    elseif var_set$is_subset(vars, vt.vars) then
+		      sigma: substitution := substitution$[]
+		      sigma[v] := vt
+		      return(substitution$apply(sigma, t.subform, stab))
+		    else signal need_vars
+		    end
+	      else t1: term := t.subform
+		   vs: var_set := vars
+		   if q.is_universal = is_e 
+		        cand var_set$exists(t1.fvars, q.var)
+			cand ~var_set$exists(vars, q.var) then
+		      vs := var_set$copy1(vars)
+		      var_set$insert_unique(vs, q.var)
+		      end
+		   t1 := e_elim_term(t1, v, vt, is_e, vs, stab)
+		   return(term$make_quant(q, t1))
+	      end
+       tag var:
+           signal missing
+       end resignal missing, ambiguous, need_vars
+    fail("e_elim_term")
+    end e_elim_term
+
+
+e_elim_ts = proc (ts: term_seq, v: variable, vt: term, is_e: bool, vs: var_set,
+		  stab: symtab)
+	      returns (term_seq) signals (missing, ambiguous, need_vars)
+    found: bool := false
+    for i: int in term_seq$indexes(ts) do
+	t: term := e_elim_term(ts[i], v, vt, is_e, vs, stab)
+	   except when missing: continue end
+	if found then signal ambiguous end
+	ts := term_seq$replace(ts, i, t)
+	found := true
+	end resignal ambiguous, need_vars
+    if found
+       then return(ts)
+       else signal missing
+       end
+    end e_elim_ts
+
+
+% Returns the formula obtained from "f" by eliminating all accessible
+% prenex-universal quantifiers (if "is_a" is true), or all accessible
+% prenex-existential quantifiers (if "is_a" is false), that bind a variable in
+% the domain of "sigma" and by applying "sigma" to the result.  Signals
+% "missing" if no quantifier is eliminated and "f" does not contain a free
+% variable in the domain of "sigma".  Changes bound variables, if necessary, in
+% "f" to prevent them from capturing a free variable in "sigma[v]" for some "v"
+% in the domain of "sigma".
+
+all_elimination = proc (f: formula, sigma: substitution, is_a: bool, 
+		        osys: op_system, stab: symtab) returns
+		  (formula) signals (missing)
+    t: term := f.formula
+    sigma1: substitution := sigma
+    if ~is_a then	% Remove free variables in "t" from domain of "sigma"
+       copied: bool := false
+       for v: variable in var_set$elements(t.fvars) do
+	   if substitution$exists(sigma, v) then
+	      if ~copied then
+		 sigma1 := substitution$copy(sigma)
+		 copied := true
+		 end
+	      substitution$undefine(sigma1, v)
+	      end
+	   end
+       end
+    if ~var_set$intersect(t.vars, sigma1.domain) then signal missing end
+    t := a_elim_term(t, sigma1, is_a, t.fvars, stab)
+       resignal missing
+    return(formula$create(flatten(t, osys)))
+    end all_elimination
+
+
+% Returns the term obtained from "t" by eliminating all accessible
+% prenex-universal quantifiers (if "is_a" is true), or all accessible
+% prenex-existential quantifiers (if "is_a" is false), that bind a variable in
+% the domain of "sigma" and by applying "sigma" to the result.  Quantifiers
+% over variables in "vars" are regarded as inaccessible.  Signals as for
+% "all_elimination".
+
+a_elim_term = proc (t: term, sigma: substitution, is_a: bool, vars: var_set, 
+	            stab: symtab) 
+                returns (term) signals (missing)
+    if ~var_set$intersect(t.bvars, sigma.domain) then 
+       return(apply_substitution(t, sigma, stab))
+       end resignal missing
+    tagcase t
+       tag funct:
+	   op: operator := t.root
+	   if op = op_not() then
+	      t := a_elim_term(t.args[1], sigma, ~is_a, vars, stab)
+	      return(term1(op, t))
+	    elseif op = op_and() cor op = op_or() then
+	      args: term_seq := a_elim_ts(t.args, sigma, is_a, vars, stab)
+	      return(term$make_funct(op, args))
+	    elseif op = op_implies() then
+	      left: term := t.args[1]
+	      right: term := t.args[2]
+	      changes: int := 2
+	      left := a_elim_term(left, sigma, ~is_a, vars, stab)
+		 except when missing: changes := changes - 1 end
+	      right := a_elim_term(right, sigma, is_a, vars, stab)
+		 except when missing: changes := changes - 1 end
+	      if changes = 0 
+		 then signal missing
+		 else return(term2(op, left, right))
+		 end
+	    else return(apply_substitution(t, sigma, stab))
+	    end
+       tag quant:
+	   q: quantifier := t.quant
+	   t1: term := t.subform
+	   v: variable := q.var
+	   sigma1: substitution := sigma
+	   vars1: var_set := vars
+	   if (var_set$exists(vars, v) cand substitution$exists(sigma, v))
+		cor q.is_existential = is_a then
+	      % Either this quantifier is inaccessible (because it is within 
+	      % the scope of another quantifier over the same variable), or it 
+	      % is not the kind we are trying to eliminate.
+	      sigma1 := substitution$copy(sigma)
+	      substitution$undefine(sigma1, v)
+	      end
+	   if ~var_set$exists(vars, v) then
+	      % This variable is used now.
+	      vars1 := var_set$copy(vars)
+	      var_set$insert_unique(vars1, v)
+	      end
+	   if substitution$exists(sigma1, v)
+	      then return(a_elim_term(t1, sigma1, is_a, vars1, stab))
+		      except when missing: return(t1) end
+	      else t1 := a_elim_term(t1, sigma1, is_a, vars1, stab)
+	           return(term$make_quant(q, t1))
+	      end
+       tag var:
+	   fail("a_elim_term")
+       end resignal missing
+    fail("a_elim_term")
+    end a_elim_term
+
+
+a_elim_ts = proc (ts: term_seq, sigma: substitution, is_a: bool, vars: var_set,
+	          stab: symtab)
+	      returns (term_seq) signals (missing)
+    found: bool := false
+    ta: term_arr
+    for i: int in term_seq$indexes(ts) do
+	t: term := a_elim_term(ts[i], sigma, is_a, vars, stab)
+	   except when missing: continue end
+	if ~found then
+	   ta := term_seq$s2a(ts)
+	   found := true
+	   end
+	ta[i] := t
+	end
+    if found
+       then return(term_seq$a2s(ta))
+       else signal missing
+       end
+    end a_elim_ts
+
+
+apply_substitution = proc (t: term, sigma: substitution, stab: symtab) 
+		       returns (term) signals (missing, captured)
+    t1: term := substitution$apply(sigma, t, stab)
+    if term$same_object(t, t1)
+       then signal missing
+       else return(t1)
+       end
+    end apply_substitution

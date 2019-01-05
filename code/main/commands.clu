@@ -1,0 +1,109 @@
+#extend
+
+lp_commands = proc () returns (c_act_seq)
+    as: c_act_seq := 
+	c_act_seq$[
+	    c_act${name: "apply",		   choice: c_apply},
+	    c_act${name: "assert",		   choice: c_assert},
+	    c_act${name: "[]",			   choice: c_box},
+	    c_act${name: "cancel",		   choice: c_cancel},
+	    c_act${name: "clear",		   choice: c_clear},
+	    c_act${name: "complete",		   choice: c_complete},
+	    c_act${name: "critical-pairs",	   choice: c_critical_pairs},
+	    c_act${name: "declare",		   choice: c_declare},
+	    c_act${name: "define-class",	   choice: c_class},
+	    c_act${name: "delete",		   choice: c_delete},
+	    c_act${name: "<>",			   choice: c_diamond},
+	    c_act${name: "display",		   choice: c_display},
+	    c_act${name: "execute",	  	   choice: c_execute},
+	    c_act${name: "execute-silently", 	   choice: c_execute_silently},
+	    c_act${name: "find-instantiations",	   choice: c_find_instantiations},
+	    c_act${name: "fix",			   choice: c_fix},
+	    c_act${name: "forget",		   choice: c_forget},
+	    c_act${name: "freeze",		   choice: c_freeze},
+	    c_act${name: "freeze-current",	   choice: c_freeze_current},
+	    c_act${name: "help",		   choice: c_help},
+	    c_act${name: "history",		   choice: c_history},
+	    c_act${name: "instantiate",		   choice: c_instantiate},
+	    c_act${name: "make",		   choice: c_make},
+	    c_act${name: "normalize",		   choice: c_normalize},
+	    c_act${name: "order",		   choice: c_order},
+	    c_act${name: "pop-settings",	   choice: c_pop_settings},
+	    c_act${name: "prove",		   choice: c_prove},
+	    c_act${name: "push-settings",	   choice: c_push_settings},
+	    c_act${name: "qed",			   choice: c_qed},
+	    c_act${name: "quit",		   choice: c_quit},
+	    c_act${name: "q",			   choice: c_quit},
+	    c_act${name: "register",		   choice: c_register},
+	    c_act${name: "resume",		   choice: c_resume_proof},
+	    c_act${name: "rewrite",		   choice: c_rewrite},
+	    c_act${name: "set",			   choice: c_set},
+	    c_act${name: "show",		   choice: c_show},
+	    c_act${name: "statistics",		   choice: c_statistics},
+	    c_act${name: "stop",		   choice: c_stop},
+	    c_act${name: "thaw",		   choice: c_thaw},
+	    c_act${name: "unorder",		   choice: c_unorder},
+	    c_act${name: "unregister",		   choice: c_unregister},
+	    c_act${name: "unset",		   choice: c_unset},
+	    c_act${name: "version",		   choice: c_version},
+	    c_act${name: "write",		   choice: c_write}
+		   ]
+    return(as)
+    end lp_commands
+
+
+xcommands = proc () returns (c_act_seq)
+    as: c_act_seq := 
+	c_act_seq$[
+	    c_act${name: "zap", 		   choice: c_zap}
+		   ]
+    return(as)
+    end xcommands
+
+
+    
+% The following new commands are handled by the prover front-end when LP is run
+% using the "-p" option.  They deal with proof attempts and contexts.  Since LP
+% cannot easily check their arguments, it sends them to the prover front-end,
+% which analyzes them and sends back a "private" command with the right
+% arguments.  Other capabilities are provided as new options to existing
+% commands, e.g.  display, cancel,...
+
+prover_commands = proc () returns (c_act_seq)
+    as: c_act_seq := 
+	c_act_seq$[
+%	    c_act${name: "list",	   choice: ninteractive$list_one},
+%	    c_act${name: "list-all",	   choice: ninteractive$list_all},
+%	    c_act${name: "next-attempt",   choice: ninteractive$next_attempt},
+%	    c_act${name: "select-context", choice: ninteractive$select_context},
+%	    c_act${name: "new-attempt",	   choice: ninteractive$new_attempt},
+%	    c_act${name: "continue",	   choice: ninteractive$next_step}
+		   ]
+    return(as)
+    end prover_commands
+
+
+% The following private commands are issued by the front-end under the "-p"
+% option.  More commands will be added to this preliminary list, as we need
+% them.
+
+front_end_commands = proc () returns (c_act_seq)
+    as: c_act_seq := 
+	c_act_seq$[
+%	    c_act${name: "quit-loop",
+%		   choice: ninteractive$quit_loop},
+%	    c_act${name: "user-quit",
+%		   choice: ninteractive$user_quit},
+%	    c_act${name: "Icreate-context",
+%		   choice: ninteractive$create_context},
+%	    c_act${name: "Icancel-command",
+%		   choice: ninteractive$Icancel_command},
+%	    c_act${name: "Iselect-context",
+%		   choice: ninteractive$Iselect_context},
+%	    c_act${name: "Idelete-attempt",
+%		   choice: ninteractive$delete_attempt},
+%	    c_act${name: "Iconfirm-proved",
+%		   choice: ninteractive$confirm_proved}
+		   ]
+    return(as)
+    end front_end_commands

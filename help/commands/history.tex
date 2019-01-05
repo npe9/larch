@@ -1,0 +1,39 @@
+\doc{The history command}
+\ref{history-command}
+
+The \def{history command} produces a list of the commands executed by LP.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{history-command} ::= \f{history} [ \slink{../symbols/symbols}{number} | \f{all} ]
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+history
+history 10
+history all
+\end{verbatim}
+
+\head{2}{Usage} 
+When supplied with an argument, the \fq{history} command prints a list of the
+\s{number} most recent commands executed by LP or of all commands executed by
+LP.  When not supplied with an argument, it behaves in the same fashion as the
+last \fq{history} command (or as \fq{history all} if it is the first
+\fq{history} command).
+\p
+LP annotates the history by commenting out erroneous commands, by marking the
+beginning and end of \dlink{execute}{executed} files, by \dlink{box}{marking}
+the creation of subgoals and the completion of proofs, and by indenting the
+history to reveal its proof structure.
+\p
+After a \dflink{freeze_thaw}{thaw} command, LP's current history is
+replaced by the history that led to the corresponding
+\dflink{freeze_thaw}{freeze}.  Thus a \setlink{script} file provides a 
+record of the commands executed during the current LP session, and the history
+provides a record of commands that will recreate LP's current state.
+\p
+Users who want a script that will recreate LP's current state, but who have
+forgotten to issue a \dflink{../settings/script}{set script} command, can
+issue a \dflink{../settings/log}{set log} command instead followed by a
+\fq{history all} command to capture the script in the log file.

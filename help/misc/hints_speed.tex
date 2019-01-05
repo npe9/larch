@@ -1,0 +1,33 @@
+\doc{Hints on making proofs go faster}
+\ref{hints-speed}
+
+When LP seems too slow, use the \cflink{statistics} command to find out which
+activities are consuming a lot of time.  If rewriting (particularly,
+unsuccessful rewriting) is costly, try one of the following.
+\begin{itemize}
+\item
+\dlink{../settings/immunity}{Immunize} facts that you know are irreducible.  
+LP will not waste time trying to reduce them.
+\item
+\dlink{../settings/activity}{Deactivate} rewrite rules that are needed only 
+occasionally.
+\item
+\dlink{../commands/make}{Make} definitions passive and apply them manually.
+\item
+Avoid big terms, especially with
+\llink{operator-theory}{associative-commutative} operators.  Seek different
+axiomatizations or proof strategies if they occur.
+\end{itemize}
+
+If ordering is costly, put ordering constraints in the
+\dlink{../commands/register}{registry}, particularly if you have declared many 
+operators.  It may also help to put ordering constraints in the registry prior
+to a proof by \plink{by-cases}{cases} to save the cost of having LP rediscover
+these constraints in each of the cases.
+\p
+If unification or critical pairing is costly, try to use smaller rule lists as
+arguments to the \cflink{critical-pairs} command.  Also, try to avoid computing
+critical pairs between rewrite rules that contain subterms such as 
+\fq{t1 /\ t2 /\ ... /\ t5}, with multiple occurrences of the
+same \llink{operator-theory}{associative-commutative} operator.
+

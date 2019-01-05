@@ -1,0 +1,26 @@
+\doc{Infix, prefix, and postfix operators}
+\ref{infix-operators}
+\ref{prefix-operators}
+\ref{postfix-operators}
+
+LP allows users to \clink{declare} symbols that can be used for infix, postfix,
+and prefix notations.  Users can declare a simple operator (i.e., a
+\slink{operator}{simpleOp}) for such use by decorating it with one or two
+markers (\f{__}) to indicate the location(s) of its arguments.  For example,
+the declarations
+\begin{verbatim}
+declare operators 
+  __+__, __\mod__: Nat, Nat -> Nat   % infix operators
+  -__:             Nat      -> Nat   % prefix operator
+  __!:             Nat      -> Nat   % postfix operator
+  ..
+\end{verbatim}
+allow the use of infix (e.g., \f{(x + 1) \mod n}), prefix (e.g., \f{~p} and
+\f{-x}), and postfix (e.g., \f{3!}) notations.  Users can also declare a
+\def{selection operator} for use in postfix notations.  For example, the
+declaration 
+\begin{verbatim}
+declare operator __.first: Queue -> Element
+\end{verbatim}
+allows the use of postfix notations such as \fq{q.first}.  See
+\dlink{operator}{operator}. 

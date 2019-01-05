@@ -1,0 +1,206 @@
+#extend
+
+% This file exports the "ordering_choice" procedure, which is invoked by
+% interactive ordering procedures to present the user with an appropriate list
+% of choices for ordering an equation into a rewrite rule.
+
+
+% Command table definitions
+
+order_act = struct[name: string, choice: order_command]
+order_act_seq = sequence[order_act]
+
+basic_seq = order_act_seq$[
+	        order_act${name: "divide",
+			   choice: order_command$make_divide(nil)},
+		order_act${name: "interrupt",
+			   choice: order_command$make_interrupt(nil)},
+		order_act${name: "kill",
+			   choice: order_command$make_kill(nil)},
+		order_act${name: "ordering",
+			   choice: order_command$make_ordering(nil)},
+		order_act${name: "postpone",
+			   choice: order_command$make_postpone(nil)}]
+
+l2r_seq = order_act_seq$[
+	      order_act${name: "left-to-right",
+			 choice: order_command$make_l2r(nil)}]
+
+r2l_seq = order_act_seq$[
+	      order_act${name: "right-to-left",
+			 choice: order_command$make_r2l(nil)}]
+
+rev_seq = order_act_seq$[
+	      order_act${name: "reverse",
+			 choice: order_command$make_reverse(nil)}]
+
+sug_seq = order_act_seq$[
+	      order_act${name: "suggestions",
+			 choice: order_command$make_suggestions(nil)}]
+unc_seq = order_act_seq$[
+	      order_act${name: "unconditional",
+			 choice: order_command$make_unconditional(nil)}]
+
+basic_order_comtab = proc () returns (order_ct)
+    own basic: order_ct := order_ct${help: order_ct$help_retry, delims: "", 
+    				     label: "action", as: basic_seq}
+    return(order_ct$copy(basic))
+    end basic_order_comtab
+
+
+% The following types describe "hints" for ordering equations into rules
+% (instantiated as "suggestions" for DSMPOS).
+
+hints_type 
+  = { t | t has empty: proctype (t) returns (bool),
+		size: proctype (t) returns (int),
+		print: proctype (printer, symtab, string, t, int)}
+
+
+% Presents options for ordering "eq" to the user and returns the user's choice.
+% The user can always POSTPONE an equation, DIVIDE it into two equations by
+% introducing a new operator, request information on the ORDERING, see the
+% SUGGESTIONS again, or INTERRUPT the ordering process.  If "reverse" is true,
+% the user can REVERSE the equation to order it from right to left (callers set
+% "reverse" true when the current registry orders an equation from left to
+% right, but the user has specified that it should be ordered from left to
+% right by entering it with -> instead of ==).  If valid rewrite rules result,
+% the user can also order the equation from LEFT-TO-RIGHT or RIGHT-TO-LEFT;
+% RIGHT-TO-LEFT is not presented as an option if "reverse" is true.  Finally,
+% if "l2r" or "r2l" is nonempty, the user can accept an ordering suggestion.
+% When the appropriate options have been determined, the user is prompted to
+% pick one, and an "order_action" appropriate to the choice is returned.  (See
+% "ordering/Equates.equ" for the definition of the "order_action" type.)
+
+% ENHANCE: Present ORDERING as a choice only with registered orderings.
+
+
+ordering_choice = proc [hints: type] 
+			   (eq: equation, reg: registry, p: printer, 
+			    stab: symtab, l2r, r2l: hints, reverse, crr: bool,
+			    hint_choice: proctype (int, registry, equation, 
+						   bool, hints, hints)
+					   returns (rewrite_rule, hints)
+					   signals (bad_choice))
+		    returns (order_action)
+	    where hints in hints_type
+
+    % Determine what options to offer the user.  Start with the basic set, then
+    % augment that set as we find that other options are available.
+
+    choices: order_ct := basic_order_comtab()
+    neither_way: bool := true
+    cl2r: bool := equation$can_be_cr(eq)
+    cr2l: bool := equation$can_be_cr_reversed(eq)
+    cr: bool := cl2r cor cr2l
+    n_hints: int := hints$size(l2r) + hints$size(r2l)
+    
+    if n_hints > 0 then
+       choices := order_ct$append(choices, sug_seq)
+       print_suggestions[hints](p, stab, crr, l2r, r2l)
+       oa: order_act := order_act${name: "accept[1.." || int$unparse(n_hints) 
+					   || "]",
+				   choice: order_command$make_accept(1)}
+       choices := order_ct$append(choices, order_act_seq$[oa])
+       end
+    if cl2r cor (~cr cand equation$is_orderable(eq)) then
+       choices := order_ct$append(choices, l2r_seq) 
+       neither_way := false
+       end
+    if reverse then
+       printer$text(p, "\nThis equation could be oriented from right to left, ")
+       printer$text(p, "but it is, or is derived from, an equation that you ")
+       printer$text(p, "wanted to orient from left to right.  You may want to ")
+       printer$text(p, "`reverse' it.\n")
+       choices := order_ct$append(choices, rev_seq)
+       neither_way := false
+     elseif cr2l cor (~cr cand equation$is_reversible(eq)) then
+       choices := order_ct$append(choices, r2l_seq)
+       neither_way := false
+     end
+    if neither_way cand ~cr then
+       printer$text(p, "\nThis equation is incompatible: its right side ")
+       printer$text(p, "contains variables not in its left side, and ")
+       printer$text(p, "vice versa.  You may want to `divide' it.\n")
+       end
+    if cr then choices := order_ct$append(choices, unc_seq) end
+
+    while true do
+	tagcase query$ordering_choice(choices, n_hints)
+	   tag accept (n: int):
+	       rr: rewrite_rule, h: hints :=
+		   hint_choice(n, reg, eq, crr, l2r, r2l)
+	       return(order_action$make_user(rr))
+	   tag divide:
+	       return(order_action$make_divide(query$new_op(stab, eq)))
+	   tag interrupt: return(interrupt_order_action)
+	   tag kill:
+	       printer$text(p, "\nThe equation has been deleted.\n")
+	       return(order_action$make_kill(nil))
+	   tag l2r:
+	       rr: rewrite_rule
+	       printer$text(p, "\nThe equation has been oriented from left ")
+	       printer$text(p, "to right into a ")
+	       if cl2r 
+		  then printer$text(p, "conditional ") 
+		       rr := equation$e2cr(eq)
+		  else rr := equation$e2r(eq)
+		  end
+	       printer$text(p, "rewrite rule.  The rewriting system is not ")
+	       printer$text(p, "guaranteed to terminate.\n")
+	       return(order_action$make_manual(rr))
+	   tag ordering:
+	       registry$display(reg, p, eq.ops, stab)
+	   tag postpone:
+	       printer$text(p, "\nConsideration of the equation has been ")
+	       printer$text(p, "postponed.\n")
+	       return(order_action$make_postpone(nil))
+	   tag r2l:
+	       rr: rewrite_rule
+	       printer$text(p, "\nThe equation has been oriented from right ")
+	       printer$text(p, "to left into a ")
+	       if cr2l
+		  then printer$text(p, "conditional ") 
+		       rr := equation$e2cr_reversed(eq)
+		  else rr := equation$e2r_reversed(eq)
+		  end
+	       printer$text(p, "rewrite rule.  The rewriting system is not ")
+	       printer$text(p, "guaranteed to terminate.\n")
+	       return(order_action$make_manual(rr))
+	   tag reverse:
+	       return(order_action$make_user(equation$e2r_reversed(eq)))
+	   tag suggestions:
+	       tracer$present_equation(eq)
+	       print_suggestions[hints](p, stab, crr, l2r, r2l)
+	   tag unconditional:
+	       rr: rewrite_rule 
+	       if is_term_true(eq.right)
+		  then rr := equation$e2r(eq)
+		  else rr := equation$e2r_reversed(eq)
+		  end
+	       return(order_action$make_user(rr))
+	   end except when error (b: bool): 
+			   if b then return(interrupt_order_action) end
+		      when no_response, end_of_file: 
+		           return(interrupt_order_action)
+		      end
+	end
+    end ordering_choice
+
+
+% (Local procedure)
+
+print_suggestions = proc [hints: type] (p: printer, stab: symtab, crr: bool,
+					l2r, r2l: hints)
+	    where hints in hints_type
+    printer$text(p, "\nThe following sets of suggestions will allow ")
+    printer$text(p, "the equation to be oriented into a ")
+    if crr then printer$text(p, "conditional ") end
+    printer$text(p, "rewrite rule:\n\n")
+    printer$puts(p, "    Direction   Suggestions")
+    printer$newline(p)
+    printer$puts(p, "    ---------   -----------")
+    printer$newline(p)
+    hints$print(p, stab, "->", l2r, 0)
+    hints$print(p, stab, "<-", r2l, hints$size(l2r))
+    end print_suggestions

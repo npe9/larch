@@ -1,0 +1,94 @@
+#extend
+
+% Processes the "fix" command.  Gets input of the form
+% 
+%    <variable> as <term> in <class-expression>
+%
+% from the user, prompting the user if necessary for the variable, term, and
+% the <class-expression>.  If parsing is unsuccessful, prints an error message
+% and returns.  Otherwise, eliminates the unique accessible prenex-existential
+% quantifier binding the variable in the named facts, substitutes the term for
+% all occurrences of the variable bound by that quantifier, normalizes the
+% results unless they are immune, and adds them to the system.  Prints an error
+% message, and does not change the system, if there is more than one accessible
+% prenex-existential quantifier binding the variable or if the term is not an
+% appropriate skolem term for all occurrences of that variable.
+
+c_fix = proc (i: interactive) signals (error)
+    scan: scanner := scanner$from_string("", i.p)
+    v: variable, t: term, ce: class_expression :=
+	fix_args(scan, i.symtab, i.sys.ops + i.prover.ops)
+       except when none: return
+	      when error: aborted(i.p, "error in `fix' command")
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    tracer$remember_size(i.sys)
+    m: string := ""
+    ns: name_set := class_expression$full_eval(ce, i.sys, i.symtab.classes)
+       except when undefined (cn: class_name):
+		   aborted(i.p, "Undefined class name: "|| cn)
+	      end resignal error
+    system$fix(i.sys, v, t, ns, i.symtab)
+       except when missing: m := "no eliminable existential quantifier"
+	      when ambiguous: m := "ambiguous which quantifier to eliminate"
+	      when need_vars: m := "Skolem term needs more variables"
+	      end
+    if m ~= "" then aborted(i.p, m) end
+       resignal error
+    prover$make_inferences(i, stabilize_task_mode)
+       except when interrupt, proved: end
+    end c_fix
+
+
+% Gets arguments for the "fix" command using the multiline input convention.
+% Signals "none" if there is no input.  Prints an error message and signals
+% "error" or "bad_names" if there is an error.  Otherwise returns a
+% substitution together with a list of names for objects to which the
+% substitution should be applied.  Syntax: <variable> as <term> in
+% <class-expression>
+    
+fix_args = proc (scan: scanner, stab: symtab, ops: op_set)
+	     returns (variable, term, class_expression)
+	     signals (none, error)
+    msg1 = "term must be an application of an operator"
+    msg2 = "term must be an application of a new operator"
+    msg3 = "arguments of operator must be variables"
+    msg4 = "arguments of operator must be distinct variables"
+    query$get_more(scan, "the variable to fix", fix_syntax)
+       resignal none
+    loc: locator := scan.nextToken.loc
+    sigma: substitution := psubstitution$read(scan, stab, "as")
+       resignal error
+    if substitution$size(sigma) > 1 then
+       scanner$error_at(scan, loc, "more than one variable to fix")
+       signal error
+       end
+    % FIX: Below "loc" should be the location of the term, not the variable.
+    v: variable := var_set$any_element(sigma.domain)
+       except when empty: scanner$error_at(scan, loc, msg1)
+	                  signal error
+	      end
+    t: term := sigma[v]
+    msg: string := ""
+    if ~term$is_funct(t) then                                  msg := msg1
+     elseif op_set$exists(ops, t.root) then                    msg := msg2
+     elseif t.depth > 1 then                                   msg := msg3
+     elseif var_set$size(t.vars) ~= term_seq$size(t.args) then msg := msg4
+     end
+    if msg ~= "" then
+       scanner$error_at(scan, loc, msg)
+       signal error
+       end
+    if token$is_eof(scan.nextToken)
+       then query$get_more(scan, "names of objects", name_syntax)
+       else scanner$expecting_id(scan, "in")
+       end resignal error, none
+    ce: class_expression := class_expression$read(scan, stab)
+       resignal error
+       except when empty: scanner$error(scan, "expecting a name") end
+    check_end_of_scan(scan)
+       resignal error
+    return(v, t, ce)
+    end fix_args
+    
+

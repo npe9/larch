@@ -1,0 +1,43 @@
+\doc{Formulas}
+\ref{formulas}
+
+A \def{formula} is boolean-valued \dlink{term}{term}.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{formula} ::= \slink{term}{term}
+\end{verbatim}
+Restriction: the sort of the \s{term} must be \f{Bool}.
+
+\head{2}{Examples}
+\begin{verbatim}
+x + s(y) = s(x + y)
+x | y <=> \E z (y = x * z)
+x < y \/ x = y \/ y < x
+x < y => \E z (x < z /\ z < y)
+\end{verbatim}
+
+\head{2}{Usage}
+
+Users can \clink{assert} formulas, \clink{prove} them, or derive them from
+other formulas by \dlink{../proof/forward}{forward inference}.
+\p
+Operationally, LP uses formulas by \dlink{../commands/order}{orienting} them
+(if possible) into a terminating set of \dlink{rewrite-rule}{rewrite rules}.
+LP also automatically reduces all \dlink{../settings/immunity}{nonimmune}
+formulas to \olink{normalization}{normal form}.
+\p
+LP automatically rewrites formulas of the form \fq{~p} to \fq{p = false} and
+formulas of the form \fq{~p = false} to \fq{p}.  Furthermore, it uses the
+following hardwired \dlink{deduction-rule}{deduction rules} to derive new
+formulas from existing formulas and rewrite rules.
+\begin{verbatim}
+lp_and_is_true:  when p /\ q    yield  p, q
+lp_or_is_false:  when ~(p \/ q) yield  ~p, ~q
+\end{verbatim}
+LP uses the names of these deduction rules when it reports their application,
+but they cannot be entered by the user when naming objects.
+\p
+To \clink{display} the formulas that LP has not converted into rewrite rules,
+type \fq{display formulas} (or \fq{dis fo} for short).
+

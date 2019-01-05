@@ -1,0 +1,31 @@
+\doc{The set prompt command}
+\ref{prompt-setting}
+
+The \def{prompt setting} defines a string that LP uses to prompt users to enter
+a command.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-prompt-command} ::= \f{set prompt} \s{prompt} 
+\sd{prompt}             ::= \slink{../symbols/symbols}{blank-free-string} | \f{`} \slink{../symbols/symbols}{string} \f{'}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set prompt `[!] '
+set prompt `>> '
+\end{verbatim}
+
+\head{2}{Usage}
+By default, \s{prompt} is \f{`LP!: '}, which causes LP to issue prompts of the
+form \qf{LP1: }, \qf{LP2: }, ...  To enter a prompt that begins or ends with a
+space, enclose it within \fq{`'} marks.
+\p
+LP replaces the first exclamation mark (\fq{!}) in \s{prompt}, if any, by the
+number of the next command.  LP numbers commands entered from the terminal by
+consecutive integers.  It numbers commands obtained during execution of a
+\setlink{script} (\f{.lp}) file by appending a period followed by consecutive 
+integers to the number of the \cflink{execute} command; thus command 5.2.3 is
+the third command in the script file executed in response to the second command
+in the script file executed in response to the fifth command typed by the user.
+

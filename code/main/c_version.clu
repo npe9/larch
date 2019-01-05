@@ -1,0 +1,27 @@
+#extend
+
+% Processes the "version" command by printing identifying information about the
+% current version of LP.
+
+c_version = proc (i: interactive) signals (error)
+    check_end_of_line(i.io)
+       resignal error
+    printer$text(i.p, "\nThis is " || lp_version() || ".\n")
+    printer$text(i.p, lp_copyright())
+    printer$text(i.p, "\n")
+%    if version_is_clu() 
+%       then printer$text(i.p, "Maximum heap size = ")
+%            printer$text(i.p, int$unparse(max_heap_size()) || " meg.\n")
+%       else printer$text(i.p, "max_heap = ")
+%	    printer$text(i.p, int$unparse(_get_max_heap() / 2**20) || " meg.\n")
+%	    printer$text(i.p, "min_gc = ")
+%	    mgc: real := real$i2r(_get_min_gc()) / 2.**20.
+%	    whole: int := real$trunc(mgc)
+%	    frac: real := mgc - real$i2r(whole)
+%	    part: int := real$trunc(frac*10.)
+%	    printer$text(i.p, int$unparse(whole)||"."||int$unparse(part)
+%				|| " meg.\n")
+%       end
+    printer$text(i.p, "Directory ~lp is " || home_directory$get_location())
+    printer$text(i.p, ".\n")
+    end c_version

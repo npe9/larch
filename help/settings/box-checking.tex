@@ -1,0 +1,23 @@
+\doc{The box-checking setting}
+\ref{box-checking-setting}
+
+The \def{box-checking} setting governs whether or not LP checks for the
+presence of annotations marking the beginning and end of proofs steps in files
+being executed by the \cflink{execute} command.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-box-checking-command} ::= \f{set box-checking} ( \f{on} | \f{off} )
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set box on
+\end{verbatim}
+
+\head{2}{Usage}
+LP checks \f{<>}'s and \f{[]}'s when it \dlink{../commands/execute}{executes}
+commands from a \f{.lp} file and \fq{box-checking} is \fq{on}.  It ignores
+these annotations when \fq{box-checking} is \fq{off}.
+\p
+See the \dlink{../commands/box}{box and diamond commands} for details.

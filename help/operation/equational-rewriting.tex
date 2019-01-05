@@ -1,0 +1,19 @@
+\doc{Equational term rewriting}
+\ref{equational-term-rewriting}
+\ref{equational-rewriting}
+\ref{equational-theory}
+
+\def{Equational term-rewriting} differs from conventional term-rewriting in 
+that \dlink{match}{matching}, \dlink{unify}{unification}, and 
+\dlink{../commands/complete}{completion} are performed module a set \f{E} of
+equations.
+\p
+A set \f{E} of equations defines an \def{equational theory}, which is the set
+of equations that can be derived from \f{E} by substituting equals for equals.
+More generally, a set of \llink{equation}{equations} and 
+\llink{rewrite-rule}{rewrite rules} defines an equational
+theory, which is that obtained by considering the rewrite rules as equations.
+A major purpose of the Knuth-Bendix completion procedure is to provide a
+decision procedure (reduction to normal form) for the question of whether
+equations are in the equational theory of a given system of equations and
+rewrite rules.

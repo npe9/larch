@@ -1,0 +1,94 @@
+#extend
+
+% This cluster parses and unparses external representations for substitutions
+% using the following syntax:
+
+%      substitution ::= (variable symbol term)+,
+
+% The "pvariable" cluster defines the nonterminal symbol "variable".  The
+% "pterm" cluster defines the nonterminal symbol "term".  The terminal symbol
+% "symbol" is supplied as an argument to the "read" and "print" procedures.
+
+
+psubstitution = cluster is print, read
+
+    rep = null
+    
+    
+    % Prettyprints "sigma" on "p" using the conventions of "unpterm$print2".
+    % ENHANCE: Align the "syms".
+    
+    print = proc (p: printer, sigma: substitution, stab: symtab, sym: string)
+	printer$start_block(p)
+	for v: variable, t: term in substitution$elements(sigma) do
+	    unpterm$print2(p, term$make_var(v), sym, t, stab)
+	    printer$text(p, "\n")
+	    end
+	printer$finish_block(p)
+	end print
+
+
+    % Scans and returns a substitution from "scan".  Writes a message to
+    % "scan", and signals "bad_format", if "scan" does not contain a valid
+    % representation for a substitution constructed from identifiers in "stab".
+
+    read = proc (scan: scanner, stab: symtab, symbol: string)
+	     returns (substitution) signals (error)
+        msg1 = "sort of term does not match sort of variable"
+        msg2 = "more than one possible sort for variable and term"
+        sigma: substitution := substitution$[]
+        while true do
+            locv: locator := scan.nextToken.loc
+            vs: var_set := pvariable$read_overloadings(scan, stab)
+               except when unique (v1: variable): vs := var_set$[v1] end
+            if scan.nextToken.text ~= symbol then
+               scanner$error(scan, "expecting `" || symbol || "'")
+               signal error
+               end
+            scanner$get(scan)
+            loct: locator := scan.nextToken.loc
+            pt: pterm := pterm$read_overloadings(scan, stab)
+	    tsorts: sort_set := pt.sorts
+            vsorts: sort_set := sort_set$[]
+            for v1: variable in var_set$elements(vs) do
+                sort_set$insert(vsorts, v1.sort)
+                   except when exists: end
+                end
+            ss: sort_set := sort_set$intersection(tsorts, vsorts)
+            n: int := sort_set$size(ss)
+	    if n = 0 then
+	       scanner$error_at1(scan, loct, msg1)
+	       psort$print_set(scan.printer, "Variable sorts: ", vsorts)
+	       psort$print_set(scan.printer, "Term sorts: ", tsorts)
+	       scanner$error_at2(scan, loct)
+               signal error
+	     elseif n > 1 then
+	       scanner$error_at1(scan, locv, msg2)
+	       psort$print_set(scan.printer, "Possible sorts: ", ss)
+	       scanner$error_at2(scan, locv)
+               signal error
+	     end
+            s: sort := sort_set$any_element(ss)
+            v: variable
+            for v1: variable in var_set$elements(vs) do
+                if v1.sort = s then
+                   v := v1
+                   break
+                   end
+                end
+            if var_set$exists(sigma.domain, v) then
+               scanner$error_at(scan, locv, "duplicate variable")
+               signal error
+               end
+            sigma[v] := pterm$disambiguate(pt, s, scan)
+            if ~token$is_comma(scan.nextToken) then break end
+            scanner$get(scan)
+            end resignal error
+        return(sigma)
+        end read
+    
+
+    end psubstitution
+
+
+

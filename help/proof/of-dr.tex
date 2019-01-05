@@ -1,0 +1,21 @@
+\doc{Proofs of deduction rules}
+\ref{proof-of-deduction-rule}
+
+LP permits users to prove \llink{deduction-rule}{deduction rules} as well as
+\clink{assert} them.  It automatically generates a single subgoal when asked to
+initiate a proof of a deduction rule.  The subgoal involves showing that the
+conjunction of the hypotheses of the deduction rule implies the conjunction of
+its conclusions.
+\p
+For example, the command
+\begin{verbatim}
+prove when \A x:Elem (x \in s:Set <=> x \in t:Set) yield s = t
+\end{verbatim}
+causes LP to generate a single subgoal which involves proving the formula
+\begin{verbatim}
+\A x:Elem (x \in s:Set <=> x \in t:Set) => s = t
+\end{verbatim}
+\p
+LP also generates a single subgoal when asked to initiate a proof of a
+\llink{partitioned-by}{partitioned-by}.  This subgoal is the one associated
+with the translation of the partitioned-by into a deduction rule.

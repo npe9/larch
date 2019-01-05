@@ -1,0 +1,159 @@
+#extend
+
+rat = cluster is create, zero, one, big, int2rat, rat2ints, is_int, abs, add, 
+                 sub, minus, mul, div, lt, le, ge, gt, equal, copy, parse, 
+		 unparse, _gcd, decode, encode
+    
+    rep = record[num, den: int]
+    
+    % Abstraction function: A(r) = r.num/r.den
+    
+    % Representation invariants: r.den > 0
+    %                            r.num = 0 => r.den = 1
+    %				 gcd(r.num, r.den) = 1
+    
+    create = proc (a: args) returns (cvt) signals (zero_divide)
+	args = struct[num, den: int]
+	return(reduce(a.num, a.den))
+	   resignal zero_divide
+	end create
+    
+    zero = proc () returns (cvt)
+	return(rep${num: 0, den: 1})
+	end zero
+    
+    one = proc () returns (cvt)
+	return(rep${num: 1, den: 1})
+	end one
+    
+    big = proc () returns (cvt)
+	return(rep${num: maxint(), den: 1})
+	end big
+
+    int2rat = proc (n: int) returns (cvt)
+	return(rep${num: n, den: 1})
+	end int2rat
+
+    rat2ints = proc (q: cvt) returns (int, int)
+	return(q.num, q.den)
+	end rat2ints
+    
+    is_int = proc (r: cvt) returns (bool)
+	return(r.den = 1)
+	end is_int
+    
+    abs = proc (q: cvt) returns (cvt)
+	if q.num < 0
+	   then return(rep${num: -q.num, den: q.den})
+	   else return(q)
+	   end
+	end abs
+    
+    add = proc (q1, q2: cvt) returns (cvt) signals (overflow)
+	n: int := gcd(q1.den, q2.den)
+	return(reduce(q1.num * (q2.den/n) + q2.num * (q1.den/n),
+		      q1.den * (q2.den/n)))
+	   resignal overflow
+        end add
+    
+    sub = proc (q1, q2: rat) returns (rat) signals (overflow)
+	return(add(q1, minus(q2)))
+	   resignal overflow
+        end sub
+    
+    minus = proc (q: cvt) returns (cvt) signals (overflow)
+	return(rep${num: -q.num, den: q.den}) 
+	end minus
+    
+    mul = proc (q1, q2: cvt) returns (cvt) signals (overflow)
+	if q1.num = 0 cor q2.num = 0 then return(rep${num: 0, den: 1}) end
+	n1: int := gcd(int$abs(q1.num), q2.den)
+	n2: int := gcd(int$abs(q2.num), q1.den)
+	return(rep${num: (q1.num/n1) * (q2.num/n2), 
+	            den: (q1.den/n2) * (q2.den/n1)})
+	   resignal overflow
+	end mul
+    
+    div = proc (q1: rat, q2: cvt) returns (rat) signals (overflow, zero_divide)
+        if q2.num = 0 then signal zero_divide 
+	 elseif q2.num < 0 then
+	   return(mul(q1, up(rep${num: -q2.den, den: -q2.num})))
+	 else return(mul(q1, up(rep${num: q2.den, den: q2.num})))
+	 end resignal overflow
+        end div
+
+    gt = proc (q1, q2: cvt) returns (bool)
+	return(q1.num * q2.den > q1.den * q2.num)
+	   except when overflow:
+		       return(bigint$i2bi(q1.num) * bigint$i2bi(q2.den) > 
+			      bigint$i2bi(q1.den) * bigint$i2bi(q2.num))
+		  end
+	end gt
+    
+    ge = proc (q1, q2: rat) returns (bool)
+	return(~(q2 > q1))
+	end ge
+    
+    lt = proc (q1, q2: rat) returns (bool)
+	return(q2 > q1)
+	end lt
+    
+    le = proc (q1, q2: rat) returns (bool)
+	return(~(q1 > q2))
+	end le
+    
+    equal = proc (q1, q2: cvt) returns (bool)
+        return(q1.num = q2.num cand q1.den = q2.den)
+	end equal
+    
+    parse = proc (s: string) returns (cvt) signals (bad_format, overflow)
+	s1, s2, s3: string := string_divide(s, "/")
+	if s2 = "" 
+	   then return(rep${num: int$parse(trim_both(s)), den: 1}) 
+	   else num: int := int$parse(trim_both(s1))
+		den: int := int$parse(trim_both(s3))
+		if den <= 0 then signal bad_format end
+		return(reduce(num, den))
+	   end
+	end parse
+    
+    unparse = proc (q: cvt) returns (string)
+	s: string := int$unparse(q.num)
+	if q.den ~= 1 then s := s || "/" || int$unparse(q.den) end
+	return(s)
+	end unparse
+    
+    
+    copy = proc (q: cvt) returns (cvt)
+	return(q)
+	end copy
+
+    
+    % (Internal procedure) Returns a representation for "num/den".
+    
+    reduce = proc (num, den: int) returns (rep) signals (zero_divide)
+	if num = 0 then return(rep${num: 0, den: 1}) end
+	if den < 0 then num, den := -num, -den end
+	n: int := gcd(int$abs(num), den)
+	   resignal zero_divide
+	return(rep${num: num/n, den: den/n})
+	end reduce
+    
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+               signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    end rat

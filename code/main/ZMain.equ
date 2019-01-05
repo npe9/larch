@@ -1,0 +1,170 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Equates for LP %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%  Actions to perform in response to commands.
+    
+command   = proctype (interactive) signals (error, quit, quit_lp)
+c_act 	  = struct[name: string, choice: command]
+c_act_seq = sequence[c_act]
+
+
+%%%%%%%%%%%%%%%%%%%%  Data types
+
+npm_arr = array[named_proof_method]
+npm_seq	= sequence[named_proof_method]
+
+% A "dumped_rep" is used to freeze the state of the system in a file.  It also
+% contains a string that identifies the version of LP used to produce the dump.
+% (The name of the version string should collate before the names of other
+% fields in the "dumped_rep" so that it can be retrieved if those other fields
+% are changed.)
+
+dumped_rep = record[a_freeze_version: string, 
+		    history: command_arr,
+		    history_size: int, 
+		    prover: prover,
+		    settings: saved_settings,
+		    sorts: sort_seq,
+		    symtab: symtab, 
+		    sys: system]
+			
+
+%%%%%%%%%%%%%%%%%%%%  Default settings
+
+% FIX: Make the default directory the initial connected directory.
+% NOTE: The "default_ordering_method" is set in "settings.clu".
+
+setting = oneof[b: bool, i: bounded_i, imm: immunity, ord: ordering, 
+		pms: npm_seq, red: reduction_mode, s: string, 
+		task: named_task_mode, unp: unparse_mode]
+
+setting_arr 	= array[setting]
+saved_settings	= array[setting_arr]
+
+bounded_i = struct[high, value: int]	% no bound if "high" is zero
+
+initial_lp_path 		= ". ~lp/axioms"
+
+default_activity 		= setting$make_b(true)
+default_automatic_ordering 	= setting$make_b(true)
+default_automatic_registry 	= setting$make_b(true)
+default_box_checking 		= setting$make_b(false)
+default_completion_mode 	= setting$make_task(standard_task_mode)
+default_directory		= setting$make_s("")	 
+default_display_mode 		= setting$make_unp(unambiguous_mode)
+default_hardwired_usage 	= setting$make_i(
+				      bounded_i${
+					  high: max_hardwired_usage,
+					  value: initial_hardwired_usage})
+default_immunity 		= setting$make_imm(immunity_off)
+default_log_file		= setting$make_s("")
+default_lp_path			= setting$make_s(initial_lp_path)
+default_name_prefix		= setting$make_s(initial_root_name)
+default_page_mode 		= setting$make_b(false)
+default_prompt 			= setting$make_s(initial_command_prompt)
+default_proof_methods		= setting$make_pms(initial_proof_methods)
+default_reduction_strategy	= setting$make_red(initial_reduction_mode)
+default_rewriting_limit 	= setting$make_i(
+				      bounded_i${
+					  high: 0,
+					  value: initial_rewriting_limit})
+default_script_file		= setting$make_s("")
+default_statistics_level	= setting$make_i(
+				      bounded_i${high: highest_stat_level,
+						 value: initial_stat_level})
+default_trace_level 		= setting$make_i(
+				      bounded_i${high: highest_trace_level,
+						 value: initial_trace_level})
+default_write_mode 		= setting$make_unp(qualified_mode)
+
+
+
+%%%%%%%%%%%%%%%%%%%%  Proofs
+
+% Users can prove equations by cases, contradiction, induction, or
+% normalization.  They can also use special strategies to handle conjunctions,
+% implications, and conjectures containing quantifiers.  LP supplies built-in
+% proof methods for deduction rules, induction rules, and operator theories.
+
+proof_method = oneof[a_intro: substitution,	   % \forall-introduction
+		     and: null,			   % conjunction strategy
+		     cases: term_seq,	   	   % proof by cases
+		     cond: null,		   % proof of conditional
+		     contra: null,	           % proof by contradiction
+		     default: null,		   % use default method
+		     dr: null,			   % hardwired
+		     e_intro: substitution,        % \exists-introduction
+		     iff: null,			   % iff strategy
+		     implies: null,		   % implication strategy
+		     induct: induction_info,       % proof by induction
+		     ir: null,			   % hardwired
+		     none: null,		   % no proof method
+		     normal: null,                 % proof by normalization
+		     ot: null]		   	   % hardwired
+
+named_proof_method    = struct[name: string, pm: proof_method]
+
+and_proof_method      = named_proof_method${name: "/\\-method", 
+					    pm: proof_method$make_and(nil)}
+if_proof_method       = named_proof_method${name: "if-method", 
+					    pm: proof_method$make_cond(nil)}
+iff_proof_method      = named_proof_method${name: "<=>-method", 
+					    pm: proof_method$make_iff(nil)}
+contra_proof_method   = named_proof_method${name: "contradiction", 
+					    pm: proof_method$make_contra(nil)}
+default_proof_method  = named_proof_method${name: "default", 
+					    pm: proof_method$make_default(nil)}
+implies_proof_method  = named_proof_method${name: "=>-method", 
+					    pm: proof_method$make_implies(nil)}
+no_proof_method	      = named_proof_method${name: "explicit-commands", 
+					    pm: proof_method$make_none(nil)}
+normal_proof_method   = named_proof_method${name: "normalization", 
+					    pm: proof_method$make_normal(nil)}
+
+
+initial_proof_methods = npm_seq$[normal_proof_method]
+
+automatic_proof_methods = npm_seq$[and_proof_method, if_proof_method,
+			           iff_proof_method, implies_proof_method, 
+				   no_proof_method, normal_proof_method]
+
+% The current goal in a proof by normalization.  Used as communication between
+% the prover and the system.
+
+goal = oneof[exists: equation, none: null]
+
+
+%%%%%%%%%%%%%%%%%%%%  Task sequences for ordering, completion procedures
+
+% A "name_task_mode" determines a sequence of tasks to be performed by the
+% completion and ordering procedures.  Its "name" identifies the mode; its
+% "which" is used to identify a sequence of tasks in the system cluster.
+
+% The "stabilize_task_mode" is used to stabilize the system.  The
+% "order_task_mode" is used by the ordering procedure and the "cp_task_mode" is
+% used by the "critical-pairs" command.  The other task modes are used by the
+% completion procedure.  The "standard_task_mode" is that described in "REVE: A
+% Term Rewriting System with Failure-Resistant Knuth-Bendix," by Randy Forgaard
+% and John V. Guttag.  It minimizes the amount of user interaction required
+% during completion.  The "expert_task_mode" allows users to control the
+% completion process more directly and is useful for completing difficult
+% algebraic examples.  The "big_task_mode" is sometimes useful when completing
+% systems that contain AC operators.
+
+named_task_mode        = struct[name: string, which: task_mode]
+task_mode	       = oneof[big, cp, expert, order, stabilize, standard:
+			       null]
+order_task_mode	       = named_task_mode${name: "Ordering", 
+				          which: task_mode$make_order(nil)}
+standard_task_mode     = named_task_mode${name: "Standard", 
+					  which: task_mode$make_standard(nil)}
+expert_task_mode       = named_task_mode${name: "Expert", 
+					  which: task_mode$make_expert(nil)}
+big_task_mode 	       = named_task_mode${name: "Big", 
+					  which: task_mode$make_big(nil)}
+stabilize_task_mode    = named_task_mode${name: "Stabilize", 
+					  which: task_mode$make_stabilize(nil)}
+cp_task_mode	       = named_task_mode${name: "Critical-pairs", 
+					  which: task_mode$make_cp(nil)}
+completion_task_modes  = sequence[named_task_mode]$[standard_task_mode, 
+					            expert_task_mode,
+					            big_task_mode]

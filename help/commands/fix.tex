@@ -1,0 +1,59 @@
+\doc{The fix command}
+\ref{fix-command}
+
+The \def{fix command} provides a method of forward inference, which can be used
+to eliminate an \llink{quantifier}{existential quantifier} from a fact in LP's
+logical system.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{fix-command} ::= \f{fix} \slink{../logic/variable}{variable} \f{as} \slink{../logic/term}{term} \f{in} \slink{../misc/names}{names}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+fix x as s(0) in *Hyp
+\end{verbatim}
+
+\head{2}{Usage} 
+
+The \fq{fix} command eliminates the unique accessible
+\glink{prenex}{prenex-existential} quantifier over the variable 
+from the named facts and substitutes the term for all occurrences of the
+variable bound by that quantifier.  For example, given the formulas
+\begin{verbatim}
+user.1: \E x \A y (f(y) = x)
+user.2: \E z (x < z)
+\end{verbatim}
+the commands \fq{fix x as c in user} and \fq{fix z as bigger(x) in user} 
+produce the results
+\begin{verbatim}
+user.1.1: f(y) = c
+user.2.1: x < bigger(x)
+\end{verbatim}
+\p
+LP will reject a \fq{fix} command unless the following conditions are 
+satisfied.
+\begin{itemize}
+\item
+The named facts must contain exactly one
+\glink{accessible}{accessible} prenex-existential quantifier over 
+the variable (because it is not sound to instantiate two different existential
+quantifiers by the same term).
+\p
+\item
+The term must have the form \fq{sk(x1, ..., xn)}, where \fq{sk} is a function
+identifier that does not appear in any fact or in the current conjecture, and
+where \fq{x1}, ..., \fq{xn} include all variables that are bound by outer
+(explicit or implicit) prenex-universal quantifiers in the formula containing
+the eliminated quantifier.  See \glink{skolem}{Skolem function}.
+\end{itemize}
+LP automatically changes bound variables in the named facts, as needed, to
+avoid having them bind (or \glink{capture}{capture}) variables that
+occur free in the term.  This action, together with the above two conditions,
+guarantee that the results constitute a conservative extension to LP's logical
+system, i.e., that any consequence of the extended system is either a
+consequence of the original system or contains an occurrence of \fq{sk}.  The
+last condition prevents unsound derivations such as \fq{c ~= c} from 
+\fq{\E x (x ~= c)} or \fq{\A y (c = y)} from \fq{\A y \E x (x = y)}.
+

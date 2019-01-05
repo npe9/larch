@@ -1,0 +1,241 @@
+#extend
+
+% This cluster parses and unparses external representations for deduction rules
+% using the following syntax:
+
+%   deduction-rule  ::= "when" hypotheses "yield" conclusions
+%   hypotheses      ::= formula+,
+%   conclusions     ::= formula+,
+%   partitioned-by  ::= sort "partitioned by" operator+,
+
+% The "pformula" cluster defines the nonterminal symbol "formula".  The
+% "psort" cluster defines the nonterminal symbol "sort".  The "poperator"
+% cluster defines the nonterminal symbol "operator".
+
+
+pdeduction_rule = cluster is 
+	print, read, read_partitioned_by, read_partitioned_rest
+    
+    rep = null
+
+    
+    % Prettyprints "dr" on "p" using the format
+    %    ~{~{when  ~6Ih1,~1A...,~1Ahn~}~1A 
+    %      ~{yield ~6Ic1,~1A...,~1Acn~}~}
+    % to display it as
+    %        when  h1,
+    %              h2
+    %              ...
+    %        yield c1,
+    %              c2
+    %              ...
+    % if the display does not fit on a single line.  Qualifies identifiers 
+    % using the conventions of "unpterm$print".
+
+    print = proc (p: printer, dr: deduction_rule, stab: symtab)
+	printer$text(p, "~{~{when ~6I")
+	print_ts(p, dr.hypotheses, stab)
+	printer$text(p, "~}~1A~{yield ~6I")
+	print_ts(p, dr.conclusions, stab)
+	printer$text(p, "~}~}")
+	end print
+    
+    
+    % (Internal procedure) Prettyprints the terms that constitute the
+    % hypotheses or conclusions of a deduction rule.    
+    
+    print_ts = proc (p: printer, ts: term_seq, stab: symtab)
+	printed: bool := false
+	for t: term in term_seq$elements(ts) do
+	    if printed then printer$text(p, ",~1A") end
+	    term$print(p, t, stab)
+	    printed := true
+	    end
+	end print_ts
+
+
+    % Reads and returns a deduction rule from the head of "scan".  Writes a
+    % message to "scan", and signals "error", if the head of "scan" does not
+    % contain a valid deduction rule constructed from identifiers in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (deduction_rule)
+	     signals (error)
+	begin
+	    scanner$expecting_id(scan, "when")
+	    hyps: term_seq := read_terms(scan, stab)
+	    if term_seq$empty(hyps) then
+	       scanner$error(scan, "expecting hypotheses of deduction rule")
+	       signal error
+	       end
+	    scanner$expecting_id(scan, "yield")
+	    cons: term_seq := read_terms(scan, stab)
+	    if term_seq$empty(cons) then
+	       scanner$error(scan, "expecting conclusions of deduction rule")
+	       signal error
+	       end
+	    return(deduction_rule${hypotheses: hyps,
+				   conclusions: cons,
+				   symtab: stab})
+	    end resignal error
+	end read
+    
+    
+    % (Internal procedure) Reads and returns a comma-separated list of
+    % boolean-valued terms from "scan".  Writes a message to "scan", and
+    % signals "error", if the head of "scan" does not contain a list of
+    % boolean-valued terms constructed from identifiers in "stab".
+
+    read_terms = proc (scan: scanner, stab: symtab)
+		   returns (term_seq) signals (error)
+        ta: term_arr := term_arr$[]
+	while ~token$is_eof(scan.nextToken) do
+	    term_arr$addh(ta, pformula$read(scan, stab).formula)
+	       resignal error
+	    if token$is_comma(scan.nextToken)
+	       then scanner$get(scan)
+	       else break
+	       end
+	    end
+	return(term_seq$a2s(ta))
+	end read_terms
+
+
+    % Reads a "partitioned by" from the head of "scan" and returns the
+    % associated deduction rule.  Writes a message to "scan", and signals
+    % "error", if 
+    % (a) there is a syntax error,
+    % (b) there is an ambiguous operator,
+    % (c) an operator does not have the appropriate sort in its domain, or
+    % (d) an operator appears more than once.
+    
+    % The deduction rule associated with
+    %     sort E partitioned by op1:E->R, op2:E,A->R, op3:E,E->R
+    % uses variables
+    %	     e1, e2, e3: E
+    %	     a: A
+    % (which are entered into "stab" if not already there) and has the form
+    %     when op1(e1) = op1(e2),
+    %          \A a (op2(e1, a) = op2(e2, a)), 
+    %          \A e3 (op3(e1, e3) = op3(e2, e3)),
+    %          \A e3 (op3(e3, e1) = op3(e3, e2))
+    %     yield e1 = e2
+
+    read_partitioned_by = proc (scan: scanner, stab: symtab) 
+			    returns (deduction_rule)
+			    signals (error)
+        begin
+	    scanner$expecting_id(scan, "sort")
+	    so: sort := sort$read(scan, stab)
+	    return(read_partitioned_rest(scan, stab, so))
+	    end resignal error
+	end read_partitioned_by
+    
+    
+    read_partitioned_rest = proc (scan: scanner, stab: symtab, so: sort)
+			      returns (deduction_rule) signals (error)
+	msg = "operator not declared with partitioned sort in domain"
+	begin
+	    scanner$expecting_id(scan, "partitioned")
+	    scanner$expecting_id(scan, "by")
+	    end resignal error
+	if token$is_eof(scan.nextToken) then
+	   scanner$error(scan, "expecting an operator")
+	   signal error
+	   end
+	ops: op_set := op_set$[]
+	while true do
+	    op: operator
+	    oploc: locator
+	    opIsKnown: bool := false
+	    yielded: bool := false
+	    for op1: operator, loc1: locator 
+		  in poperator$read_overloadings(scan, stab) do
+		yielded := true
+		oploc := loc1
+	        find_first_seq[sort](op1.dom, so, sort$equal)
+		   except when not_found: continue end
+		if opIsKnown then exit bad(oploc, "ambiguous operator") end
+		opIsKnown := true
+		op := op1
+		end except when none (loc1: locator): oploc := loc1 end
+	    if opIsKnown 
+	       then op_set$insert(ops, op)
+		       except when exists: 
+				   exit bad(oploc, "duplicate operator")
+			      end
+	       else if yielded
+		       then exit bad(oploc, msg)
+		       else exit bad(oploc, "undeclared operator")
+		       end
+	       end
+	    if token$is_comma(scan.nextToken)
+	       then scanner$get(scan)
+	       else break
+	       end
+	    end resignal error
+	   except when bad (loc: locator, s: string):
+		       scanner$error_at(scan, loc, s)
+		       signal error
+		  end
+	vars: var_set := var_set$[]
+	hyps: term_arr := term_arr$[]
+	symtab$begin_changes(stab)
+	v1: variable := variable$different(so, vars, stab)
+	var_set$insert_unique(vars, v1)
+	v2: variable := variable$different(so, vars, stab)
+	var_set$insert_unique(vars, v2)
+	v1t: term := term$make_var(v1)
+	v2t: term := term$make_var(v2)
+        op_eq: operator := op_equals(so, stab)
+	conclusion: term := term2(op_eq, v1t, v2t)
+	for op: operator in op_set$elements(ops) do
+	    qvars: var_set := var_set$[]
+	    args1: term_arr := term_arr$predict(1, op.arity)
+	    args2: term_arr := term_arr$predict(1, op.arity)
+	    so_locs: int_arr := int_arr$[]
+	    n: int := 0
+	    for so1: sort in sort_seq$elements(op.dom) do
+		n := n + 1
+		if so = so1 then int_arr$addh(so_locs, n) end
+		if so = so1 cand int_arr$size(so_locs) = 1
+		   then term_arr$addh(args1, v1t)
+			term_arr$addh(args2, v2t)
+		   else v3: variable := 
+		            variable$different(so1, vars + qvars, stab)
+			var_set$insert_unique(qvars, v3)
+			v3t: term := term$make_var(v3)
+			term_arr$addh(args1, v3t)
+			term_arr$addh(args2, v3t)
+		   end
+		end
+	    first: int := int_arr$bottom(so_locs)
+	    if op.rng = bool_sort()
+	       then op_eq := op_iff()
+	       else op_eq := symtab$lookup_op(stab, op_equals(op.rng, stab))
+	       end except when missing (*): 
+	                       fail("poperator$read_partitioned_rest")
+			  end
+	    for i: int in int_arr$elements(so_locs) do
+		if i ~= first then
+		   args1[first] := args1[i]
+		   args2[first] := args2[i]
+		   args1[i] := v1t
+		   args2[i] := v2t
+		   end
+		left: term := term$make_funct(op, term_seq$a2s(args1))
+		right: term := term$make_funct(op, term_seq$a2s(args2))
+		t: term := term2(op_eq, left, right)
+		for v: variable in var_set$elements(qvars) do
+		    t := term$make_quant(quantifier$make_universal(v, stab), t)
+		    end
+		term_arr$addh(hyps, t)
+		end
+	    end
+	symtab$commit_changes(stab)
+	return(deduction_rule${hypotheses: term_seq$a2s(hyps),
+			       conclusions: term_seq$[conclusion],
+			       symtab: stab})
+	end read_partitioned_rest
+    
+    
+    end pdeduction_rule

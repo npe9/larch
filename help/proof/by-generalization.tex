@@ -1,0 +1,31 @@
+\doc{Proofs by generalization}
+\ref{proof-by-generalization}
+\ref{generalization}
+\ref{generalize}
+\ref{generalizing}
+
+The command \fq{prove F by generalizing x from t} directs LP to prove a formula
+\fq{F} by creating a single subgoal in which the unique
+\glink{accessible}{accessible} (explicit or implicit) 
+\glink{prenex}{prenex-universal} quantifier over the variable 
+\fq{x} has been eliminated from \fq{F} and all occurrences of \fq{x} bound by 
+that quantifier have been replaced by \fq{t}.  
+\p
+The command \fq{resume by generalizing x from t} directs LP to resume the proof
+of the current conjecture by this method.
+\p
+This proof method, which eliminates a universal quantifier from a conjecture,
+is the dual of the \cflink{fix} command, which eliminates an existential
+quantifier from a fact.  It is subject to restrictions on \fq{x} and \fq{t} as
+for the \cflink{fix} command.
+\p
+This command is unlikely to be used when \fq{F} contains free variables other
+than \fq{x}.  When \fq{x} is the only free variable in \fq{F}, the only
+restriction is that \fq{t} be a constant that does not occur in \fq{F} or in
+any fact in LP's logical system.  For example, the command
+\begin{verbatim}
+prove \A x (f(x) = c) by generalizing x from d
+\end{verbatim}
+is allowed when \fq{d} is a new constant and reduces the proof of the
+conjecture to establishing the subgoal \fq{f(d) = c}.  See
+\glink{skolem}{Skolem-constant}.

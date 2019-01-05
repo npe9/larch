@@ -1,0 +1,21 @@
+\doc{Flattening}
+\ref{flattening}
+\ref{flattened}
+
+LP facilitates matching terms involving
+\llink{operator-theory}{associative-commutative} (ac) operators by using a 
+special \def{flattened} representation for those terms.
+\p
+When an argument of an ac operator has that operator as its principal operator,
+LP replaces it by its arguments.  For example, when \f{+} is ac, 
+\fq{(a + b) + (c + d)} flattens to \fq{a + b + c + d}.
+\p
+Furthermore, when a flattened term involving an ac operator has more than two
+arguments, LP sorts the arguments lexicographically; for example, when \f{+} is
+ac, \fq{(c + b) + a} flattens to \fq{a + b + c}.
+\p
+Two-argument terms such as \fq{q <=> p}, where \f{<=>} is the hardwired ac
+operator for boolean equivalence, are not flattened to \fq{p <=> q}.  This
+enables LP to \dlink{../commands/order}{orient} them into rewrite rules in the
+direction the user (may have) intended.
+

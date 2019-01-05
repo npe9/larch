@@ -1,0 +1,11 @@
+#extend
+
+% Process the "pop-settings" command.
+
+c_pop_settings = proc (i: interactive) signals (error)
+    check_end_of_line(i.io)
+       resignal error
+    settings$pop(i)
+    end c_pop_settings
+
+

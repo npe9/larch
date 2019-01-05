@@ -1,0 +1,71 @@
+\doc{Operators}
+\ref{operator}
+\ref{opForm}
+\ref{functionId}
+\ref{simpleOpForm}
+\ref{bracketedOp}
+\ref{closeSym}
+\ref{openSym}
+\ref{ifOp}
+\ref{arity}
+\ref{op}
+
+An \def{operator} is a symbol that represents a total function.  The
+\dlink{signature}{signature} of the operator specifies the domain and range of
+the function.  Operators can be used with functional, infix, prefix, postfix,
+bracketed, and conditional notations.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+
+\begin{verbatim}
+\sd{operator}     ::= \s{opForm} [ \f{:} \slink{signature}{signature} ]
+\sd{opForm}       ::= \s{functionId} | \s{simpleOpForm} | \s{bracketedOp} | \s{ifOp}
+\sd{functionId}   ::= \slink{../symbols/symbols}{simpleId}
+\sd{simpleOpForm} ::= [ \f{__} ] \s{simpleOp} [ \f{__} ] | [ \f{__} ] \f{.} \slink{../symbols/symbols}{simpleId}
+\sd{simpleOp}     ::= \slink{../symbols/symbols}{opId} | \slink{../symbols/symbols}{escapedId}
+\sd{bracketedOp}  ::= [ \f{__} ] \s{openSym} \f{__}*, \s{closeSym} [ \f{__} ]
+\sd{openSym}      ::= \f#{# | \qf{[} | \f{\(} | \f{\<}
+\sd{closeSym}     ::= \f#}# | \qf{]} | \f{\)} | \f{\>}
+\sd{ifOp}         ::= \f{if} \f{__} \f{then} \f{__} \f{else} \f{__}
+\end{verbatim}
+
+Note: All markers (\f{__}) may be omitted from a \s{simpleOpForm} when there
+is exactly one declared operator (with the indicated signature) that can be
+formed by adding some number of markers to the \s{simpleOpForm}.
+
+\head{2}{Examples}
+\begin{verbatim}
+\s{functionId}       \f{f}          \f{0}          \f{gcd}
+\s{simpleOpForm}     \f{-__}        \f{__<=>__}    \f{__\in__}    \f{__\Post}    \f{__.first} 
+\s{simpleOp}         \f{-}            \f{<=>}        \f{\in}        \f{\Post}
+\s{bracketedOp}      \f{__[__]}     \f#{}# 
+\end{verbatim}
+
+\head{2}{Usage}
+
+LP automatically declares certain \dlink{connective}{logical},
+\dlink{equality}{equality}, and \dlink{conditional}{conditional} operators.  
+All other operators must appear in a  
+\dflink{../commands/declare}{declare operators} command.  Case is 
+significant in operator identifiers.  Thus \fq{f} and \fq{F} are different
+operators, as are \fq{\in} and \fq{\In}.
+\p
+Identifiers for most operators can be \dlink{overload}{overloaded}, that is,
+they can be used to represent operators with different signatures or with
+markers in different places.  LP uses context to disambiguate overloaded
+identifiers.
+\p
+The \def{arity} of an operator is the number of its arguments, that is, the
+number of sorts in its domain.  A \def{unary} operator has arity 1, a
+\def{binary} operator has arity 2, and a \dlink{constant}{constant} has arity 
+0.
+
+\head{2}{See also}
+\begin{itemize}
+\item 
+\dlink{function}{Functional}, \dlink{infix}{infix, prefix, postfix,} 
+\dlink{bracket}{bracketed}, and \dlink{conditional}{conditional} notations
+\item \dlink{../commands/declare}{Declarations} for operators
+\item The use of operators in \dlink{term}{terms}
+\item \dlink{precedence}{Precedence} for parsing operators in terms
+\end{itemize}

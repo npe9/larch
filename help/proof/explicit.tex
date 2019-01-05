@@ -1,0 +1,20 @@
+\doc{Proofs by explicit commands}
+\ref{explicit-commands}
+
+The special proof method \fq{explicit-commands} directs LP not to apply any
+method of backward inference automatically to a conjecture, but to wait for an
+explicit method to be given with a subsequent \cflink{resume} command.  This
+method is useful in several situations.
+\begin{itemize}
+\item
+It can be used to prevent LP from attempting to normalize a conjecture when it
+would be time-consuming and unfruitful to do so.  For example, if a conjecture
+includes many conjuncts, it may be appropriate to first compute some critical
+pairs, then apply the \fq{/\}-method, and finally normalize the individual
+subgoals.
+\p
+\item
+It can be used to delay the start of a proof until the user has had an
+opportunity to \cflink{make} the conjecture immune, so that it is not reduced
+once it has been proved.
+\end{itemize}

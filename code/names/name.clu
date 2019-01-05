@@ -1,0 +1,461 @@
+#extend
+
+% The space of names is a forest.  The root of each tree in the forest is
+% labeled with an identifier.  The names of the children of a node in the
+% forest extend the name of their parent by a period followed by a positive
+% integer.  Syntax:
+
+%	name          ::= root-name [ "." [extension]]
+%	root-name     ::= identifier
+%	extension     ::= number ("." number)*
+%	number        ::= digit+			% must be nonzero
+
+% A name pattern matches a name if the name can be obtained from the pattern by
+% substituting strings of characters for the asterisks in the pattern.
+
+%       name-pattern  ::= pattern [ "." [extension]]
+%	pattern       ::= (letter | digit | "_" | "'" | "*")+
+
+% A trailing "." in a name such as "op." serves to identify "op" unambiguously
+% as a name and prevents the command parser from treating "op" as an 
+% abbreviation for a keyword such as "operator-theory".  The spellings "op" and
+% "op.", however, denote the same name.
+
+
+name = cluster is create, extend, extend_root_name, get_depth, get_first_child,
+                  get_incarnation, get_last_ext, get_next_sibling, 
+		  get_not_keyword, get_parent, get_root, get_size, gt, 
+		  hash_val, is_ancestor, is_hardwired, is_pattern, is_root,
+		  lt, orphan, parse, parse_root_name, prefix, print, read, 
+		  set_incarnation, unparse, similar, equal, copy, _gcd,
+		  decode, encode
+
+
+    % The rep is a record so that we can cache the last computed value of the
+    % "hash" operation and so that we can set the "incarnation", which is
+    % used by the "symtab" cluster to keep track of how many times a particular
+    % name has been issued.
+    
+    rep = record[ext: int_seq, hash_size, hash_value: int, incarnation: int,
+		 is_pattern, not_keyword: bool, lc_root, root: string]
+
+	    
+    % Returns the name represented by "s".  Signals "error" if "s" does
+    % not represent a legal name.
+
+    create = proc (s: string) returns (name) signals (error)
+	return(parse(s, printer$nul()))
+	   resignal error
+	end create
+
+    
+    % Returns the name "n" extended by the number "e".  Signals "error" if
+    % "e" is not a legal extension.
+
+    extend = proc (n: cvt, e: int) returns (cvt) signals (error)
+        if e <= 0 then signal error end
+	return(rep${root: n.root, lc_root: n.lc_root, 
+		    ext: int_seq$addh(n.ext, e),
+		    not_keyword: true,
+		    hash_size: 0, hash_value: 0,
+		    incarnation: 0,
+		    is_pattern: n.is_pattern})
+	end extend
+
+
+    % Returns a root name obtained by extending the root name of "n" by "s".
+    % ASSUMES: "s" is a legal extension to a root name.
+
+    extend_root_name = proc (n: cvt, s: string) returns (cvt)
+	id: string := n.root || s
+	return(rep${root: id, lc_root: slower(id), ext: int_seq$[],
+	    	    not_keyword: true,	
+		    hash_size: 0, hash_value: 0,
+		    incarnation: 0,
+	    	    is_pattern: false})
+	end extend_root_name
+    
+    
+    % Returns the number of extensions to the root of "n".
+
+    get_depth = proc (n: cvt) returns (int)
+	return(int_seq$size(n.ext))
+	end get_depth
+
+
+    % Returns the name of the first child of the name "n".
+
+    get_first_child = proc (n: cvt) returns (cvt)
+	return(rep${root: n.root, lc_root: n.lc_root, 
+		    ext: int_seq$addh(n.ext, 1),
+		    not_keyword: true,
+		    hash_size: 0, hash_value: 0,
+		    incarnation: 0,
+		    is_pattern: n.is_pattern})
+	end get_first_child
+
+
+    % Returns the incarnation of "n".
+    
+    get_incarnation = proc (n: cvt) returns (int)
+	return(n.incarnation)
+	end get_incarnation
+    
+
+    % Returns the last extension of "n".  Signals "none" if there are none.
+
+    get_last_ext = proc (n: cvt) returns (int) signals (none)
+	return(int_seq$top(n.ext))
+	   except when bounds: signal none end
+	end get_last_ext
+
+
+    % Returns the name of the next sibling of the name "n".  Signals "none" if
+    % "n" does not have a sibling, i.e., if "n" is null or is a root name.
+
+    get_next_sibling = proc (n: cvt) returns (cvt) signals (none)
+	k: int := int_seq$size(n.ext)
+	if k = 0 then signal none end
+	i: int := int_seq$top(n.ext)
+	return(rep${root: n.root, lc_root: n.lc_root,
+		    ext: int_seq$replace(n.ext, k, i+1),
+		    not_keyword: true,
+		    hash_size: 0, hash_value: 0,
+		    incarnation: 0,
+		    is_pattern: n.is_pattern})
+	end get_next_sibling
+
+
+    % Returns "true" if "n" cannot be a keyword.
+    
+    get_not_keyword = proc (n: cvt) returns (bool)
+	return(n.not_keyword)
+	end get_not_keyword
+    
+    
+    % Returns the name of the parent of "n".  Signals "none" if "n" is a root
+    % name.
+
+    get_parent = proc (n: cvt) returns (cvt) signals (none)
+	ext: int_seq := int_seq$remh(n.ext)
+	   except when bounds: signal none end
+	return(rep${root: n.root, lc_root: n.lc_root, ext: ext,
+		    not_keyword: true, hash_size: 0, hash_value: 0,
+		    incarnation: 0, is_pattern: n.is_pattern})
+	end get_parent
+
+
+    % Returns the root-name of "n".
+
+    get_root = proc (n: cvt) returns (cvt)
+	return(rep${root: n.root, lc_root: n.lc_root, ext: int_seq$[],
+		    not_keyword: true, hash_size: 0, hash_value: 0,
+		    incarnation: 0, is_pattern: n.is_pattern})
+	end get_root
+
+
+    % Returns the size of the unparsed representation of "n".
+
+    get_size = proc (n: cvt) returns (int)
+	m: int := string$size(n.root)
+	for k: int in int_seq$elements(n.ext) do
+	    m := m + string$size(int$unparse(k)) + 1
+	    end
+	return(m)
+	end get_size
+
+
+    % Returns "true" if "n2" precedes "n1" lexicographically.
+
+    gt = proc (n1, n2: name) returns (bool)
+	return(n2 < n1)
+	end gt
+
+
+    % Returns an integer "h" in the range "0 <= h < size".
+    % Assumes: 0 < size < maxint/73
+    
+    hash_val = proc (n: cvt, size: int) returns (int)
+	if size = n.hash_size then return(n.hash_value) end
+	h: int := hash(n.lc_root, size)
+	for i: int in int_seq$elements(n.ext) do
+	    h := int$mod(73*h+i, size)
+	    end
+	n.hash_size := size
+	n.hash_value := h
+	return(h)
+	end hash_val
+    
+
+    % Returns "true" if "n1" is an ancestor of "n2".
+
+    is_ancestor = proc(n1, n2: cvt) returns (bool)
+	d: int := int_seq$size(n1.ext)
+	return(d <= int_seq$size(n2.ext)
+		 cand matches(n1.lc_root, n2.lc_root)
+		 cand n1.ext = int_seq$subseq(n2.ext, 1, d))
+	end is_ancestor
+
+     
+    % Returns "true" if "n" is a hardwired name.
+    
+    is_hardwired = proc (n: cvt) returns (bool)
+	return(string$substr(n.lc_root, 1, 2) = "lp")
+	   except when bounds: return(false) end
+	end is_hardwired
+    
+    
+    % Returns "true" if "n" is a name pattern.
+
+    is_pattern = proc (n: cvt) returns (bool)
+	return(n.is_pattern)
+	end is_pattern
+
+
+    % Returns "true" if "n" is a root name or a root name pattern.
+
+    is_root = proc (n: cvt) returns (bool)
+	return(int_seq$empty(n.ext))
+	end is_root
+
+
+    % Returns "true" if "n1" precedes "n2" lexicographically.
+
+    lt = proc (n1, n2: cvt) returns (bool)
+	if n1.lc_root < n2.lc_root then return(true) end
+	if n2.lc_root < n1.lc_root then return(false) end
+	return(less_lex_seq[int](n1.ext, n2.ext))
+	end lt
+
+
+    % Returns a name that has no ancestors.
+
+    orphan = proc() returns (name)
+	own n: name := parse("0", printer$nul())
+	return(n)
+        end orphan
+
+
+    % Returns the name represented by "s".  Writes an error message to "p" and
+    % signals "error" if "s" does not represent a legal name.
+
+    parse = proc (s: string, error: printer) returns (name) signals (error)
+	return(parse_item[name]("name", s, error))
+	   resignal error
+	end parse
+
+    
+    % Returns the root name represented by "s".  Signals "error" if "s" is not
+    % a legal root name.
+
+    parse_root_name = proc (s: string) returns (cvt) 
+			signals (bad_format, not_possible)
+	scan: scanner := scanner$from_string(s, printer$nul())
+	if ~token$is_nameId(scan.nextToken) then signal not_possible end
+	id: string := scanner$get(scan).text
+	if ~token$is_eof(scan.nextToken) then signal bad_format end
+	return(rep${root: id, lc_root: slower(id), ext: int_seq$[],
+		    not_keyword: true, hash_size: 0, hash_value: 0,
+		    incarnation: 0, is_pattern: false})
+	end parse_root_name
+    
+    
+    % Returns the prefix of "n" of depth "d".  Signals "bounds" if "d" is less
+    % than zero or greater than the depth of "n".
+
+    prefix = proc (n: cvt, d: int) returns (cvt) signals (bounds)
+	return(rep${root: n.root, lc_root: n.lc_root,
+		    ext: int_seq$subseq(n.ext, 1, d),
+		    hash_size: 0, hash_value: 0, not_keyword: true,
+		    incarnation: 0, is_pattern: n.is_pattern})
+	   except when bounds, negative_size: signal bounds end
+	end prefix
+
+
+    % Prettyprints "n" on "p".
+
+    print = proc (p: printer, n: cvt)
+	printer$puts(p, n.root)
+	printed: bool := ~string$empty(n.root)
+	for k: int in int_seq$elements(n.ext) do
+	    if printed then printer$puts(p, ".") end
+	    printer$puts(p, int$unparse(k))
+	    printed := true
+	    end
+	end print
+
+
+    % Reads a name-pattern from the head of "scan".  Writes a message to
+    % "scan", and signals "error", if the head of "scan" does not contain a
+    % legal name-pattern.
+
+    read = proc (scan: scanner) returns (cvt) signals (error)
+	pattern: bool := false
+	seen_dot: bool := false
+	root: string := read_pattern_component(scan)
+	   except when none, dot: scanner$error(scan, "expecting a name")
+				  signal error
+		  when star:      pattern := true
+			          root := "*"
+		  when stardot:   pattern := true
+			          root := "*"
+				  seen_dot := true
+		  end
+	id_ok: bool := pattern
+	while ~seen_dot do
+	    if ~id_ok cand token$is_simpleId(scan.nextToken) then break end
+	    begin
+		root := root || read_pattern_component(scan)
+		id_ok := false
+		end except when none:    break
+			   when dot:     seen_dot := true
+			   when star:    if ~id_ok then
+					    pattern := true
+					    root := root || "*"
+					    id_ok := true
+					    end
+			   when stardot: if ~id_ok then
+					    pattern := true
+					    root := root || "*"
+					    id_ok := true
+					    seen_dot := true
+					    end
+			   end
+	    end
+	not_keyword: bool := pattern cor seen_dot
+	ext: int_arr := int_arr$[]
+	while seen_dot do
+	    int_arr$addh(ext, int$parse(scan.nextToken.text))
+	    scanner$get(scan)
+            seen_dot := token$is_selectSym(scan.nextToken)
+	    if seen_dot then scanner$get(scan) end
+	    end
+	   except when bad_format, overflow:
+		       if int_arr$size(ext) > 0 then
+			  scanner$error(scan, 
+			                "expecting number after `.' in name")
+			  signal error
+			  end
+		  end
+	return(rep${root: root, lc_root: slower(root), ext: int_seq$a2s(ext),
+		    hash_size: 0, hash_value: 0, 
+		    not_keyword: not_keyword,
+		    incarnation: 0,
+		    is_pattern: pattern})
+	end read
+
+
+    % (Internal procedure) Reads and returns the next "nameId" from "scan".
+    % Removes the next token from "scan" and
+    % (a) signals "dot" if that token is a "selectSym",
+    % (b) signals "star" if that token consists of one or more asterisks,
+    % (c) signals "stardot" if that token is one or more asterisks followed by 
+    %     a "selectSym".  
+    % Otherwise signals "none".
+
+    read_pattern_component = proc (scan: scanner) returns (string)
+			       signals (none, dot, star, stardot)
+	t: token := scan.nextToken
+	tagcase t
+	   tag nameId:     return(scanner$get(scan).text)
+	   tag selectSym:  scanner$get(scan)
+	                   signal dot
+	   tag simpleOp:   s: string := t.text
+	                   for i: int in int$from_to(1, string$size(s)) do
+			       if s[i] = '*' then continue 
+				elseif s[i] = '.' then
+			          if i < string$size(s) then signal none end
+			          scanner$get(scan)
+				  signal stardot
+				else signal none
+				end
+			       end
+			   scanner$get(scan)
+			   signal star
+	   others:         signal none
+	   end
+	end read_pattern_component
+
+
+    % Returns a string representation of "n".
+
+    unparse = proc (n: name) returns (string)
+	return(unparse_item[name](n))
+	end unparse
+
+
+    % Sets the incarnation of "n" to "i".  Signals "impossible" if the 
+    % incarnation has already been set.
+    
+    set_incarnation = proc (n: cvt, i: int) signals (impossible)
+	if n.incarnation ~= 0 then signal impossible end
+	n.incarnation := i
+	end set_incarnation
+    
+
+    % Returns "true" if the name-pattern "n1" matches the name "n2".
+
+    similar = proc (n1, n2: cvt) returns (bool)
+	if ~n1.is_pattern cand ~n2.is_pattern then return(up(n1) = up(n2)) end
+	return(matches(n1.lc_root, n2.lc_root) cand n1.ext = n2.ext)
+	end similar
+    
+    
+    % (Internal procedure) Returns "true" if "s" can be obtained from "p" by
+    % substituting strings for the asterisks in "p".
+    
+    matches = proc (p, s: string) returns (bool)
+	n: int := string$indexc('*', p)
+	if n = 0 then return(p = s) end
+	p1: string := string$substr(p, 1, n-1)
+	if string$indexs(p1, s) ~= 1 then return(false) end
+	s := string$rest(s, n)
+	while n < string$size(p) do
+	    p := string$rest(p, n + 1)
+	    n := string$indexc('*', p)
+	    if n = 0 then 
+	       ps: int := string$size(p)
+	       ss: int := string$size(s)
+	       return(ps <= ss cand p = string$rest(s, ss-ps+1))
+	     elseif n > 1 then
+	       n1: int := string$indexs(string$substr(p, 1, n-1), s)
+	       if n1 = 0 then return(false) end
+	       s := string$rest(s, n1 + n - 1)
+	     end
+	    end
+	return(true)
+	end matches
+
+
+    % Returns "true" if "n1" and "n2" are the same name patterns.
+
+    equal = proc (n1, n2: cvt) returns (bool)
+	return(n1.lc_root = n2.lc_root cand n1.ext = n2.ext)
+	end equal
+
+
+    % Returns "n", which is immutable.
+
+    copy = proc (n: cvt) returns (cvt)
+	return(n)
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end name

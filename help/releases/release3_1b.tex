@@ -1,0 +1,59 @@
+\doc{Release 3.1b}
+\ref{release3_1b}
+
+The following bugs in Version 3.1a have been fixed in Version 3.1b.
+\begin{description}
+\dt 95-014
+\dd
+The \fq{normalize} command now properly normalizes a rewrite rule with a
+reducible left side.  Formerly, it failed to normalize a rewrite rule when 
+its left side could be reduced, but no further reductions were possible.
+\dt 95-015
+\dd
+The operation of boolean equality is now recognized as an ac operator and not
+just as a commutative operator.  Formerly, LP incorrectly (and unsoundly)
+eliminated some subterms when reducing formulas such as
+\fq{a = (r = (b = b'))} that contain multiple occurrences of equality
+between boolean subformulas.
+\dt 95-016
+\dd
+The experimental version of LP (invoked by the command \fq{lp -e}) no longer
+crashes when a \fq{register} command is issued during  a proof.
+\dt 98-001
+\dd
+The bound variable \fq{i1} in
+\begin{quote}
+\fq{f(i, j) <=> \A i1 \A j1 (i ~= i1 \/ j ~= j1 => P(i1, j1))}
+\end{quote}
+is no longer changed incorrectly to \fq{i2} when executing
+\fq{show normal-form f(i2, i1)}.
+\end{description}
+
+In addition, the following improvements have been made in Version 3.1b.
+
+\begin{itemize}
+\item
+LP now contains an experimental implementation of an enhanced dsmpos ordering,
+which can be activated by the \fq{lp -debug} command and used to prove the
+termination of rewriting systems in the presence of ac operators.  The enhanced
+ordering uses a variant, developed in collaboration with Deepak Kapur, of the
+multiset comparison.
+\item
+The command \fq{display conjectures \s{names}} now shows only the current
+conjecture when no names are specified.  To show all named conjectures, the
+user must now type \fq{display conjectures (*)}.  The parentheses are required,
+lest the command be parsed as \fq{display conjectures*}.
+\item
+The class expressions \fq{contains-operator(\s{operator>})} and
+\fq{contains-variable(\s{variable})} now allow an unqualified operator
+or variable to be overloaded, in which case the class expression names all
+facts containing at least one of the overloading.
+\item
+The routines that display the precedence relation (for the \fq{write} and
+\fq{display} commands) now display a generating subset of the relation,
+not the entire relation.
+\item
+There is now a class expression \fq{contains-match(\s{term})}, which
+matches all facts that contain a subterm matching the given term.
+\end{itemize}
+

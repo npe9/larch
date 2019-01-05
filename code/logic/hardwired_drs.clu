@@ -1,0 +1,36 @@
+#extend
+
+% The following deduction rules are hardwired into LP.
+
+% NOTE: The variables in these deduction rules are not in the symbol table
+% kept by the "interactive" cluster.
+	    
+hardwired_and_is_true = proc () returns (deduction_rule)
+    s = "when p /\\ q yield p, q"
+    own dr: deduction_rule := make_dr(s, "lp_and_is_true")
+    return(dr)
+    end hardwired_and_is_true
+
+hardwired_or_is_false = proc () returns (deduction_rule)
+    s = "when (p \\/ q) = false yield p = false, q = false"
+    own dr: deduction_rule := make_dr(s, "lp_or_is_false")
+    return(dr)
+    end hardwired_or_is_false
+
+make_dr = proc (unparsed, label: string) returns (deduction_rule)
+    own stab: symtab := dr_symtab()
+    dr: deduction_rule := deduction_rule$parse(unparsed, stab, printer$nul())
+    dr.name := name$create(label)
+    return(dr)
+    end make_dr
+
+dr_symtab = proc () returns (symtab)
+    stab: symtab := symtab$[]
+    symtab$begin_changes(stab)
+    symtab$enter_var(stab, variable${id: identifier$make_simple("p"), 
+	                             sort: bool_sort()})
+    symtab$enter_var(stab, variable${id: identifier$make_simple("q"), 
+	                             sort: bool_sort()})
+    symtab$commit_changes(stab)
+    return(stab)
+    end dr_symtab

@@ -1,0 +1,65 @@
+\doc{Symbols}
+\ref{symbols}
+\ref{identifiers}
+\ref{simpleId}
+\ref{number}
+\ref{opId}
+\ref{whitespace}
+\ref{punctuation}
+\ref{markers}
+\ref{string}
+\ref{blank-free-string}
+
+LP divides its input into a sequence of \def{symbols} (also known as
+\def{tokens}) of the following kinds.
+
+\head{2}{Simple identifiers}
+
+A \sd{simpleId} is a string of letters, digits, apostrophes, and underscores.
+Exceptions: a \s{simpleId} cannot consist of an underscore or an apostrophe
+alone, and it cannot contain two adjacent underscores.  Examples: \f{Nat},
+\f{10}, \f{x'}, \f{a_1}.  
+\p
+A \sd{number} is a \s{simpleId} consisting entirely of digits.  See also
+\dlink{keyword}{keyword}.
+
+\head{2}{Operator identifiers}
+
+An \sd{opId} is a string of \def{operator characters}, that is, characters
+chosen from among \qf{!#$&*+-./<=>?@^|~}, or it is the special symbol \qf{/\}.
+Exception: The symbol \f{->} is not an \s{opId}.  Examples: \f{+}, \f{~=},
+\f{<=>}.
+
+\head{2}{Escaped identifiers}
+
+An \sd{escapedId} consists of the \def{escape character} \qf{\} alone or the
+escape character followed by a simple identifier, an operator character, an
+underscore, another escape character, or a punctuation mark.  Examples:
+\f{\in}, \f{\-}, \f{\_}, \f{\\}, \f{\(}.
+
+\head{2}{Punctuation marks}
+
+Each of the characters in \qf#:,;()[]{}%# is a separate token, unless it is
+immediately preceded by the escape character.  The \def{marker} symbol \qf{__}
+is also treated as a punctuation mark.
+
+\anchor{whitespace}
+\head{2}{Whitespace}
+
+A space, tab, or newline terminates the preceding token and is otherwise
+ignored.  Likewise, all characters from an unescaped percent sign through the
+following newline are treated as whitespace.  See the \cflink{comment} command.
+
+\head{2}{Illegal characters}
+
+The characters \qf{"} and \qf{`}, as well as all control characters other than
+whitespace, are reserved for future use.  They should not appear in LP scripts
+except within comments.
+
+\head{2}{Strings}
+
+In certain contexts, LP reads its input without dividing it into tokens.  A
+\sd{string} is an arbitrary sequence of characters other than newlines.  A
+\sd{blank-free-string} is a \s{string} that does not contain any whitespace.
+
+

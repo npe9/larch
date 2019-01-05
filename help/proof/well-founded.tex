@@ -1,0 +1,17 @@
+\doc{Proofs by well-founded induction}
+To prove a formula \fq{F} by well-founded induction over a variable \fq{x} of
+sort \fq{S} using a relation \fq{R} that has been
+\dlink{../commands/assert}{asserted} or \dlink{of-ir}{proved} to be
+well founded, LP generates a single subgoal that involves proving the formula
+\fq{F(xc)} using the additional hypothesis \fq{R(x, xc) => F(x)}, where \fq{xc}
+is a new \llink{constant}{constant} of sort \fq{S}.  
+
+\head{2}{Example}
+\begin{verbatim}
+assert well founded <
+prove 0 + x = x by induction
+
+  New constant:         xc
+  Induction subgoal:    0 + xc = xc
+  Induction hypothesis: x < xc => 0 + x = x
+\end{verbatim}

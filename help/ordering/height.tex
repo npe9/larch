@@ -1,0 +1,51 @@
+\doc{Registered orderings: height}
+\ref{height-constraint}
+\ref{bottom}
+\ref{top}
+
+\def{Height constraints} define a partial ordering on operators that induces a
+partial ordering on terms.  This ordering, along with \dlink{status}{status}
+constraints, is used by LP's \dlink{registered}{registered orderings} to orient
+equations into provably terminating sets of rewrite rules.
+
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{height-constraint} ::= \f{height} \s{operator-set} ( \s{height} \s{operator-set} )+
+                           | ( \f{bottom} | \f{top} ) \slink{../logic/operator}{operator}+[,]
+\sd{height}            ::= \f{>} | \f{=} | \f{>=}
+\sd{operator-set}      ::= \slink{../logic/operator}{operator} | \qf{(} \slink{../logic/operator}{operator}+[,] \qf{)}
+\end{verbatim}
+
+Note: The first word in a \s{height-constraint} can be
+\dlink{../misc/abbreviation}{abbreviated}.
+
+
+\head{2}{Examples}
+\begin{verbatim}
+height f > g
+height => > (/\, \/) > true = false
+bottom f
+\end{verbatim}
+
+\head{2}{Usage} 
+The height constraint \fq{f > g} suggests that terms involving \fq{f} are
+``more complicated,'' and should be rewritten to, terms containing \fq{g}.  The
+height constraint \fq{f = g} suggests that terms involving \fq{f} and \fq{g}
+are equally complicated.  The height constraint \fq{f >= g} can be strengthened
+to either \fq{f > g} or to \fq{f = g}; it is inconsistent with the constraint
+\fq{g > f}.  A compound height constraint, such as the second example, suggests
+that \f{=>} is higher than \f{/\} and \f{\/}, both of which are higher than
+\fq{true}, which has the same height as \fq{false}.
+\p
+The transitive closure of the height constraints in LP's registry defines a
+partial order on operators, which is used by the \dlink{dsmpos}{dsmpos}
+ordering.  The \cflink{register} command will reject any height constraint that
+is not a consistent extension to its registry.
+\p
+The \fq{bottom} (\fq{top}) constraints suggest that LP extend its registry when
+it needs information about a listed operator by giving that operator a lower
+(higher) height than any non-bottom (non-top) operator.  LP does not actually
+extend its registry until it needs this information.  In general, putting
+operators at the bottom (top) of the registry causes terms to be reduced toward
+(away from) ones made out of these operators.

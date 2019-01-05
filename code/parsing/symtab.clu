@@ -1,0 +1,725 @@
+#extend
+
+% A "symtab" manages identifiers (for operators, variables, and sorts) and
+% generates names (for deduction rules, equations, induction rules, operator
+% theories, and rewrite rules).
+
+% Identifiers for operators and variables can be overloaded, i.e., can have
+% different qualifications.  A "symtab" is used to disambiguate unqualified
+% identifiers for operators and variables, to permit efficient implementations
+% of "operator$equal", "sort$equal", and "variable$equal" (in terms of integer
+% rather than string comparisons), and to conserve storage in the
+% representations of terms (by having them refer to shared information about
+% operators and variables).
+
+
+% INVARIANTS: For any operators "op" and "op1", and variables "v" and "v1" in a
+% symtab "stab":
+
+% "op = op1" iff "op.key = op1.key"
+
+% "v = v1" iff "v.key = v1.key"
+
+% "op.arity = 0" implies "op.id ~= v.id" or "op.rng ~= v.sort"
+
+
+
+% ENHANCE: 
+% 1.  Keep a free list of keys so that they are assigned as contiguously as
+%     possible.
+% 2.  Implement nested scopes.
+
+
+
+symtab = cluster is 
+	blank, new, abort_changes, begin_changes, commit_changes, 
+	define_class, delete_op, delete_var, enter_op, enter_sort, enter_var, 
+        extended_root_name, get_classes, get_ops, get_root_name, get_sorts, 
+	get_unparse_mode, get_vars, is_root_name, 
+	lookup_op, lookup_op_id, matching_ops, lookup_sort, lookup_var, 
+	lookup_vars, lookup_var_id, new_name, new_subname, 
+	nullary_overloadings, root_names, set_root_name, set_unparse_mode, 
+	copy_ids, _gcd
+
+    % REP INVARIANTS: 
+    % (1) For any "id" in the domain of "imap", "imap(id)" is nonempty.
+    % (2) if "op" is in "imap(op.id)", then "0 < op.key <= op_key"
+    % (3) if "v" is in "imap(v.id)", then "0 < v.key <= var_key"
+    
+    rep = record[changes: change_arr,	   % changes to commit or abort
+    	         changing: bool, 	   % true if abort or commit needed
+		 classes: class_table,	   % class definitions
+                 imap: imap, 		   % candidate bindings for ids
+		 last_subname: name_map,   % last-issued subnames
+		 names: name_counts,	   % globally known names
+		 numeric_theories: nt_map, % theories of sorts with numerals
+    		 op_key: int, 		   % last-assigned op.key
+		 root_name: name, 	   % current name prefix
+		 root_strings: str_set,    % known root names
+		 unp_mode: unparse_mode,   % current mode for various "t$print"
+		 var_key: int]		   % last-assigned v.key
+
+    change_arr 	= array[change]
+    change 	= struct[b: binding, bs: bindings, id: identifier]
+    imap 	= id_table[bindings]
+    bindings 	= set[binding]
+    binding 	= variant[operator: operator, sort: sort, variable: variable]
+    % NOTE: A "binding" is mutable to optimize "binding$equal".
+
+    name_counts = hash_table[name, int]
+    name_map    = mapping[name, name]
+    nt_map      = mapping[sort, numeric_theory]
+
+    % NOTE: "op_key" and "var_key" are kept in the rep so that they are
+    % restored properly by the "clear" and "thaw" commands.  If we ever want
+    % to enter identifiers (other than hardwired operators) in more than one
+    % "symtab", we need to invent a way to assign them unique keys irrespective
+    % of the "symtab" in which they are entered.  Key assignment is done here
+    % rather than in the "operator" and "variable" clusters so as to keep the
+    % number of keys assigned to a minimum.
+
+    
+    % Returns a blank "symtab" that is immutable except for "unp_mode".
+    
+    blank = proc () returns (cvt)
+	own stab: rep := 
+		rep${changes: change_arr$[],
+		     changing: false,
+		     classes: class_table$[],
+		     imap: imap$[],
+		     last_subname: name_map$[],
+		     names: name_counts$[],
+		     numeric_theories: nt_map$[],
+		     op_key: 0,
+		     root_name: name$create(initial_root_name),
+		     root_strings: str_set$[initial_root_name],
+		     unp_mode: setting$value_unp(default_display_mode),
+		     var_key: 0}
+	return(stab)
+	end blank
+
+
+    % Returns a mutable new "symtab" containing all hardwired identifiers and
+    % names.
+    
+    new = proc () returns (symtab)
+	stab: symtab := copy_ids(blank())
+	begin_changes(stab)
+	for n: name in names_set$elements(hardwired_root_names()) do
+	    str_set$insert(down(stab).root_strings, slower(name$unparse(n)))
+	    end
+	for so: sort in sort_set$elements(hardwired_sorts()) do
+	    enter_sort(stab, so)
+	    end
+	for op: operator in op_set$elements(hardwired_ops()) do
+	    enter_op(stab, op)
+	    end
+	commit_changes(stab)
+	return(stab)
+	end new
+
+
+    % Removes all uncommitted bindings from "stab".
+    
+    abort_changes = proc (stab: cvt)
+	if ~stab.changing then fail("symtab$abort_changes") end
+	while true do
+	    c: change := change_arr$remh(stab.changes)
+	    bindings$delete(c.bs, c.b)
+	    if bindings$empty(c.bs) then imap$delete(stab.imap, c.id) end
+	    end except when bounds: end
+	stab.changing := false
+	end abort_changes
+    
+    
+    % Initiates a set of potential changes to "stab".  Serves only as an aid in
+    % debugging by helping to catch missing commits and aborts.
+    
+    begin_changes = proc (stab: cvt)
+	if stab.changing then fail("symtab$begin_changes") end
+	stab.changing := true
+	end begin_changes
+	    
+	    
+    % Commits all uncommitted bindings from "stab".  
+    
+    commit_changes = proc (stab: cvt)
+	if ~stab.changing then fail("symtab$commit_changes") end
+	change_arr$trim(stab.changes, change_arr$low(stab.changes), 0)
+	stab.changing := false
+	end commit_changes
+    
+    
+    % Assigns "ce" as the value of "cn".
+    % Assumes: "ce" does not refer to "cn".
+    
+    define_class = proc (stab: cvt, cn: class_name, ce: class_expression)
+	class_table$define(stab.classes, cn, ce)
+	end define_class
+    
+    
+    % Deletes "op" from "stab" .  Signals "missing" if "op" is not in "stab".
+    % Signals "impossible" if "op" is hardwired.  (Unused: Called only by
+    % interactive$delete_ops, which is not used.)
+    
+    delete_op = proc (stab: cvt, op: operator) signals (impossible, missing)
+	if op.key = 0 then signal missing end
+	if op_set$exists(hardwired_ops(), op)
+	     cor op_set$exists(hardwired_sorted_ops(op.dom[2], up(stab)), op) 
+	   then signal impossible
+	   end except when bounds: 
+		      when missing (ops: op_set):
+			   if op_set$exists(ops, op) then signal impossible end
+		      end
+	bs: bindings := imap$image(stab.imap, op.id)
+	   resignal missing
+	for b: binding in bindings$elements(bs) do
+	    if op = binding$value_operator(b) then 
+	       bindings$delete(bs, b)
+	       if bindings$empty(bs) then imap$delete(stab.imap, op.id) end
+	       return
+	       end except when wrong_tag: end
+	    end
+	signal missing
+	end delete_op
+    
+
+    % Deletes "v" from "stab" .  Signals "missing" if "v" is not in "stab".
+    % (Unused)
+    
+    delete_var = proc (stab: cvt, v: variable) signals (missing)
+	if v.key = 0 then signal missing end
+	bs: bindings := imap$image(stab.imap, v.id)
+	   resignal missing
+	for b: binding in bindings$elements(bs) do
+	    if v = binding$value_variable(b) then 
+	       bindings$delete(bs, b)
+	       if bindings$empty(bs) then imap$delete(stab.imap, v.id) end
+	       return
+	       end except when wrong_tag: end
+	    end 
+	signal missing
+	end delete_var
+    
+
+    % Returns the operator in "stab" that matches "op".  Inserts "op" in "stab"
+    % and assigns it a key if no such operator already exists.  Signals
+    % "illegal" if "op.id" is not overloadable and "op.sig" is not a correct
+    % signature for that operator.  Signals "overloaded" if "op.arity = 0" and
+    % "stab" contains a variable "v" with "v.id = op.id" and "v.sort = op.rng".
+    
+    enter_op = proc (stab: cvt, op: operator) returns (operator) 
+		 signals (illegal, overloaded)
+	if stab = down(blank()) then
+	   fail("symtab$enter_op: applied to symtab$blank")
+	   end
+	if ~stab.changing then fail("symtab$%enter_op: no begin") end
+	if interactive$get_experimental()
+	     cand ~nt_map$empty(stab.numeric_theories) then
+	   n: int := int$parse(identifier$id2s(op.id))
+	   nt: numeric_theory := nt_map$image(stab.numeric_theories, op.rng)
+	   return(operator$make_numeral(rat$int2rat(n), nt))
+	   end except when bad_format, negative, missing: end
+	bs: bindings := imap$image(stab.imap, op.id)
+	   except when missing: 
+		       bs := bindings$[]
+		       imap$insert(stab.imap, op.id, bs)
+		  end
+	for b: binding in bindings$elements(bs) do
+	    op1: operator := binding$value_operator(b)
+	       except when wrong_tag:
+			   if op.arity = 0 then
+			      v: variable := binding$value_variable(b)
+				 except when wrong_tag: continue end
+			      if v.id = op.id cand v.sort = op.rng then 
+				 signal overloaded
+				 end
+			      end
+			   continue
+		      end
+	    if operator$similar(op, op1) then return(op1) end
+	    end
+	if (is_op_if(op) cand op.sig ~= sig_if(op.rng))
+	     cor (is_op_equals(op) cand op.sig ~= sig_equals(op.sig.dom[1]))
+	     cor (is_op_neq(op) cand op.sig ~= sig_equals(op.sig.dom[1]))
+	     cor (identifier$is_logicalOp(op.id) cand op.sig ~= sig_bool2()) then
+	   if bindings$empty(bs) then imap$delete(stab.imap, op.id) end
+	   signal illegal
+	   end
+	b: binding := binding$make_operator(op)
+	bindings$insert_unique(bs, b)
+	change_arr$addh(stab.changes, change${id: op.id, b: b, bs: bs})
+	k: int := op.key
+	if k < 0 then
+	   fail("symtab$enter_op: internal op")
+	 elseif k = 0 then
+	   op.key := stab.op_key + 1
+	      except when overflow: fail("symtab$enter_op: too many ops") end
+	   stab.op_key := op.key
+	 elseif k <= op_set$size(hardwired_ops()) then
+	   % Allow multiple invocations of "new"
+	   stab.op_key := int$max(stab.op_key, k)
+	 else % ENHANCE: allow operators to be in more than one symtab
+	      fail("symtab$enter_op")
+	 end
+	return(op)
+	end enter_op
+	
+	
+    % Returns the sort in "stab" that matches "so".  Inserts "so" in "stab"
+    % if no such sort already exists.
+
+    enter_sort = proc (stab: cvt, so: sort) returns (sort)
+		   signals (numeric(numeric_theory))
+	if stab = down(blank()) then
+	   fail("symtab$enter_sort: applied to symtab$blank")
+	   end
+        if ~stab.changing then fail("symtab$%enter_sort: no begin") end
+	id: identifier := identifier$make_simple(sort$unparse(so))
+	bs: bindings := imap$image(stab.imap, id)
+	   except when missing: 
+		       bs := bindings$[]
+		       imap$insert(stab.imap, id, bs)
+		  end
+	for b: binding in bindings$elements(bs) do
+	    so1: sort := binding$value_sort(b)
+	       except when wrong_tag: continue end
+	    if sort$similar(so, so1) then return(so1) end
+	    end
+        b: binding := binding$make_sort(so)
+	bindings$insert_unique(bs, b)
+	change_arr$addh(stab.changes, change${id: id, b: b, bs: bs})
+	if ~sort_set$exists(hardwired_sorts(), so) then
+	   ops: op_set := hardwired_sorted_ops(so, up(stab))
+	      except when missing (ops1: op_set): ops := ops1 end
+	   for op: operator in op_set$elements(ops) do
+	       enter_op(up(stab), op)
+	       end
+	   end
+        if interactive$get_experimental() then
+	   nt: numeric_theory
+	   if so = real_sort() then 
+	      nt := numeric_theory$make_real(so, make_real_ops(up(stab), so))
+	    elseif so = int_sort() then
+	      nt := numeric_theory$make_int(so, make_int_ops(up(stab), so))
+	    elseif so = nat_sort() then
+	      nt := numeric_theory$make_nat(so, make_nat_ops(up(stab), so))
+	    else exit not_numeric
+	    end
+	   nt_map$insert(stab.numeric_theories, so, nt)
+	   signal numeric(nt)
+	   end except when not_numeric: end
+	return(so)
+	end enter_sort
+	
+	
+    % Returns the variable in "stab" that matches "v".  Inserts "v" in "stab"
+    % and assigns it a key if no such variable already exists.  Signals
+    % "overloaded" if "stab" contains an operator "op" with arity 0, "op.id =
+    % v.id", and "op.rng = v.sort".
+
+    enter_var = proc (stab: cvt, v: variable) returns (variable)
+	    	  signals (overloaded)
+	if stab = down(blank()) then
+	   fail("symtab$enter_var: applied to symtab$blank")
+	   end
+        if ~stab.changing then fail("symtab$%enter_var: no begin") end
+	bs: bindings := imap$image(stab.imap, v.id)
+	   except when missing: 
+		       bs := bindings$[]
+		       imap$insert(stab.imap, v.id, bs)
+		  end
+	for b: binding in bindings$elements(bs) do
+	    tagcase b
+	       tag variable (v1: variable):
+		   if variable$similar(v, v1) then return(v1) end
+	       tag operator (op: operator):
+	           if op.arity = 0 cand op.id = v.id cand op.rng = v.sort
+		      then signal overloaded
+		      end
+	       others:
+	       end
+	    end
+	b: binding := binding$make_variable(v)
+	bindings$insert_unique(bs, b)
+	change_arr$addh(stab.changes, change${id: v.id, b: b, bs: bs})
+	if v.key < 0 then
+	   fail("symtab$enter_var: internal variable")
+	 elseif v.key = 0 then
+	   v.key := stab.var_key + 1
+	      except when overflow: fail("symtab$enter_var: too many vars") end
+	   stab.var_key := v.key
+	 else % ENHANCE: allow variables to be in more than one symtab
+	      fail("symtab$enter_var")
+	 end
+	return(v)
+	end enter_var
+	
+	
+    % Returns the current root name of "stab" extended by "s".  ASSUMES: "s" is
+    % a legal extension to a root name.
+
+    extended_root_name = proc (stab: cvt, s: string) returns (name)
+	n: name := name$extend_root_name(stab.root_name, s)
+	str_set$insert(stab.root_strings, slower(name$unparse(n)))
+	   except when exists: end
+	return(n)
+	end extended_root_name
+
+
+    % Returns the class table in "stab".
+    
+    get_classes = proc (stab: cvt) returns (class_table)
+	return(stab.classes)
+	end get_classes
+    
+
+    % Returns the set of all operators in "stab".
+    
+    get_ops = proc (stab: cvt) returns (op_set)
+	ops: op_set := op_set$[]
+	for id: identifier, bs: bindings in imap$elements(stab.imap) do
+	    for b: binding in bindings$elements(bs) do
+		op_set$insert_unique(ops, binding$value_operator(b))
+		   except when wrong_tag: end
+		end
+	    end
+	return(ops)
+	end get_ops
+
+    
+    % Returns the current root name of "stab".
+
+    get_root_name = proc (stab: cvt) returns (name)
+	return(stab.root_name)
+	end get_root_name
+
+
+    % Returns the set of all sorts in "stab".
+    
+    get_sorts = proc (stab: cvt) returns (sort_set)
+	sorts: sort_set := sort_set$[]
+	for id: identifier, bs: bindings in imap$elements(stab.imap) do
+	    for b: binding in bindings$elements(bs) do
+		sort_set$insert_unique(sorts, binding$value_sort(b))
+		   except when wrong_tag: end
+		end
+	    end
+	return(sorts)
+	end get_sorts
+
+    
+    % Returns "stab.unp_mode".
+    
+    get_unparse_mode = proc (stab: cvt) returns (unparse_mode)
+	return(stab.unp_mode)
+	end get_unparse_mode
+    
+
+    % Returns the set of all variables in "stab".
+    
+    get_vars = proc (stab: cvt) returns (var_set)
+	vars: var_set := var_set$[]
+	for id: identifier, bs: bindings in imap$elements(stab.imap) do
+	    for b: binding in bindings$elements(bs) do
+		var_set$insert_unique(vars, binding$value_variable(b))
+		   except when wrong_tag: end
+		end
+	    end
+	return(vars)
+	end get_vars
+
+    
+    % Returns "true" if "s" is a root name in "stab".
+    
+    is_root_name = proc (stab: cvt, s: string) returns (bool)
+	return(str_set$exists(stab.root_strings, slower(s)))
+	end is_root_name
+
+
+    % Returns the operator in "stab" that matches "op.id" and that has
+    % signature "op.sig".  Signals "missing" if there is no similar operator.
+    % Signals "ambiguous" if there is more than one (e.g., one with identifier
+    % "__+" and another with identifier "+__" when "op.id" is "+").
+
+    lookup_op = proc (stab: cvt, op: operator) returns (operator) 
+		  signals (ambiguous, missing)
+	if interactive$get_experimental() then
+	   n: int := int$parse(identifier$id2s(op.id))
+	   nt: numeric_theory := nt_map$image(stab.numeric_theories, op.rng)
+	   return(operator$make_numeral(rat$int2rat(n), nt))
+	   end except when bad_format, missing: end
+	bs: bindings := imap$image(stab.imap, op.id)
+	   resignal missing
+	found: bool := false
+	op1: operator
+	for b: binding in bindings$elements(bs) do
+	    op2: operator := binding$value_operator(b)
+	       except when wrong_tag: continue end
+	    if identifier$similar(op.id, op2.id) cand op.sig = op2.sig then 
+	       if found then signal ambiguous end
+	       op1 := op2
+	       found := true
+	       end
+	    end
+	if found
+	   then return(op1)
+	   else	signal missing
+	   end
+	end lookup_op
+    
+    
+    % Returns the operator in "stab" that matches "id".  Signals as follows:
+    % "ambiguous"	"id" matches more than one operator and/or variable
+    % "missing" 	"id" matches no operator or variable
+    % "variable"	"id" matches a variable, but not an operator
+    
+    lookup_op_id = proc (stab: cvt, id: identifier) returns (operator)
+		     signals (ambiguous, missing, variable)
+	if interactive$get_experimental() then
+	   n: int := int$parse(identifier$id2s(id))
+	   found: bool := false
+	   op: operator
+	   for so: sort, nt: numeric_theory 
+		 in nt_map$elements(stab.numeric_theories) do
+	       if found then signal ambiguous end
+	       op := operator$make_numeral(rat$int2rat(n), nt)
+	       found := true
+	       end except when negative: end
+	   if found then return(op) end
+	   signal missing
+	   end except when bad_format: end
+	bs: bindings := imap$image(stab.imap, id)
+	   resignal missing
+	var: bool := false
+	found: bool := false
+	op: operator
+	for b: binding in bindings$elements(bs) do
+	    tagcase b
+	       tag operator (op1: operator): 
+	           if identifier$similar(op1.id, id)
+		      then op := op1
+		      else continue
+		      end
+	       tag sort: continue
+	       tag variable: var := true
+	       end
+	    if found then signal ambiguous end
+	    found := true
+	    end
+	if ~found then signal missing end
+	if var then signal variable end
+	return(op)
+	end lookup_op_id
+
+
+    % Yields all operators in "stab" with identifiers that match "id".
+
+    matching_ops = iter (stab: cvt, id: identifier) yields (operator)
+	if interactive$get_experimental() then
+	   n: int := int$parse(identifier$id2s(id))
+	   for so: sort, nt: numeric_theory 
+		 in nt_map$elements(stab.numeric_theories) do
+	       yield(operator$make_numeral(rat$int2rat(n), nt))
+	       end except when negative: end
+	   end except when bad_format: end
+	bs: bindings := imap$image(stab.imap, id)
+	   except when missing: return end
+	for b: binding in bindings$elements(bs) do
+	    op: operator := binding$value_operator(b)
+	       except when wrong_tag: continue end
+	    if identifier$similar(op.id, id) then yield(op) end
+	    end
+	end matching_ops
+
+
+    % Returns the sort in "stab" that matches "so".  Signals "missing" if there
+    % is no such sort.
+    
+    lookup_sort = proc (stab: cvt, so: sort) returns (sort) signals (missing)
+	id: identifier := identifier$make_simple(sort$unparse(so))
+	bs: bindings := imap$image(stab.imap, id)
+	   resignal missing
+	for b: binding in bindings$elements(bs) do
+	    return(binding$value_sort(b))
+	       except when wrong_tag: end
+	    end
+        signal missing
+	end lookup_sort
+    
+
+    % Returns the variable in "stab" similar to "v".  Signals "missing" if
+    % there is no similar variable.
+
+    lookup_var = proc (stab: cvt, v: variable) returns (variable)
+		   signals (missing)
+	bs: bindings := imap$image(stab.imap, v.id)
+	   resignal missing
+	for b: binding in bindings$elements(bs) do
+	    v1: variable := binding$value_variable(b)
+	       except when wrong_tag: continue end
+	    if variable$similar(v, v1) then return(v1) end
+	    end
+	signal missing
+	end lookup_var
+    
+    
+    % Returns the set of variables in "stab" that match "id".
+
+    lookup_vars = proc (stab: cvt, id: identifier) returns (var_set)
+	vs: var_set := var_set$[]
+	bs: bindings := imap$image(stab.imap, id)
+	   except when missing: return(vs) end
+	for b: binding in bindings$elements(bs) do
+	    var_set$insert_unique(vs, binding$value_variable(b))
+	       except when wrong_tag: end
+	    end
+	return(vs)
+	end lookup_vars
+    
+    
+    % Returns the variable in "stab" that matches "id".  Signals as follows.
+    % "ambiguous"	"id" matches more than one variable and/or constant
+    % "missing" 	"id" matches no variable or nullary operator
+    % "operator"	"id" matches an operator, but not a variable
+
+    lookup_var_id = proc (stab: cvt, id: identifier) returns (variable)
+		      signals (ambiguous, missing, operator)
+	bs: bindings := imap$image(stab.imap, id)
+	   resignal missing
+	is_op: bool := false
+	is_var: bool := false
+	v: variable
+	for b: binding in bindings$elements(bs) do
+	    tagcase b
+	       tag operator (op: operator): 
+	           is_op := is_op cor op.arity = 0
+		   if is_var cand is_op then signal ambiguous end
+	       tag sort:
+	       tag variable (v1: variable):
+	           if is_var cor is_op then signal ambiguous end
+		   is_var := true
+	           v := v1
+	       end
+	    end
+	if is_var then return(v)
+	 elseif is_op then signal operator
+	 else signal missing
+	 end
+	end lookup_var_id
+    
+    
+    % Returns a new name beginning with the current root name.
+
+    new_name = proc (stab: cvt) returns (name)
+	return(new_subname(up(stab), stab.root_name))
+	end new_name
+
+
+    % Returns a new subname of "n". 
+
+    new_subname = proc (stab: cvt, n: name) returns (name)
+	if debugging cand stab = down(blank()) then
+	   fail("symtab$new_subname: applied to symtab$blank")
+	   end
+	n1: name := name_map$image(stab.last_subname, n).next_sibling
+	   except when missing: n1 := n.first_child end
+	count: int := 
+	    name_counts$image(stab.names, n1, name$hash_val, name$equal) + 1
+	   except when missing: count := 1 end
+	name_counts$change_image(stab.names, n1, count, 
+				 name$hash_val, name$equal)
+	n1.incarnation := count
+	   except when impossible: fail("symtab$new_subname") end
+	name_map$change(stab.last_subname, n, n1)
+	return(n1)
+	end new_subname
+
+
+    % Returns "true" if "id" is overloaded as a variable and/or a nullary
+    % operator.
+    
+    nullary_overloadings = proc (stab: cvt, id: identifier) returns (bool)
+	bs: bindings := imap$image(stab.imap, id)
+	   except when missing: return(false) end
+	if bindings$size(bs) < 2 then return(false) end
+	some_nullary: bool := false
+	for b: binding in bindings$elements(bs) do
+	    tagcase b
+	       tag operator (op: operator): 
+		   if op.arity > 0 then continue end
+	       tag sort: continue
+	       tag variable: 
+	       end
+	    if some_nullary then return(true) end
+	    some_nullary := true
+	    end
+	return(false)
+	end nullary_overloadings
+    
+    
+    % Returns a sorted sequence containing the root names in "stab".
+    
+    root_names = proc (stab: cvt) returns (name_seq)
+	roots: name_arr := name_arr$[]
+	for s: string in str_set$elements(stab.root_strings) do
+	    name_arr$addh(roots, name$create(s))
+	    end
+	quicksort[name](roots, 1, name_arr$size(roots), name$lt)
+	return(name_seq$a2s(roots))
+	end root_names
+
+    
+    % Sets the current root name of "nr" to "n".  Signals "not_possible" if "n"
+    % is not a valid root name, i.e., if it has an extension or if it is a
+    % reserved name.
+
+    set_root_name = proc (stab: cvt, n: name) signals (not_possible)
+	if debugging cand stab = down(blank()) then
+	   fail("symtab$set_root_name: applied to symtab$blank")
+	   end
+	if ~name$is_root(n) cor name$is_hardwired(n) then 
+	   signal not_possible
+	   end
+	stab.root_name := n
+	str_set$insert(stab.root_strings, slower(name$unparse(n)))
+	   except when exists: end
+	end set_root_name
+
+
+    % Sets "stab.unp_mode" to "m".
+    
+    set_unparse_mode = proc (stab: cvt, m: unparse_mode)
+	stab.unp_mode := m
+	end set_unparse_mode
+    
+
+    % Returns a copy of "stab" that shares information about names with "stab".
+    % ASSUMES: ~stab.changing
+    
+    copy_ids = proc (stab: cvt) returns (cvt)
+	if stab.changing then fail("symtab$copy_ids") end
+	return(rep${changes: change_arr$[],
+		     changing: false,
+		     classes: class_table$copy(stab.classes),
+		     imap: imap$copy(stab.imap),
+		     last_subname: name_map$copy(stab.last_subname),
+		     names: stab.names,
+		     numeric_theories: nt_map$copy(stab.numeric_theories),
+		     op_key: stab.op_key,
+		     root_name: stab.root_name,
+		     root_strings: str_set$copy(stab.root_strings),
+		     unp_mode: stab.unp_mode,
+		     var_key: stab.var_key})
+	end copy_ids
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    end symtab
+

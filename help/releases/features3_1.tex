@@ -1,0 +1,55 @@
+\doc{New features in Release 3.1}
+\ref{features-new}
+
+The following features have been added to LP since Release 2.4.
+\begin{itemize}
+\item
+Support for full first-order logic, not just the universal-existential subset
+supported by Release 2.4.  See \llink{quantifier}{quantifiers}.
+\p
+\item
+A simple \llink{sort}{sort} system for describing polymorphic abstractions.
+\p
+\item
+New inference mechanisms
+\begin{itemize}
+\item
+Proofs by well founded \plink{by-induction}{induction}.
+\item
+Proofs of conjectures of the form \fq{t1 <=> t2}, with \fq{t1 => t2}
+and \fq{t2 => t1} as subgoals.
+\item
+Proofs that use deduction rules for backward inference.  See \clink{apply}.
+\end{itemize}
+\p
+\item
+Richer syntactic conventions, such as \fq{x[n]} and \fq{n!}, for 
+\llink{operator}{operators} and terms.
+\p
+\item
+Additional user amenities, for example, enhanced facilities for
+\dlink{../misc/names}{naming} sets of statements.
+\p
+\item
+New rewrite rule for the boolean operators, namely, \fq{~p <=> ~q -> p <=> q}.
+\end{itemize}
+
+The following features behave differently in Release 3.1 than they did in
+Release 2.4.
+
+\begin{itemize}
+\item
+Some \dlink{../commands/set}{settings} (e.g., the default name prefix) are
+now local to proof contexts.
+\p
+\item
+Names such as \f{thmCaseHyp1.1} are reused within non-overlapping proof
+contexts.
+\p
+\item
+LP now attempts to preserve the order of operands in formulas such as 
+\fq{init => c = 1}, so that preference is given to ordering equalities in the 
+direction the user may have intended when these formulas normalize to
+equations.
+\end{itemize}
+

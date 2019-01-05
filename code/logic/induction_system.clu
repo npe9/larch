@@ -1,0 +1,233 @@
+#extend
+
+% An induction system is a list of induction rules.
+
+induction_system = cluster is 
+	new, add, delete, delete_op, delete_subset, display, elements, fetch,
+	get_new, get_ops, implies, induction_rules, lists,
+	lookup_induction_rule, size, subsystem_ops, write, copy, _gcd, decode,
+	encode
+    
+    rep = record[new: ir_prop_list]
+    axioms = axiom_system[induction_rule, induction_system]
+    
+    
+    % Returns an empty induction system.
+    
+    new = proc () returns (cvt)
+	return(rep${new: ir_prop_list$[]})
+	end new
+    
+    
+    % Adds "ir" to "isys" if it is not subsumed by some induction rule already
+    % in "isys".  Uses the "tracer" to report when "ir" is subsumed by some
+    % "ir1" in "isys", when it subsumes some "irs" in "isys", which were
+    % deleted from "isys", or when it is inconsistent with some "ir1" in
+    % "isys", in which case it is not added to "isys".  Signals "subsumed" or
+    % "inconsistent" if "ir" is subsumed or inconsistent.
+
+    add = proc (isys: induction_system, ir: induction_rule) 
+	    signals (inconsistent, subsumed)
+	own ai: ai_settings := ai_settings${active: true, immune: immunity_off}
+	subsumed: ir_arr := ir_arr$[]
+	for irp: ir_prop in induction_system$elements(isys) do
+	    ir1: induction_rule := irp.prop
+	    if induction_rule$subsumes(ir1, ir) then
+	       tracer$subsumes_ir(ir1, ir)
+	       signal subsumed
+	       end except when inconsistent:
+			       tracer$inconsistent_ir(ir1, ir)
+			       signal inconsistent
+			  end
+	    if induction_rule$subsumes(ir, ir1) then
+	       ir_arr$addh(subsumed, ir1)
+	       end except when inconsistent:
+			       tracer$inconsistent_ir(ir, ir1)
+			       signal inconsistent
+			  end
+	    end
+	for ir1: induction_rule in ir_arr$elements(subsumed) do
+	    tracer$subsumes_ir(ir, ir1)
+	    induction_system$delete(isys, ir1.name)
+	    end
+	axioms$add(isys, ir, ai, true)
+	end add
+    
+    
+    % Deletes the induction rule named "n" from "isys".  Signals "missing" if
+    % there is no such induction rule.
+
+    delete = proc (isys: cvt, n: name) returns (ir_prop) signals (missing)
+	return(axioms$delete(up(isys), n))
+	   resignal missing
+	end delete
+
+
+    % Deletes all induction rules in "isys" that contain "op".  Signals
+    % "missing" if there are no such induction rules.
+
+    delete_op = proc (isys: induction_system, op: operator) signals (missing)
+	if ir_prop_list$empty(axioms$delete_op(isys, op)) then 
+	   signal missing
+	   end
+	end delete_op
+
+
+    % Deletes all induction rules in "isys" named by "ns".  Signals "missing"
+    % if there are no such induction rules.
+
+    delete_subset = proc (isys: induction_system, ns: name_set) 
+		      signals (missing)
+        if ~ns.has_irs then signal missing end
+	if ir_prop_list$empty(axioms$delete_subset(isys, ns)) then
+	   signal missing
+	   end
+	end delete_subset
+
+
+    % Displays the induction rules in "isys" named by "ns".
+
+    display = proc (p: printer, isys: cvt, ns: name_set, stab: symtab)
+		signals (interrupt)
+	if ~ns.has_irs then return end
+	axioms$display(p, up(isys), "Induction rules", ns, stab)
+	   resignal interrupt
+	end display
+
+
+    % Yields the annotated induction rules in "isys".
+
+    elements = iter (isys: induction_system) yields (ir_prop)
+	for irp: ir_prop in axioms$elements(isys) do yield(irp) end
+	end elements
+
+
+    % Returns the annotated induction rule named "n" from "isys".  Signals
+    % "missing" if there is no such induction rule.
+
+    fetch = proc (isys: cvt, n: name) returns (ir_prop) signals (missing)
+	return(axioms$fetch(up(isys), n))
+	   resignal missing
+	end fetch
+
+
+    % Returns the list of all induction rules in "isys".
+
+    get_new = proc (isys: cvt) returns (ir_prop_list)
+	return(isys.new)
+	end get_new
+
+
+    % Returns the set of operators in "isys".
+
+    get_ops = proc (isys: induction_system) returns (op_set)
+	return(axioms$get_ops(isys))
+	end get_ops
+
+
+    % Returns "true" if "isys" contains an induction rule that implies "ir".
+
+    implies = proc (isys: induction_system, ir: induction_rule) returns (bool)
+	for irp: ir_prop in induction_system$elements(isys) do
+	    if induction_rule$subsumes(irp.prop, ir) then return(true) end
+	       except when inconsistent: end
+	    end
+	return(false)
+	end implies
+    
+    
+    % Yields the list of all induction rules of "isys".
+
+    lists = iter (isys: cvt) yields (ir_prop_list)
+	yield(isys.new)
+	end lists
+
+    
+    % Returns the unique induction rule with a name in "ns" for sort "so".
+    % Signals "none" if there is no such induction rule.  Signals "ambiguous"
+    % if there is more than one.
+    
+    lookup_induction_rule = proc (isys: cvt, so: sort, ns: name_set)
+			      returns (induction_rule) 
+			      signals (none, ambiguous)
+        if ~ns.has_irs then signal none end
+	found: bool := false
+	rule: induction_rule
+	for irp: ir_prop in elements(up(isys)) do
+	    ir: induction_rule := irp.prop
+	    if ir.sort = so cand name_set$contains_ir(ns, ir) then
+	       if found then signal ambiguous end
+	       found := true
+	       rule := ir
+	       end
+	    end
+	if found
+	   then return(rule)
+	   else signal none
+	   end
+	end lookup_induction_rule
+
+
+    % Yields the induction rules with a name in "ns" for sort "so".
+    
+    induction_rules = iter (isys: cvt, so: sort, ns: name_set)
+			      yields (induction_rule) 
+        if ~ns.has_irs then return end
+	for irp: ir_prop in elements(up(isys)) do
+	    ir: induction_rule := irp.prop
+	    if ir.sort = so cand name_set$contains_ir(ns, ir) then
+	       yield(ir)
+	       end
+	    end
+	end induction_rules
+
+
+    % Returns the number of induction rules in "isys".
+
+    size = proc (isys: cvt) returns (int)
+	return(axioms$size(up(isys)))
+	end size
+
+
+    % Returns the set of operators occurring in induction rules in "isys" with
+    % names in "ns" (irrespective of the value of "ns.has_irs").
+    
+    subsystem_ops = proc (isys: cvt, ns: name_set) returns (op_set)
+        return(axioms$subsystem_ops(up(isys), ns))
+	end subsystem_ops
+    
+    
+    % Writes commands to re-read all induction rules in "isys" named by "ns".
+    
+    write = proc (p: printer, isys: cvt, ns: name_set, stab: symtab,
+	    	  ai: ai_settings)
+	if ~ns.has_irs then return end
+	axioms$write(p, up(isys), "Induction rules", ns, stab, ai)
+	end write
+
+
+    % Returns a copy of "isys".
+
+    copy = proc (isys: cvt) returns (cvt)
+	return(rep$copy(isys))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+    
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end induction_system

@@ -1,0 +1,21 @@
+#extend
+
+% Processes the "cancel" command by canceling the proof of the current
+% conjecture, of the current lemma, or of all conjectures.
+
+c_cancel = proc (i: interactive) signals (error)
+    msg = "argument must be `all' or `lemma'"
+    if iodev$pending_input(i.io)
+       then s: string := slower(trim_both(iodev$getl(i.io)))
+	    if s = "all" then prover$cancel_all(i)
+	     elseif s = "lemma" then prover$cancel_lemma(i)
+	     else aborted(i.p, msg)
+	     end resignal error
+       else prover$cancel_proof(i)
+       end except when none:
+		       printer$error(i.p)
+		       printer$text(i.p, "\nThere are no conjectures.\n")
+		  end
+    end c_cancel
+
+

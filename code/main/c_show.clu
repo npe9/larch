@@ -1,0 +1,98 @@
+#extend
+
+% Processes the "show" command.  
+    
+c_show = proc (i: interactive) signals (error)
+    cct = command_table[command]
+    command = proctype (interactive) signals (error)
+    act = struct[name: string, choice: command]
+    act_seq = sequence[act]
+    own ct: cct := cct${help: cct$help, delims: " \t", label: "item",
+			as: act_seq$[act${name: "normal-form",
+					  choice: show_normal_form},
+				     act${name: "unifiers",
+					  choice: show_unifiers}]}
+    cct$choose(ct, "\nComputation to show: ", i.io)(i)
+       resignal error
+       except when end_of_file, no_response: end
+    end c_show
+    
+    
+% Processes the "show normal-form" command.  Gets a term from the user.  If the
+% user does not enter a valid term, prints an error message and returns.
+% Otherwise, reduces that term to normal form with respect to the rewrite rules
+% in "i.sys".  Prints the sequence of reduced terms leading to the normal form
+% if the current trace level is nonzero; otherwise prints only the normal form.
+% Prints a message if the entered term is already in normal form.
+
+show_normal_form = proc (i: interactive) signals (error)
+    ts: term_seq := query$terms("a term to reduce to normal form", i.symtab)
+       except when none: return
+	      when error: aborted(i.p, "error in term")
+	      end resignal error
+    if term_seq$size(ts) > 1 then
+       aborted(i.p, "too many terms")
+       end resignal error
+    printer$text(i.p, "~{")
+    count: int := 1
+    t: term := ts[1]
+    for t1: term in system$reductions(t, i.sys, i.symtab) do
+	count := count + 1
+	if tracer$get_level() > 0 then
+	   if count = 2 then
+	      printer$text(i.p, "\nThe sequence of reductions leading ")
+	      printer$text(i.p, "to the normal form of the term is:\n~{")
+	      printer$text(i.p, "1.  ")
+	      unpterm$print_with_known_sort(i.p, t, i.symtab)
+	      printer$text(i.p, "~}\n")
+	      end
+	   printer$text(i.p, "~{")
+	   printer$text(i.p, int$unparse(count) || ".  ")
+	   unpterm$print_with_known_sort(i.p, t1, i.symtab)
+	   printer$text(i.p, "~}\n")
+	   end
+	t := t1
+	if iodev$interrupt() then
+	   aborted(i.p, "interrupt")
+	   end resignal error
+	end
+       except when might_loop:
+		   printer$text(i.p, "\nThere seems to be an infinite " ||
+				     "rewriting loop.\n")
+	      end
+    if count = 1 then
+       printer$text(i.p, "\nThe term~2I~1A")
+       unpterm$print_with_known_sort(i.p, t, i.symtab)
+       printer$text(i.p, "~I~1Ais already in normal form.\n")
+     elseif tracer$get_level() = 0 then
+       printer$text(i.p, "\nThe normal form after ")
+       printer$text(i.p, plural_noun("reduction", count-1) || " is~2I~1A")
+       unpterm$print_with_known_sort(i.p, t, i.symtab)
+     end
+    printer$text(i.p, "~}\n")
+    end show_normal_form
+
+
+% Processes the "show unifiers" command.  Gets two terms from the user.  Prints
+% an error message and returns if there are any errors.  Otherwise prints the
+% most general unifiers of the two terms or a message saying the terms do not
+% unify.
+
+show_unifiers = proc (i: interactive) signals (error)
+    ts: term_seq
+    begin
+	ts := query$terms("two terms to unify", i.symtab)
+	if term_seq$size(ts) = 1 then
+	   ts1: term_seq := query$terms("another term", i.symtab)
+	   ts := ts || ts1
+	   end
+	end except when none: return
+		   when error: aborted(i.p, "error in terms")
+		   end resignal error
+    if term_seq$size(ts) > 2 then
+       aborted(i.p, "too many terms")
+       end resignal error
+    system$display_unifiers(i.p, ts[1], ts[2], i.symtab, i.sys)
+    end show_unifiers
+
+

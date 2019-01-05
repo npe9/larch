@@ -1,0 +1,52 @@
+\doc{Operator theories}
+\ref{ac}
+\ref{commutative}
+\ref{operator-theory}
+\ref{operator-theories}
+
+
+An \def{operator theory} is logically equivalent to a set of equations
+involving a single \dlink{operator}{operator}.  At present, LP supports two
+operator theories:
+\begin{itemize}
+\item
+the \def{commutative} theory, which is axiomatized by the commutative law
+\fq{x + y = y + x}
+\item
+the
+\def{associative-commutative} (\def{ac}) theory, which is axiomatized by the
+commutative law together with the associative law 
+\fq{x + (y + z) = (x + y) + z}.
+\end{itemize}
+
+LP uses operator theories to circumvent problems with nonterminating rewriting
+systems.  Because the commutative law cannot be oriented into a terminating
+rewrite rule, LP uses \olink{equational-rewriting}{equational term-rewriting}
+to \olink{match}{match} and \dlink{../operation/unify}{unify} terms modulo the
+ac and commutative operator theories.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{operator-theory} ::= (\f{ac} | \f{commutative}) \slink{operator}{operator}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+ac +
+commutative gcd
+\end{verbatim}
+
+\head{2}{Usage}
+
+Users can \clink{assert} or \dlink{../proof/of-ot}{prove} operator theories.  
+\p
+LP hardwires the \dlink{connective}{logical connectives} \f{/\}, \f{\/}, and
+\f{<=>} as associative-commutative operators.  It hardwires the
+\dlink{equality}{equality operator} \f{=:S,S->Bool} as a commutative operator 
+when the sort \f{S} is not \f{Bool}.
+\p
+The fact \fq{ac op} normalizes the fact \fq{commutative op} to \fq{true}.
+\p
+\p
+To \clink{display} the operator theories in LP's logical system, type
+\fq{display operator-theories} (or \fq{disp o-t} for short).

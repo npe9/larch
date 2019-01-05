@@ -1,0 +1,32 @@
+\doc{Sample proofs: two final theorems about subset}
+The new induction rule, \fq{setTheorems.9}, helps us prove the following
+theorem about subsets:
+\begin{verbatim}
+prove x \subseteq (x \union y) by induction on x using setTheorems
+qed
+\end{verbatim}
+The \cflink{prove} command directs LP to use the induction rule just proved to
+formulate subgoals for the proof by induction using the generators \f#{}#,
+\f#{__}#, and \fq{\union} instead of the generators \f#{}# and \fq{insert}:
+\begin{verbatim}
+Creating subgoals for proof by structural induction on `x'
+Basis subgoals:
+  Subgoal 1: {} \subseteq ({} \union y)
+  Subgoal 2: {e} \subseteq ({e} \union y)
+Induction constants: xc, xc1
+Induction hypotheses:
+  setTheoremsInductHyp.1: xc \subseteq (xc \union y)
+  setTheoremsInductHyp.2: xc1 \subseteq (xc1 \union y)
+Induction subgoal:
+  Subgoal 3: (xc \union xc1) \subseteq (xc1 \union xc \union y)
+\end{verbatim}
+LP establishes all three subgoals automatically.
+\p
+Finally, we prove the last theorem by directing LP to compute a critical pair
+between the theorem just established and an earlier theorem, 
+\fq#x \union {} = x#.
+\begin{verbatim}
+prove x \subseteq x
+  critical-pairs setTheorems with setTheorems
+qed
+\end{verbatim}

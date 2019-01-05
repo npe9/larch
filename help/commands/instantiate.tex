@@ -1,0 +1,37 @@
+\doc{The instantiate command}
+\ref{instantiate-command}
+\ref{instantiation}
+
+The \def{instantiate command} provides a method of forward inference, which can
+be used to substitute terms for free variables, or to eliminate 
+\llink{quantifier}{universal quantifiers}, from facts in LP's logical system.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{instantiate-command} ::= \f{instantiate} (\slink{../logic/variable}{variable} \f{by} \slink{../logic/term}{term})+, \f{in} \slink{../misc/names}{names}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+instantiate s2 by s1 \U s1 in setExtensionality
+instantiate x by 0, y by 1 in lemmas
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{instantiate} command substitutes (simultaneously) the specified terms
+for the named free variables in the named formulas, rewrite rules, and
+deduction rules; if a named variable does not occur free in a named fact, but
+is bound by an accessible \glink{prenex}{prenex-universal}
+quantifier in that fact, then that quantifier is eliminated before the
+substitution is performed.  LP automatically changes bound variables in the
+named facts, if needed, to avoid having them bind (or
+\glink{capture}{capture}) variables that occur free in the 
+specified terms. 
+\p
+LP normalizes any \dlink{../settings/immunity}{nonimmune} results from an
+instantiation, discarding those that normalize to \fq{true} and orienting any
+resulting formulas into rewrite rules if the \setlink{automatic-ordering}
+setting is \fq{on}.  The \setlink{activity} and \setlink{immunity} of the
+results are determined by the current values of the activity and immunity
+settings.  When instantiating a rewrite rule, LP does not use that rule in
+normalizing the result.

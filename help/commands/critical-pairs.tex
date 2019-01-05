@@ -1,0 +1,89 @@
+\doc{The critical-pairs command}
+\ref{critical-pairs-command}
+\ref{pairs}
+\ref{Peterson-Stickel-extension}
+
+The \def{critical-pairs command} provides a method of forward inference that
+produces consequences from pairs of rewrite rules.  This method can be used to
+increase the amount of \glink{confluent}{confluence} in LP's rewriting system.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{critical-pairs-command} ::= \f{critical-pairs} \slink{../misc/names}{names} \f{with} \slink{../misc/names}{names}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+critical-pairs *Hyp with *
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{critical-pairs} command directs LP to compute critical pair equations
+between the rewrite rules named by the first \s{names} and those named by the
+second.  LP adds any nontrivial critical pair equations (i.e., nonidentities)
+to its logical system.  If LP reduces the current conjecture to an identity
+upon orienting a critical pair equation into a rewrite rule, it terminates the
+critical pair computation.  LP performs critical pair computations in the order
+determined by the combined sizes of the left sides of the rewrite rules.
+\p
+LP also computes critical pairs in response to the \cflink{complete} command.
+LP keeps track of which rewrite rules have had their critical pairs computed,
+and does not recompute critical pairs between those rules.  See also the
+\cflink{forget} command.
+\p
+Critical pair equations between two rewrite rules result from using them to
+rewrite a common term in two different ways.  Suppose that \fq{R1} is the
+rewrite rule \fq{l1 -> r1} and \fq{R2} is \fq{l2 -> r2}.  Suppose also that
+\fq{R1} and \fq{R2} have no variables in common (LP ensures that this is the
+case by substituting fresh variables for those in \fq{R2}).  If \fq{l2} can be
+\dlink{../operation/unify}{unified} with a nonvariable subterm of \fq{l1}, then
+both \fq{R1} and \fq{R2} can be used to rewrite some substitution instance of
+\fq{l1}.  A \def{critical pair equation} between \fq{R1} and \fq{R2} is an 
+equation relating the results of these two rewritings.  
+\p
+More precisely, if \fq{s1} is a nonvariable subterm of \fq{l1} that does not
+contain any variables bound by outer quantifiers in \fq{l1}, if \fq{sigma} is a
+substitution that unifies \fq{l2} with \fq{s1} and that does not introduce any
+variables bound by outer quantifiers in \fq{l1}, and if \fq{l1'} is the result
+of substituting \fq{r2} for \fq{s2} in \fq{l1}, then 
+\fq{sigma(l1') = sigma(r1)} is a critical pair equation between \fq{R1} and 
+\fq{R2}.
+\p
+Examples:
+\begin{verbatim}
+    Rewrite rules                        Critical pair equations
+
+1.  f(x) * f(y)        -> f(x * y)       b * f(y) = f(a * y)
+    f(a)               -> b              f(x) * b = f(x * a)
+
+2.  P(x) => Q(x)       -> true           true => Q(c) <=> true
+    P(c)               -> true             ... which reduces to Q(c)
+
+3.  \E x (f(x) = g(y)) -> true           \E x (f(x) = c)
+    g(c)               -> c
+\end{verbatim}
+
+When the principal operator of \fq{l1} or \fq{l2} is an
+\llink{operator-theory}{ac} operator, say \f{*}, LP generalizes the
+critical pair computation by computing \def{Petersen-Stickel extensions}
+\fq{Ri'} having the form \fq{li*x -> ri*x} of \fq{R1} and \fq{R2}, and then by 
+computing critical pair equations between {\f{R1}, \f{R1'}} and {\f{R2}, 
+\f{R2'}}.  Thus, \fq{i(x) * x -> e} has three nontrivial critical pair 
+equations with itself when \f{*} is ac:
+\begin{itemize}
+\item
+\fq{i(e) * e = e}, which results from unifying \fq{i(x) * x} with the 
+nonvariable subterm \fq{y * z} of the left side of \fq{i(y) * y * z -> z}, 
+\p
+\item
+\fq{e * x = i(i(x)) * e}, which results from the unifier
+\fq{i(i(x)) * i(x) * x} of
+\fq{i(x) * x * y} and \fq{i(x') * x' * y'} (via the map from \fq{x'} to 
+\fq{i(x)} and \fq{y'} to \fq{x}), and
+\p
+\item
+\fq{e * i(x) = i(x*y) * e * y}, which results from the unifier
+\fq{i(x*y) * i(x) * x * y} of
+the same terms (via the map from \fq{x'} to \fq{x*y} and
+\fq{y'} to \fq{i(x)}).
+\end{itemize}

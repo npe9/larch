@@ -1,0 +1,1031 @@
+#extend
+
+% A polynomial interpretation for an operator is a sequence of polynomials with
+% integer coefficients over a fixed set integer-valued variables.  The size of
+% the set of variables equals the arity of the operator.  The number of
+% polynomials in the sequence that are actually used is given by "reg.n_polys";
+% if the sequence contains fewer polynomials than "reg.n_polys", it is extended
+% by duplicating its last element.
+
+% The registry defines a map "I" from operators to polynomial interpretations,
+% which can be used to interpret terms by setting
+%      I[v] = <v>
+%      I[f(t1, ..., tn)] = I[f](I[t1], ..., I[tn])
+% A term "t1" is less than a term "t2" in the polynomial ordering iff "I[t1]" 
+% is lexicographically less than "I[t2]", where one polynomial is less than
+% another iff its value is less than that of the other for all sufficiently 
+% large values of its variables.
+
+poly_interp = cluster is apply, check_legality, default, display, elements,
+    			 fetch, read, variables, write, similar, copy, _gcd,
+			 decode, encode
+    
+    rep = poly_seq
+    
+    % Rep invariant: "rep[i].vars = rep[j].vars"
+    
+    % Applies the polynomial interpretation stored in "reg" to "eqn".  Signals
+    % "l2r" if the interpretation orders "eqn" from left-to-right, "r2l" if it
+    % orders "eqn" from right-to-left and this is allowed by the user,
+    % "reversible" if it orders "eqn" from right-to-left and this is not
+    % allowed by the user (because the equation was entered with "->" instead
+    % of "=="), and "cannot_orient" otherwise.  With the latter two signals,
+    % indicates the index "n" in the polynomial interpretation at which it was
+    % discovered that the intepretation of "e.left" was not greater than the
+    % interpretation of "e.right".  
+
+    apply = proc (reg: registry, eqn: equation) 
+	      signals (l2r(rewrite_rule), r2l(rewrite_rule),
+		       cannot_orient(int, polynomial, polynomial),
+		       reversible(int, polynomial, polynomial))
+        begin
+	    rr: rewrite_rule
+	    reversed: bool := false
+	    begin
+		rr := rewrite_rule$e2cr(eqn)
+		check_terms(reg, rr.left, rr.right)
+		end except when impossible, r2l (*):
+				rr := rewrite_rule$e2cr_reversed(eqn)
+				reversed := true
+				check_terms(reg, rr.left, rr.right)
+			   end except when l2r: end
+	    for t: term in rewrite_rule$conditions(rr) do
+		check_terms(reg, rr.left, t)
+		   except when l2r: end
+		end
+	    if reversed then signal r2l(rr) else signal l2r(rr) end
+	    end except when impossible, r2l, cannot_orient (*): end
+	check_terms(reg, eqn.left, eqn.right)
+	   resignal cannot_orient
+	   except when l2r: signal l2r(equation$e2r(eqn))
+	          when r2l (n: int, p1, p2: polynomial): 
+		       signal l2r(equation$e2r_reversed(eqn))
+			  except when user_prevents (*):
+				      signal reversible(n, p1, p2)
+				 end
+		  end
+        end apply
+    
+    
+    % (Internal procedure) Signals "l2r" if the polynomial interpretation in
+    % "reg" makes "t1" greater than "t2", "r2l" if it makes "t2" greater than
+    % "t1", and "cannot_orient" otherwise.  With the latter two signals,
+    % indicates the index "n" in the polynomial interpretation at which it was
+    % discovered that the intepretation of "t1" was not greater than the
+    % interpretation of "t2".
+
+    check_terms = proc (reg: registry, t1, t2: term)
+		    signals (l2r, r2l(int, polynomial, polynomial), 
+			     cannot_orient(int, polynomial, polynomial))
+        left, right: polynomial
+	vars: var_seq := var_set$s2seq(t1.fvars + t2.fvars)
+	for n: int in int$from_to(1, reg.n_polys) do
+	    left := interpret(t1, vars, reg, n)
+	    right := interpret(t2, vars, reg, n)
+	    if polynomial$positive(left-right) then 
+	       signal l2r
+	     elseif polynomial$positive(right-left) then 
+	       signal r2l(n, left, right)
+	     elseif ~polynomial$is_zero(left-right) then 
+	       signal cannot_orient(n, left, right)
+	     end
+	    end except when overflow: end
+	signal cannot_orient(reg.n_polys, left, right)
+	end check_terms
+
+
+    % (Internal procedure) Returns the "n"th polynomial, over the variables
+    % in "vars", in the polynomial interpretation of the term "t".  Interprets
+    % the operators in "t" using the "n"th polynomials in the polynomial
+    % interpretations stored in "reg".  
+
+    interpret = proc (t: term, vars: var_seq, reg: registry, n: int)
+		  returns (polynomial) signals (overflow)
+	tagcase t
+	   tag var:
+	       return(polynomial$var(t.var, vars))
+	   tag funct:
+	       pi: poly_interp := registry$lookup_polys(reg, t.root)
+	       p_args: poly_arr := poly_arr$predict(1, term_seq$size(t.args))
+	       for tt: term in term_seq$elements(t.args) do
+		   poly_arr$addh(p_args, interpret(tt, vars, reg, n))
+		   end
+	       return(polynomial$compose(pi[n], p_args, vars))
+	   tag quant: 
+	       signal failure("poly_interp$interpret")
+	   end resignal overflow
+	end interpret
+
+
+    % Returns normally if "p" is a legal polynomial interpretation for an
+    % operator "op" with theory "ot".  If "op" is AC, "p" must be AC.  If "op"
+    % is commutative, then "p" must be commutative.  These requirements ensure
+    % I[op(x, y)] = I[op(y, x)] and I[op(op(x, y), z)] = I[op(x, op(y, z))]
+    % when necessary.  Signals "not_ac" or "not_c" if "p" fails these tests.
+    % Signals "not_gt_one" if "p" is not provably greater than one.  This
+    % validates the assumption that variables are always >= 2.  Signals
+    % "non_gt_var(v)" if "p" is not provably greater than "v" for some variable
+    % "v" in "p.vars".  This enforces the subterm property.
+    
+    % CLEANUP: not_gt_one needed?
+    % CLEANUP: take "pi" as argument, get rid of "elements"?
+
+    check_legality = proc (ot: op_theory, p: polynomial)
+		       signals (not_ac, not_c, not_gt_one,
+				not_gt_var(variable))
+	if op_theory$is_ac(ot) cand (~is_assoc(p) cor ~is_com(p)) then 
+	   signal not_ac
+	 elseif op_theory$is_commutative(ot) cand ~is_com(p) then 
+	   signal not_c
+	 end
+	for v: variable in var_seq$elements(p.vars) do
+	    vp: polynomial := polynomial$var(v, p.vars)
+	    if ~polynomial$positive(p - vp) then signal not_gt_var(v) end
+	    end
+	end check_legality
+
+
+    % (Internal procedure) Returns "true" iff "p" is an associative polynomial
+    % of arity 2.
+
+    is_assoc = proc (p: polynomial) returns (bool)
+	own vars: var_seq := variables(3)
+	own px: polynomial := polynomial$var(vars[1], vars)
+	own py: polynomial := polynomial$var(vars[2], vars)
+	own pz: polynomial := polynomial$var(vars[3], vars)
+
+	if var_seq$size(p.vars) ~= 2 then return(false) end
+	pxy: polynomial := polynomial$compose(p, poly_arr$[px, py], vars)
+	pyz: polynomial := polynomial$compose(p, poly_arr$[py, pz], vars)
+	px_yz: polynomial := polynomial$compose(p, poly_arr$[px, pyz], vars)
+	pxy_z: polynomial := polynomial$compose(p, poly_arr$[pxy, pz], vars)
+	return(polynomial$similar(px_yz, pxy_z))
+	end is_assoc
+
+
+    % (Internal procedure) Returns "true" iff "p" is a commutative of arity 2.
+
+    is_com = proc (p: polynomial) returns (bool)
+	own vars: var_seq := variables(2)
+	own px: polynomial := polynomial$var(vars[1], vars)
+	own py: polynomial := polynomial$var(vars[2], vars)
+
+	if var_seq$size(p.vars) ~= 2 then return(false) end
+	pxy: polynomial := polynomial$compose(p, poly_arr$[px, py], vars)
+	pyx: polynomial := polynomial$compose(p, poly_arr$[py, px], vars)
+	return(polynomial$similar(pxy, pyx))
+	end is_com
+
+
+    % Returns a default polynomial interpretation for an operator of arity "n".
+    % The interpretation is a sequence containing a single polynomial "p".  For
+    % constants (arity 0), "p" is the constant polynomial "2".  For "n"-ary
+    % operators "f", "p" is 2*v1*...*vn", where "vi" is "variables(n)[i]".
+    % These polynomials are AC, so that they can be used to interpret AC
+    % operators.
+
+    default = proc (arity: int) returns (cvt)
+	vars: var_seq := variables(arity)
+	def: polynomial := polynomial$one(vars)
+	if arity > 0 then
+	   for v: variable in var_seq$elements(vars) do
+	       def := def * polynomial$var(v, vars)
+	       end
+	   end
+	return(rep$[polynomial$const_mult(def, 2)])
+	end default
+
+
+    % Displays, on "p", the polynomial interpretations stored in "reg" for the
+    % operators in "ops".
+
+    display = proc (p: printer, ops: op_set, reg: registry)
+	if op_set$empty(ops) then return end
+	for op: operator in op_set$elements(ops) do
+	    vars: var_seq := variables(op.arity)
+	    args: term_arr := term_arr$predict(1, op.arity)
+	    for v: variable in var_seq$elements(vars) do
+		term_arr$addh(args, term$make_var_without_checking(v))
+		end
+	    t: term := 
+		term$make_funct_without_checking(op, term_seq$a2s(args))
+	    pi: poly_interp := registry$lookup_polys(reg, op)
+	    for i: int in int$from_to(1, reg.n_polys) do
+		printer$start_block(p)
+		p.indent :=  2
+		if reg.n_polys = 1
+		   then printer$puts(p, "I[")
+		   else printer$puts(p, "I." || int$unparse(i) || "[")
+		   end
+		term$print(p, t, symtab$blank())
+		printer$text(p, "] = ")
+		polynomial$print(p, pi[i])
+		printer$finish_block(p)
+		printer$newline(p)
+		end
+	    end
+	printer$newline(p)
+	end display
+    
+
+    % Yields the polynomials in "pi".
+    
+    elements = iter (pi: cvt) yields (polynomial)
+	for p: polynomial in rep$elements(pi) do
+	    yield(p)
+	    end
+	end elements
+    
+
+
+    % Returns the "n"th polynomial in "pi".  Returns the last polynomial in
+    % "pi" if "n" is greater than the length of "pi".
+    
+    fetch = proc (pi: cvt, n: int) returns (polynomial)
+	return(pi[n])
+	   except when bounds: return(poly_seq$top(pi)) end
+	end fetch
+    
+    
+    % Reads a polynomial interpretation for "ot.op" from "scan".
+    
+    read = proc (scan: scanner, ot: op_theory) returns (cvt) 
+	     signals (bad_format)
+	if token$is_eof(scan.nextToken) then
+	   return(down(default(ot.op.arity)))
+	   end
+	vars: var_seq := poly_interp$variables(ot.op.arity)
+	pi: poly_arr := poly_arr$[]
+	needed: bool := false
+	while ~token$is_eof(scan.nextToken) do
+	    loc: locator := scan.nextToken.loc
+	    p: polynomial := polynomial$read(scan, vars)
+	       resignal bad_format
+	    check_legality(ot, p)
+	       except 
+		  when not_ac:
+		       scanner$error_at(scan, loc, "polynomial must be AC")
+		       signal bad_format
+		  when not_c:
+		       scanner$error_at(scan, loc, 
+			   		"polynomial must be commutative")
+		       signal bad_format
+		  when not_gt_var (v: variable):
+		       scanner$error_at(scan, loc, "polynomial must be >= " || 
+						   identifier$id2s(v.id))
+		       signal bad_format
+		  end
+	    poly_arr$addh(pi, p)
+	    if token$is_comma(scan.nextToken) 
+	       then scanner$get(scan)
+		    needed := true
+	       else needed := false
+	       end
+	    end
+	if needed then 
+	   scanner$error(scan, "expecting a polynomial")
+	   signal bad_format
+	   end
+        return(poly_seq$a2s(pi))
+	end read
+
+
+    % Returns a sequence of distinct variables for use in the polynomial
+    % interpretation of an operator of arity "n".
+
+    variables = proc (n: int) returns (var_seq)
+	own nat_sort: sort := sort$make_simple("Nat")
+	own vx: variable := 
+		variable${id: identifier$make_simple("x"), sort: nat_sort}
+	own vy: variable := 
+		variable${id: identifier$make_simple("y"), sort: nat_sort}
+	own vz: variable := 
+		variable${id: identifier$make_simple("z"), sort: nat_sort}
+	own vars1: var_seq := var_seq$[vx, vy, vz]
+	own vars2: var_arr := var_arr$[]
+	vs: var_seq
+	if n <= 3
+	   then vs := vars1
+	   else if n > var_arr$size(vars2) then
+		   for i: int in int$from_to(var_arr$size(vars2)+1, n) do
+		       id: identifier := 
+		           identifier$make_simple("x" || int$unparse(i))
+		       var_arr$addh(vars2, variable${id: id, sort: nat_sort})
+		       end
+		   end
+		vs := var_seq$a2s(vars2)
+	   end
+	return(var_seq$subseq(vs, 1, n))
+	end variables
+
+    
+    % Writes, on "pr", LP commands to recreate the polynomial interpretations
+    % stored in "reg" for the operators in "ops".
+
+    write = proc (pr: printer, ops: op_set, reg: registry, stab: symtab)
+	if op_set$empty(ops) then return end
+	for op: operator in op_set$elements(ops) do
+	    pi: poly_interp := registry$lookup_polys(reg, op)
+	    dp: polynomial := default(op.arity)[1]
+	    same: bool := true
+	    for p: polynomial in poly_interp$elements(pi) do
+		if p ~= dp then same := false
+				break
+		   end
+		end
+	    if same then continue end
+	    line: int := pr.total_lines
+	    printer$text(pr, "register polynomial ~{")
+	    operator$print(pr, op, stab)
+	    for p: polynomial in poly_interp$elements(pi) do
+		printer$text(pr, " ")
+		polynomial$print(pr, p)
+		end
+	    printer$text(pr, "~}\n")
+	    if pr.total_lines > line + 1 then printer$text(pr, "..\n") end
+	    end
+	printer$newline(pr)
+	end write
+    
+
+    % Returns "true" if "pi1" and "pi2" are the same polynomial interpretation.
+    
+    similar = proc (pi1, pi2: cvt) returns (bool)
+	n1: int := poly_seq$size(pi1)
+	n2: int := poly_seq$size(pi2)
+	if n1 = n2 then return(rep$similar(pi1, pi2)) end
+	n: int := int$min(n1, n2)
+	if ~rep$similar(rep$subseq(pi1, 1, n), rep$subseq(pi2, 1, n)) then
+	   return(false)
+	   end
+	for i: int in int$from_to(n+1, n1) do
+	    if ~polynomial$similar(pi1[i], pi1[n]) then return(false) end
+	    end
+	for i: int in int$from_to(n+1, n2) do
+	    if ~polynomial$similar(pi2[i], pi2[n]) then return(false) end
+	    end
+	return(true)
+	end similar
+
+    % Returns "pi", which is immutable.
+
+    copy = proc (pi: cvt) returns (cvt)
+	return(pi)
+	end copy
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+	       signals (end_of_file, not_possible(string))
+  	return(rep$decode(s)) resignal end_of_file, not_possible
+  	end decode
+  
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+  	rep$encode(c, s) resignal not_possible
+  	end encode
+
+    end poly_interp
+
+
+
+% A "polynomial" represents a polynomial with integer coefficients over a
+% sequence of variables.  Two polynomials must share the same variable sequence
+% for an operation involving them to be defined.  Polynomials are immutable.
+
+polynomial = cluster is zero, one, var, compose,
+			get_arity, get_vars, is_zero, add, sub,
+			mul, const_mult, minus, power, positive, 
+			parse, print, read,
+			unparse, equal, similar, copy, _gcd, decode, encode
+
+
+    % A polynomial is represented as a list "terms" of monomials over a
+    % sequence "vars" of variables.  The zero polynomial is represented by an
+    % empty list of monomials.
+    
+    % Rep invariant: monomial$same_exps(terms[i], terms[j])
+
+    rep = struct[terms: mono_list, vars: var_seq]
+
+
+    % Returns the polynomial over "vars" obtained by substituting the
+    % polynomials over "vars" in "args" for the variables of "p", provided
+    % "args" is an array of "p.arity" polynomials.  Otherwise assumes "p" is an
+    % AC polynomial of arity 2 and returns the polynomial over "vars" obtained
+    % by composing "p" iteratively with each member of "args" in turn and the
+    % previously computed polynomial.
+    
+    compose = proc (p: polynomial, args: poly_arr, vars: var_seq) 
+		returns (polynomial) signals (overflow)
+	result: polynomial
+	if poly_arr$size(args) = p.arity then
+	   result := zero(vars)
+	   for m: monomial in mono_list$each(down(p).terms) do
+	       result := result + monomial$compose(m, args, vars)
+	       end
+	 elseif debugging cand p.arity ~= 2 then
+	   fail("polynomial$compose")
+	 else result := args[1]
+	      for j: int in int$from_to(2, poly_arr$size(args)) do
+		  result := compose(p, poly_arr$[result, args[j]], vars)
+		  end
+	 end resignal overflow
+	return(result)
+	end compose
+
+
+    % Returns the zero polynomial over the variables "vars".
+
+    zero = proc (vars: var_seq) returns (cvt)
+	return(rep${terms: mono_list$[], vars: vars})
+	end zero
+
+
+    % Returns the unit polynomial over the variables "vars".
+
+    one = proc (vars: var_seq) returns (cvt)
+	return(rep${terms: mono_list$[monomial$one(vars)], vars: vars})
+	end one
+
+
+    % Returns the polynomial consisting of the single term "v" over "vars".
+    % Signals "bad_variable" if "v" is not a member of "vars".
+
+    var = proc (v: variable, vars: var_seq) returns (cvt)
+	    signals (bad_variable)
+	return(rep${terms: mono_list$[monomial$var(v, vars)], vars: vars})
+	   resignal bad_variable
+	end var
+
+
+    % Returns the number of variables in "p".
+
+    get_arity = proc (p: cvt) returns (int)
+	return(var_seq$size(p.vars))
+	end get_arity
+
+
+    % Returns the variables of "p".
+
+    get_vars = proc (p: cvt) returns (var_seq)
+	return(p.vars)
+	end get_vars
+
+
+    % Returns "true" iff p is a zero polynomial.
+
+    is_zero = proc (p: cvt) returns (bool)
+	return(mono_list$empty(p.terms))
+	end is_zero
+
+
+    % Returns the polynomial corresponding to the sum of "p1" and "p2".
+    % Assumes "p1.vars = p2.vars".
+
+    add = proc (p1, p2: cvt) returns (cvt) signals (overflow)
+	if debugging cand p1.vars ~= p2.vars then fail("polynomial$add") end
+	sum: mono_list := mono_list$copy(p2.terms)
+	for m1: monomial in mono_list$each(p1.terms) do
+	    begin
+		msame: monomial := mono_list$find_elem(sum, m1,
+						       monomial$same_exps)
+		new_coeff: int := m1.coeff + msame.coeff
+		if new_coeff = 0
+		   then mono_list$delete_first(sum, msame, monomial$similar)
+		   else msame.coeff := new_coeff
+		   end
+		continue
+		end
+	       except when missing: end
+	    mono_list$addh(sum, m1)
+	    end resignal overflow
+	return(rep${terms: sum, vars: p1.vars})
+	end add
+
+
+    % Returns the polynomial corresponding to the difference of "p1" and "p2".
+    % Assumes "p1.vars = p2.vars".
+
+    sub = proc (p1, p2: polynomial) returns (polynomial) signals (overflow)
+	return(p1 + (-p2))
+	   resignal overflow
+	end sub
+
+
+    % Returns the polynomial corresponding to the product of "p1" and "p2".
+    % Assumes "p1.vars = p2.vars".
+    
+    mul = proc (p1, p2: cvt) returns (polynomial) signals (overflow)
+	if debugging cand p1.vars ~= p2.vars then fail("polynomial$mul") end
+	sum: polynomial := polynomial$zero(p1.vars)
+	for m1: monomial in mono_list$each(p1.terms) do
+	    sum := sum + mono_mult(m1, up(p2))
+	    end resignal overflow
+	return(sum)
+	end mul
+
+
+    % Returns the polynomial corresponding to the product of the monomial "m"
+    % and the polynomial "p".  Assumes "p.vars = m.vars".
+
+    mono_mult = proc (m: monomial, p: cvt) returns (cvt) signals (overflow)
+	prod: mono_list := mono_list$predict(mono_list$size(p.terms))
+	for m2: monomial in mono_list$each(p.terms) do
+	    mono_list$addh(prod, m * m2)
+	    end resignal overflow
+	return(rep${terms: prod, vars: m.vars})
+	end mono_mult
+
+
+    % Returns the polynomial formed by multiplying the polynomial "p" by an
+    % integer constant "c".
+
+    const_mult = proc (p: cvt, c: int) returns (cvt) signals (overflow)
+	if c = 0 then return(down(zero(p.vars))) end
+	p2: rep := rep${terms: mono_list$copy(p.terms), vars: p.vars}
+	for m: monomial in mono_list$each(p2.terms) do
+	    m.coeff := m.coeff * c
+	    end resignal overflow
+	return(p2)
+	end const_mult
+
+
+    % Returns the polynomial formed by negating all the coefficients in "p".
+
+    minus = proc (p: cvt) returns (cvt)
+	p2: rep := rep${terms: mono_list$copy(p.terms), vars: p.vars}
+	for m: monomial in mono_list$each(p2.terms) do
+	    m.coeff := -m.coeff
+	    end
+	return(p2)
+	end minus
+
+
+    % Returns the polynomial formed by raising "p" to the "n"th power.
+
+    power = proc (p: polynomial, n: int) returns (polynomial)
+	      signals (negative_exponent, overflow)
+	if n < 0 then signal negative_exponent
+	 elseif n = 0 then return (one(p.vars))
+	 end
+	prod: polynomial := p
+	for i: int in int$from_to(1, n-1) do prod := prod * p end
+	   resignal overflow
+	return(prod)
+	end power
+
+
+    % Returns "true" only if (but NOT necessarily if!) "p" is positive for all
+    % values >= 2 of its variables.
+
+    positive = proc (p: cvt) returns (bool)
+	pos, neg: mono_list := separate(p.terms)
+	mono_list$sort(neg, monomial$dominates)
+	mono_list$sort(pos, is_dominated)
+	while true do
+	    m_neg: monomial := mono_list$reml(neg)
+	       except when empty: break end
+	    m_pos: monomial := mono_list$delete_first(pos, m_neg, is_dominated)
+	       except when missing: return(false) end
+	    m_pos := monomial$copy(m_pos)
+	    % Loop invariant: "m_pos" dominates "m_neg", i.e., all its 
+	    % exponents are at least as large as those in "m_neg" and the
+	    % coefficient of "m_pos" is "2^n" times its original value, where
+	    % "n" is the difference between the original degree of "m_pos" and
+	    % its current degree (which is the same as the number of complete
+	    % passes through the loop).
+	    diff: int := m_pos.coeff + m_neg.coeff
+	    while diff <= 0 do
+		monomial$decrease_exp(m_pos, m_neg)
+		diff := m_pos.coeff + m_neg.coeff
+		end except when impossible: end
+	    m_pos.coeff := diff
+	    if diff > 0 then mono_list$insert(pos, m_pos)
+	     elseif diff < 0 then mono_list$addl(neg, m_pos)
+	     end
+	    % If neither of those applied, the difference is zero, so we leave
+	    % both monomials deleted.
+	    end
+	return(~mono_list$empty(pos))
+	end positive
+
+
+    % (Internal procedure) Returns two lists of monomials, the first containing
+    % all elements of "ml" with positive coefficients, the second all those
+    % with negative coefficients.
+
+    separate = proc (ml: mono_list) returns (mono_list, mono_list)
+	ml1: mono_list := mono_list$[]
+	ml2: mono_list := mono_list$[]
+	for m: monomial in mono_list$each(ml) do
+	    if m.coeff > 0 then mono_list$addh(ml1, m)
+	     elseif m.coeff < 0 then mono_list$addh(ml2, m)
+	     end
+	    end
+	return(ml1, ml2)
+	end separate
+
+
+    % (Internal procedure)  Returns "true" iff "m2" dominates "m1"; that is,
+    % every exponent in "m2" is greater than or equal to the corresponding
+    % exponent in "m1".
+
+    is_dominated = proc (m1, m2: monomial) returns (bool)
+	return(monomial$dominates(m2, m1))
+	end is_dominated
+
+
+    % Parses "s" as a polynomial according to the following syntax:
+    %   <polynomial>   ::= <poly-term> [+ <poly-term> ]*
+    %   <poly-term>    ::= <poly-factor> ["*" <poly-factor>]*
+    %   <poly-factor>  ::= <poly-primary> [^ <integer>]
+    %   <poly-primary> ::= <variable> | <integer> | "(" <polynomial> ")"
+    % Requires that the variables in the polynomial be in "vars".  Writes an
+    % error message to "error" and signals "bad_format" if "s" does not contain
+    % a valid polynomial over "vars".
+
+    parse = proc (s: string, vars: var_seq, error: printer) 
+	      returns (polynomial) signals (bad_format)
+	scan: scanner := scanner$from_string(s, error)
+	p: polynomial := read(scan, vars)
+	   resignal bad_format
+	if scanner$empty(scan) then return(p) end
+	scanner$error(scan, "expecting end of polynomial")
+	signal bad_format
+	end parse
+
+
+    % Reads and returns a polynomial over "vars" from "scan".  Prints an error
+    % message to the error printer in "scan", and signals "bad_format", if the
+    % head of "scan" does not contain a valid polynomial over "vars".
+
+    read = proc (scan: scanner, vars: var_seq) returns (polynomial)
+	     signals (bad_format)
+        p: polynomial := read_poly_term(scan, vars)
+	   resignal bad_format
+	while scan.nextToken.text = "+" do
+	    scanner$get(scan)
+	    p := p + read_poly_term(scan, vars)
+	    end
+	return(p)
+	end read
+
+
+    read_poly_term = proc (scan: scanner, vars: var_seq) returns (polynomial)
+		       signals (bad_format)
+        p: polynomial := read_poly_factor(scan, vars)
+	   resignal bad_format
+	while scan.nextToken.text = "*" do
+	    scanner$get(scan)
+	    p := p * read_poly_factor(scan, vars)
+	    end
+	return(p)
+	end read_poly_term
+
+
+    read_poly_factor = proc (scan: scanner, vars: var_seq) returns (polynomial)
+			 signals (bad_format)
+        p: polynomial := read_poly_primary(scan, vars)
+	   resignal bad_format
+	while scan.nextToken.text = "^" do
+	    scanner$get(scan)
+	    p := p ** int$parse(scan.nextToken.text)
+	       except when bad_format, overflow:
+			   scanner$error(scan, "expecting an integer exponent")
+			   signal bad_format
+		      end
+            scanner$get(scan)
+	    end
+	return(p)
+	end read_poly_factor
+
+
+    read_poly_primary = proc (scan: scanner, vars: var_seq) 
+			  returns (polynomial) signals (bad_format)
+        p: polynomial
+	tagcase scan.nextToken
+           tag left_paren:
+	       scanner$get(scan)
+	       p := read(scan, vars)
+	       scanner$expecting(scan, token$is_right_paren, "')'")
+	       return(p)
+	   tag simpleId:
+	       s: string := scan.nextToken.text
+	       id: identifier := identifier$make_simple(s)
+	       for v: variable in var_seq$elements(vars) do
+		   if id = v.id then
+		      scanner$get(scan)
+		      return(var(v, vars))
+		      end
+		   end
+	       p := const_mult(one(vars), int$parse(s))
+	       scanner$get(scan)
+	       return(p)
+	   others: exit bad_format
+	   end
+	   except when bad_format, overflow:
+		       s: string := "expecting an integer or variable "
+		       first: bool := true
+		       for v: variable in var_seq$elements(vars) do
+			   if ~first then s := s || ", " end
+			   first := false
+			   s := s || "`" || identifier$id2s(v.id) || "'"
+			   end
+		       scanner$error(scan, s)
+		       signal bad_format
+		  end
+	end read_poly_primary
+    
+
+    % Prettyprints "poly" on "p".
+
+    print = proc (p: printer, poly: cvt)
+	if mono_list$empty(poly.terms) then
+	   printer$puts(p, "0")
+	   return
+	   end
+	printer$start_block(p)
+	p.indent := 2
+	first: bool := true
+	for m: monomial in mono_list$each(poly.terms) do
+	    c: int := m.coeff
+	    if ~first then
+	       if c < 0
+		  then printer$text(p, "~1A- ")
+		       m.coeff := -c
+		  else printer$text(p, "~1A+ ")
+		  end
+	       end
+	    first := false
+	    monomial$print(p, m)
+	    m.coeff := c
+	    end
+	printer$finish_block(p)
+	end print
+
+
+    % Returns a string representation of "poly".
+
+    unparse = proc (poly: polynomial) returns (string)
+	return(unparse_item[polynomial](poly))
+	end unparse
+
+
+    % Since polynomials are immutable, returns "similar(p1, p2)".
+
+    equal = proc (p1, p2: polynomial) returns (bool)
+	return(similar(p1, p2))
+	end equal
+
+
+    % Returns "true" iff "p1" and "p2".  Assumes "p1.vars = p2.vars".
+
+    similar = proc (p1, p2: polynomial) returns (bool)
+	return(is_zero(p1 - p2))
+	end similar
+
+
+    % Returns "p", since polynomials are immutable.
+
+    copy = proc (p: cvt) returns (cvt)
+	return(p)
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+	       signals (end_of_file, not_possible(string))
+  	return(rep$decode(s)) resignal end_of_file, not_possible
+  	end decode
+  
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+  	rep$encode(c, s) resignal not_possible
+  	end encode
+
+    end polynomial
+
+
+% A "monomial" represents a term over a sequence of variables.  A term is the
+% product of an integer coefficient and a subsequence of these variables raised
+% to nonnegative integer powers.  The variable sequence is contained in the
+% monomial, and two monomials must share the same variable sequence in order
+% for any operations involving them to be defined.  Monomials are mutable via
+% the "set_coeff" and "decrease_exp" operations.
+
+monomial = cluster is create, one, var, get_coeff, set_coeff,
+		      mul, dominates, decrease_exp, get_vars, compose, 
+		      print, unparse, same_exps, 
+		      similar, copy, _gcd, decode, encode
+
+
+    rep = record[coeff: int, 	% coefficient of monomial
+    		 exps: int_seq, % "exp[i]" is exponent of "vars[i]"
+    		 vars: var_seq]
+
+
+    % Returns a new monomial with coefficient "a.coeff", exponents "a.exps",
+    % and variables "a.vars".  The #extend mode of the CLU compiler provides
+    % sugared invocations of the form 
+    %	   monomial${coeff: int, exps: int_seq, vars: var_seq}
+
+    create = proc (a: args) returns (cvt)
+	args = struct[coeff: int, exps: int_seq, vars: var_seq]
+	return(rep${coeff: a.coeff, exps: a.exps, vars: a.vars})
+	end create
+
+
+    % Returns the monomial corresponding to the term "1" over the variables
+    % "vars".
+
+    one = proc (vars: var_seq) returns (cvt)
+	return(rep${coeff: 1, exps: int_seq$fill(var_seq$size(vars), 0),
+		    vars: vars})
+	end one
+
+
+    % Returns the monomial corresponding to the term "v" over the variables
+    % "vars".  Signals "bad_variable" if "v" is not a member of "vars".
+
+    var = proc (v: variable, vars: var_seq) returns (cvt)
+	    signals (bad_variable)
+	exps: int_seq := int_seq$fill(var_seq$size(vars), 0)
+	for i: int in var_seq$indexes(vars) do
+	    if vars[i] = v then
+	       return(rep${coeff: 1, exps: int_seq$replace(exps, i, 1),
+			   vars: vars})
+	       end
+	    end
+	signal bad_variable
+	end var
+
+
+    % Returns the coefficient of "m".
+
+    get_coeff = proc (m: cvt) returns (int)
+	return(m.coeff)
+	end get_coeff
+
+
+    % Sets the coefficient of "m" to be "c".  Note that this mutates "m".
+
+    set_coeff = proc (m: cvt, c: int)
+	m.coeff := c
+	end set_coeff
+
+
+    % Returns the monomial corresponding to the product of "m1" and "m2".
+    % Assumes "m1.vars = m2.vars".
+
+    mul = proc (m1, m2: cvt) returns (cvt) signals (overflow)
+	if debugging cand m1.vars ~= m2.vars then fail("monomial$mul") end
+	new_exps: int_arr := int_arr$predict(1, int_seq$size(m1.exps))
+	for i: int in int_seq$indexes(m1.exps) do
+	    int_arr$addh(new_exps, m1.exps[i] + m2.exps[i])
+	    end resignal overflow
+	return(rep${coeff: m1.coeff*m2.coeff, exps: int_seq$a2s(new_exps),
+		    vars: m1.vars})
+	   resignal overflow
+	end mul
+
+
+    % Returns "true" iff every exponent of "m1" is greater than or equal to its
+    % corresponding exponent in "m2".  Assumes "m1.vars = m2.vars".
+
+    dominates = proc (m1, m2: cvt) returns (bool)
+	if debugging cand m1.vars ~= m2.vars then 
+	   fail("monomial$dominates")
+	   end
+	for i: int in int_seq$indexes(m1.exps) do
+	    if m1.exps[i] < m2.exps[i] then return(false) end
+	    end
+	return(true)
+	end dominates
+
+
+    % Mutates "m1" by subtracting one from the first exponent in "m1" that is
+    % larger than the corresponding exponent in "m2" and multiplying the
+    % coefficient of "m1" by 2.  Signals "impossible" if there is no such
+    % exponent.  Assumes "m1.vars = m2.vars".
+
+    decrease_exp = proc (m1, m2: cvt) signals (impossible)
+	if debugging cand m1.vars ~= m2.vars then 
+	   fail("monomial$decrease_exp")
+	   end
+	for i: int in int_seq$indexes(m1.exps) do
+	    if m1.exps[i] > m2.exps[i] then
+	       m1.exps := int_seq$replace(m1.exps, i, m1.exps[i] - 1)
+	       m1.coeff := 2*m1.coeff
+	       return
+	       end
+	    end
+	signal impossible
+	end decrease_exp
+
+
+    % Returns the variable sequence that "m" is over.
+
+    get_vars = proc (m: cvt) returns (var_seq)
+	return(m.vars)
+	end get_vars
+
+
+    % Returns the polynomial over "vars" obtained by evaluating "m" with the
+    % polynomials in "pa" substituted for its variables.  Assumes that "pa" is
+    % an array of polynomials over "vars" with the same number of elements as
+    % "m.vars".
+
+    compose = proc (m: cvt, pa: poly_arr, vars: var_seq) returns (polynomial)
+		signals (overflow)
+	prod: polynomial := polynomial$one(vars)
+	for i: int in int_seq$indexes(m.exps) do
+	    prod := prod * (pa[i] ** m.exps[i])
+	    end resignal overflow
+	return(polynomial$const_mult(prod, m.coeff))
+	end compose
+
+
+    % Prettyprints "m" on "p".
+    
+    print = proc (p: printer, m: cvt)
+	printer$start_block(p)
+	p.indent := 2
+	started: bool := false
+	if int$abs(m.coeff) = 1
+	   then if m.coeff < 0 then printer$puts(p, "-") end
+	   else printer$puts(p, int$unparse(m.coeff))
+		started := true
+	   end
+	for i: int in int_seq$indexes(m.exps) do
+	    e: int := m.exps[i]
+	    if e = 0 then continue end
+	    if started then printer$text(p, "~A*") end
+	    v: variable := m.vars[i]
+	    started := true
+	    if e > 1
+	       then printer$text(p, "~{~2I(")
+		    printer$text(p, identifier$id2s(v.id))
+		    printer$text(p, "~A^")
+		    printer$puts(p, int$unparse(e))
+		    printer$text(p, ")~}")
+	       else printer$puts(p, identifier$id2s(v.id))
+	       end
+	    end
+	if ~started then printer$puts(p, "1") end
+	printer$finish_block(p)
+	end print
+
+    
+    % Returns a string representation of "m".
+
+    unparse = proc (m: monomial) returns (string)
+	return(unparse_item[monomial](m))
+	end unparse
+
+
+    % Returns "true" iff "m1" and "m2" have similar exponents.
+
+    same_exps = proc (m1, m2: cvt) returns (bool)
+	return(int_seq$similar(m1.exps, m2.exps))
+	end same_exps
+
+
+    % Returns "true" iff "m1" and "m2" have the same state.
+
+    similar = proc (m1, m2: cvt) returns (bool)
+	return(rep$similar(m1, m2))
+	end similar
+
+
+    % Returns a copy of "m".
+
+    copy = proc (m: cvt) returns (cvt)
+	return(rep$copy(m))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+	       signals (end_of_file, not_possible(string))
+  	return(rep$decode(s)) resignal end_of_file, not_possible
+  	end decode
+  
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+  	rep$encode(c, s) resignal not_possible
+  	end encode
+
+    end monomial

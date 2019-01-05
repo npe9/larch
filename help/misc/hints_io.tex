@@ -1,0 +1,32 @@
+\doc{Hints on preparing input and recording work}
+\ref{hints-input}
+\ref{input}
+
+Use an editor to prepare a command file containing declarations and assertions.
+Then \clink{execute} that file to check that LP can read what you have typed.
+If you have made any mistakes, edit the command file to fix them.
+\p
+Put all the declarations you expect to need at the beginning of your command
+file.  This allows LP to check your declarations before beginning any time
+consuming tasks.
+\p
+Although proofs are usually constructed interactively, successful proofs should
+be recorded in cleaned-up command files.  Structure your proofs using a
+sequence of \cflink{execute} commands.
+\p
+\dlink{../commands/freeze_thaw}{Freeze} LP's state often.  This makes it easier
+to try different alternatives when looking for a proof.
+\p
+Always set \dlink{../settings/script}{scripting} and
+\dlink{../settings/log}{logging} on at the start of an LP session.  If you
+realize that you are not recording a session, start logging and then execute a
+\dflink{../commands/history}{history all} command to get LP to print the 
+commands already executed.  After executing a step of a proof, enter a comment
+recording information that may be helpful in cleaning up the LP-produced
+\f{.lpscr} file.  If, for example, a \cflink{critical-pairs} command produced 
+no useful critical pairs, record that fact in a comment.
+\p
+Keep in mind that LP automatically indents and annotates \f{.lpscr} files.
+It is often useful to use an editor to replace parts of human-generated 
+\f{.lp} files with material extracted from \f{.lpscr} files.
+

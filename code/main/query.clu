@@ -1,0 +1,348 @@
+#extend
+
+% The "query" cluster provides routines for obtaining arguments to LP commands.
+% There are two basic paradigms for obtaining arguments: one to be used when
+% the arguments can be expected to fit on a single line; the other, when the
+% arguments are expected to occupy multiple lines (which are terminated by a
+% line consisting of two periods).  In both paradigms, the remainder of the
+% current line of input is used if it is nonempty; otherwise the user is
+% prompted to supply input.  Help is provided if the user enters a question
+% mark.
+
+
+query = cluster is create, get_more, new_op, one_name_set, operators, 
+                   ordering_choice, terms, two_classes
+    
+    rep = null
+    
+    error 	= iodev$error
+    printl 	= iodev$printl
+    prints 	= iodev$prints
+    putl 	= iodev$putl
+    qprintl 	= iodev$qprintl
+    
+    own io: iodev := iodev$[]			% source for input
+    own p: printer := printer$create_iodev(io)	% destination for output
+
+    
+    % Initializes the "query" cluster to the same "the_io" and "the_printer"
+    % as the rest of LP.
+    
+    create = proc (the_io: iodev, the_p: printer)
+	io := the_io
+	p := the_p
+	end create
+    
+
+    % If "scan.nextToken" is an end-of-file, simply returns.  Otherwise adds
+    % text to "scan", as follows.  Adds the remainder of the current line of
+    % input if it is nonempty.  Otherwise, prompts the user to supply
+    % "arg_type" arguments on one or more lines, and to terminate the input by
+    % a line consisting of two periods (`..')  surrounded by blanks.  Prints
+    % "help" and requests another line of input if any line consists of a
+    % question mark (`?').  Signals "none" if the input string is empty, or if
+    % the user types the interrupt character (^G).
+
+    % FIX: Protect '~' in "help".
+    
+    get_more = proc (scan: scanner, arg_type, help: string) signals (none)
+	msg1a = "Please enter "
+	msg1b = "Please continue entering "
+	msg2  = ", terminated with a `..' line, or `?' for help:\n~E"
+	if ~token$is_eof(scan.nextToken) then return end
+	str: string := ""
+	if iodev$pending_input(io) then str := trim_both(iodev$getl(io)) end
+	if str = "?" then
+	   printer$text(p, "\n" || help || "\n\n")
+	   str := ""
+	   end
+	if string$empty(str) then
+	   from_script: bool :=  iodev$reading_script(io)
+	   if ~from_script then printer$text(p, msg1a || arg_type || msg2) end
+	   while true do
+	       if front_end$interrupt() then
+		  iodev$error(io)
+		  iodev$putl(io, "\nInterrupt ...")
+		  signal none
+		  end
+	       if from_script cand ~iodev$reading_script(io) then
+		  from_script := false
+		  printer$text(p, msg1b || arg_type || msg2)
+		  end
+	       s: string := trim_both(iodev$getl(io))
+	       if s = ".." then break
+		elseif s = "?" then
+		  printer$text(p, "\n" || help || "\n\n" ||
+				  msg1a || arg_type || msg2)
+		elseif string$empty(str) then str := s
+		else  str := str || "\n" || s
+		end
+	       end
+	   printer$newline(p)
+	   end
+	if string$empty(trim_head(str)) cor iodev$interrupt()
+	   then signal none
+	   else scanner$add_string(scan, str)
+	   end
+	end get_more
+
+
+    % Reads and returns the remainder of the current line as an operator that
+    % does not exist in "stab" and that is suitable for dividing "eq".  Signals
+    % "no_response" if there is no input.  Signals "error(reading_script)" if
+    % the response is not a legal operator.  NOTE: We cannot use
+    % "operator$read" because that procedure will produce spurious error
+    % messages if the entered operator is already in "stab".  We might try
+    % reading the operator with a blank symtab.
+
+    new_op = proc (stab: symtab, eq: equation) returns (operator)
+	       signals (no_response, error(bool))
+	msg1 = "expecting an identifier for an operator of arity "
+        msg2 = "illegal overloading for operator"
+	msg3 = "need `__' to specify whether operator is prefix or postfix"
+	vars: var_set := var_set$intersection(eq.left.fvars, eq.right.fvars)
+	arity: int := var_set$size(vars)
+	dom: sort_arr := sort_arr$[]
+	for v: variable in var_set$elements(vars) do
+	    sort_arr$addh(dom, v.sort)
+	    end
+	sig: signature := signature${dom: sort_seq$a2s(dom), rng: eq.left.sort}
+	response: string := get_line("a new operator", operator_syntax)
+	   except when none: signal no_response end
+	scan: scanner := scanner$from_string(response, p)
+	reading_script: bool := iodev$reading_script(io)
+	id: identifier, loc: locator := poperator$scan_opId(scan, true, false)
+	   except when error: signal error(reading_script) end
+	id := identifier$mark(id, sig.arity)
+	   except when wrong_arity:
+		       scanner$error_at(scan, loc, msg1 || int$unparse(arity))
+		       signal error(reading_script)
+		  when ambiguous:
+		       scanner$error_at(scan, loc, msg3)
+		       signal error(reading_script)
+		  end
+	tagcase scan.nextToken
+	   tag colon: scanner$get(scan)
+		      sig1: signature := signature$read(scan, stab)
+			 except when error: signal error(reading_script) end
+		      if sig ~= sig1 then
+			 scanner$error_at1(scan, loc, 
+			                   "wrong signature for operator")
+			 printer$text(p, "\n~{The proper signature is~1A")
+			 signature$print(p, sig)
+			 printer$text(p, ".~}")
+			 scanner$error_at2(scan, loc)
+			 signal error(reading_script)
+			 end
+	   tag eof:
+	   others:    scanner$error(scan, "expecting end of operator")
+		      signal error(reading_script)
+	   end
+        check_end_of_scan(scan)
+	   except when error: signal error(reading_script) end
+	op1: operator := operator${id: id, sig: sig}
+	symtab$lookup_op(stab, op1)
+	   except when missing:
+		       symtab$begin_changes(stab)
+		       op1 := symtab$enter_op(stab, op1)
+			  except when illegal:
+				      symtab$abort_changes(stab)
+				      scanner$error_at(scan, loc, msg2)
+				      signal error(reading_script)
+				 end
+		       symtab$commit_changes(stab)
+		       return(op1)
+		  end
+	scanner$error_at(scan, loc, "operator already in use")
+	signal error(reading_script)
+	end new_op
+
+
+    % Gets and returns an optional keyword in "keys" followed by a set of names
+    % for objects of type "item" from "io".  Uses the multiline input
+    % convention if "can_be_null" is true; otherwise uses the current line
+    % only.  Signals "none" if the input is null.  Returns a null string if
+    % there is no keyword.  Signals "no_names(keyword)" if there are no names
+    % following the keyword.
+
+    one_name_set = proc (i: interactive, item: string, keys: keyword_table,
+			 can_be_null: bool) returns (string, name_set)
+		     signals (none, no_names(string), error)
+	scan: scanner := scanner$from_string("", p)
+	if ~can_be_null cor iodev$pending_input(io) then
+	   msg: string := keyword_table$unparse_keywords(keys)
+	   if string$empty(msg)
+	      then msg := "Enter "
+	      else msg := "Enter one of the options " || msg ||
+			  " followed by "
+	      end
+	   msg := msg || "a list of names.\n\n" || name_syntax
+	   get_more(scan, item, msg)
+	   end resignal none
+	key: string := keyword_table$scan_and_choose(keys, scan, i.symtab)
+	   except when error: signal error
+		  when none: key := ""
+		  end
+	no_names: bool := false
+	loc: locator := scan.nextToken.loc
+	ce: class_expression := class_expression$read(scan, i.symtab)
+	   resignal error
+	   except when empty: no_names := true end
+	check_end_of_scan(scan)
+	   resignal error
+	if no_names then signal no_names(key) end
+	return(key, class_expression$full_eval(ce, i.sys, i.symtab.classes))
+	   except when undefined (cn: class_name):
+		       scanner$error_at(scan, loc, "undefined class name `"
+						     || cn || "'")
+		       signal error
+		  end
+	end one_name_set
+    
+
+    % Gets a list of operators or quantifiers using the multiple-line input
+    % convention.  Returns an array containing the operators.  Signals "none"
+    % if the list is empty.  Writes an error message to "p", and signals
+    % "error", if the list contains an ambiguous or illegal operator.
+
+    operators = proc (prompt: string, stab: symtab) returns (op_arr)
+		  signals (error, none)
+	scan: scanner := scanner$from_string("", p)
+	get_more(scan, "a list of " || prompt, operator_syntax)
+	   resignal none
+	ops: op_arr := op_arr$[poperator$read_pseudo(scan, stab)]
+	   resignal error
+	while true do
+	    if token$is_comma(scan.nextToken) then scanner$get(scan) end
+	    if token$is_eof(scan.nextToken) then break end
+	    op_arr$addh(ops, poperator$read_pseudo(scan, stab))
+	    end resignal error
+	return(ops)
+	end operators
+    
+    
+    % Gets a choice for ordering an equation into a rewrite rule.
+    
+    ordering_choice = proc (choices: order_ct, n_hints: int)
+			returns (order_command)
+			signals (no_response, end_of_file, error(bool))
+	prompt = "\nWhat do you want to do with the formula? "
+	reading_script: bool := iodev$reading_script(io)
+	s: string
+	return(order_ct$choose_if_in(choices, prompt, io))
+	   resignal end_of_file, no_response
+	   except when no_match (s1: string): s := s1 end
+	if n_hints > 0 then
+	   choice: int := int$parse(s)
+	   if 0 < choice cand choice <= n_hints then
+	      return(order_command$make_accept(choice))
+	      end
+	   end except when bad_format, error, overflow: end
+	error(io)
+	prints(io, "\nThat is not a legal response.")
+	if ~reading_script then
+	   if n_hints > 0
+	      then prints(io, "  Type a number between 1 and ")
+		   prints(io, int$unparse(n_hints))
+		   prints(io, " to accept an ordering suggestion, ")
+		   prints(io, "type `?' for a list of other choices, ")
+	      else prints(io, "  Type `?' for a list of legal choices,")
+	      end
+	   prints(io, "or type <ret> to exit.")
+	   end
+	printl(io, "")
+	signal error(reading_script)
+	end ordering_choice
+
+
+    % Gets and returns a sequence of terms separated by commas or whitespace
+    % using the multiline input convention.  Signals "none" if there are no
+    % terms.  Returns the terms if there are no errors.  Otherwise reports the
+    % errors and signals "error".  Attempts to find multiple errors by
+    % skipping to the end of a line when an error is found, and continuing to
+    % parse terms.
+
+    terms = proc (msg: string, stab: symtab) returns (term_seq)
+	      signals (none, error)
+	scan: scanner := scanner$from_string("", p)
+	get_more(scan, msg, term_syntax)
+	   resignal none
+	ta: term_arr := term_arr$[]
+	err: bool := false
+	while true do
+	    term_arr$addh(ta, term$read(scan, stab))
+	       except when error: err := true
+				  scanner$skip_line(scan)
+		      end
+	    tagcase scan.nextToken
+	       tag comma: scanner$get(scan)
+	       tag eof: break
+	       others: end
+	    end
+	if err then signal error end
+	return(term_seq$a2s(ta))
+	end terms
+    
+
+    % Gets and returns two class-expressions separated by "keyword", for
+    % objects of type "item1" and "item2", using the multiline input
+    % convention.  Prints an error message if any input follows the second set.
+
+    two_classes = proc (stab: symtab, item1, keyword, item2: string)
+		    returns (class_expression, class_expression)
+		    signals (none, error)
+	scan: scanner := scanner$from_string("", p)
+	get_more(scan, "names of " || item1, name_syntax)
+	   resignal none
+	ce1, ce2: class_expression
+	begin
+	    ce1 := class_expression$read(scan, stab)
+	    tagcase scan.nextToken
+	       tag simpleId:
+		   if slower(scan.nextToken.text) ~= keyword then exit error end
+		   scanner$get(scan)
+	       tag eof:
+	       others: exit error
+	       end
+	       except when error: 
+		           scanner$error(scan, "expecting `" || keyword || "'")
+			   signal error
+		      end
+	    if token$is_eof(scan.nextToken) then
+	       get_more(scan, "names of " || item2, name_syntax)
+	       end resignal none
+	    ce2 := class_expression$read(scan, stab)
+	    check_end_of_scan(scan)
+	    end resignal error
+	   except when empty: scanner$error(scan, "expecting a name")
+			      signal error
+		  end
+	return(ce1, ce2)
+	end two_classes
+
+
+    
+    % (Internal procedure) Gets a single line of input from the user, as
+    % follows.  Uses the remainder of the current line of input if it is
+    % nonempty.  Otherwise, prompts the user to supply "arg_type" arguments and
+    % gets a line of input.  Prints "help" and requests another line of input
+    % if the line consists of a question mark (`?').  Signals "none" if the
+    % input string is empty.
+
+    get_line = proc (arg_type, help: string) returns (string) signals (none)
+	iodev$qprints(io, "Please enter " || arg_type || ": ")
+	s: string := "?"
+	while s = "?" do
+	    s := iodev$getl(io)
+	       except when end_of_file: signal none end
+	    if string$empty(s) then signal none
+	     elseif s = "?" then
+	       printer$text(p, "\n" || help || "\n\n")
+	       iodev$prints(io, "Please enter " || arg_type || ": ")
+	     end
+	    end
+	return(s)
+	end get_line
+
+    
+    end query

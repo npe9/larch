@@ -1,0 +1,7 @@
+To compile LP, first install the PCLU compiler and set ${CLUHOME}
+to the name of its installation directory.  Then type "make" in
+this directory.
+
+After you do this, documentation for LP can be found in the html
+directory.  That documentation contains further information about
+installing LP.

@@ -1,0 +1,315 @@
+#extend
+
+% This cluster parses and unparses external representations for operators using
+% the following syntax:
+
+%     operator     ::= opId [ ":" signature ]
+%     opId         ::= ifOp | mixfixOp | somefixOp | selectOp | simpleId
+%     ifOp         ::= "if" markerSym "then" markerSym "else" markerSym
+%     mixfixOp     ::= [ markerSym ] openSym markerSym*, closeSym [ markerSym ]
+%     somefixOp    ::= [ markerSym ] ( simpleOp | selectSym) [ markerSym ]
+%     selectOp     ::= [ markerSym ] selectSym simpleId
+
+%     opDcl        ::= ( opId+, ":" signature )+[,]
+
+% The "psignature" cluster defines the nonterminal symbol "signature".  The
+% "token" cluster defines the terminal symbols "markerSym", "openSym",
+% "closeSym", "simpleOp", "simpleId", and "selectSym".
+
+
+poperator = cluster is print, read, read_pseudo, read_overloadings, read_opDcl,
+                       scan_opId
+    
+    rep = null
+    
+
+    % Prettyprints "op" on "p".  Qualifies "op" with its signature if
+    % "stab.unparse_mode" is "qualified" or if "op.id" is overloaded in "stab"
+    % and "stab.unparse_mode" is "unambiguous".  Prints markers in infix,
+    % prefix, or postfix operators if "stab.unparse_mode" is "qualified", if
+    % printing the markers would make it unnecessary to print the signature, or
+    % if there is not exactly one operator in "stab" that matches the unmarked
+    % identifier.
+    
+    % Uses the format "~{~2Iop.id~F:~Fop.sig~}" to display the qualified
+    % representation of "op" in one of the following forms:
+    % (1) op.id:op.sig     (2) op.id:       (3) op.id         (4) op.id
+    %                            op.sig           :op.sig           :
+    %                                                               op.sig
+
+    print = proc (p: printer, op: operator, stab: symtab)
+	id: identifier := op.id
+	implicit_markers: bool := true
+	id := identifier$unmark(op.id)
+	   except when impossible: implicit_markers := false end
+	qualify: bool
+	tagcase stab.unparse_mode.upm
+	   tag qualified_upm:   qualify := true
+	   			implicit_markers := false
+	   tag unqualified_upm: qualify := false
+	   tag unambiguous_upm: symtab$lookup_op_id(stab, id)
+	                        qualify := false
+	   end except when ambiguous: 
+			   if implicit_markers
+			      then symtab$lookup_op_id(stab, op.id)
+			      	   % The markers are enough to disambiguate
+				   qualify := false
+				   implicit_markers := false
+			      else qualify := true
+			      end except when ambiguous: qualify := true end
+		      when missing, variable:
+		      end
+	if implicit_markers then
+	   if qualify
+	      then symtab$lookup_op(stab, operator${id: id, sig: op.sig})
+	      else symtab$lookup_op_id(stab, id)
+	      end except when ambiguous, missing: implicit_markers := false end
+	   end
+	if qualify then printer$text(p, "~{~2I") end
+	if implicit_markers
+	   then printer$puts(p, id.sym)
+	   else identifier$print(p, op.id)
+	   end
+	if qualify then
+	   printer$text(p, "~F:~F")
+	   psignature$print(p, op.sig)
+	   printer$text(p, "~}")
+	   end
+	end print
+
+
+    % Scans and returns a (possibly qualified) operator in "stab" from "scan".
+    % Writes a message to "scan", and signals "error", if "scan" does not start
+    % with an unambiguous representation for an operator in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (operator)
+	     signals (error)
+	id: identifier, loc: locator := scan_opId(scan, true, false)
+	   resignal error
+	msg: string
+	if token$is_colon(scan.nextToken)
+	   then scanner$get(scan)
+		sig: signature := psignature$read(scan, stab)
+		if id.arity ~= sig.arity then exit bad_arity end
+		   except when unknown: end
+		return(symtab$lookup_op(stab, operator${id: id, sig: sig}))
+	   else return(symtab$lookup_op_id(stab, id))
+	   end resignal error
+	   except when missing, variable: msg := "undeclared operator"
+		  when ambiguous: msg := "ambiguous operator"
+		  when bad_arity: msg := "wrong number of __'s in identifier"
+		  end
+	scanner$error_at(scan, loc, msg)
+	signal error
+	end read
+
+
+    % Scans and returns a (possibly qualified) operator or quantifier in "stab"
+    % from "scan".  Writes a message to "scan", and signals "error", if "scan"
+    % does not start with an unambiguous representation for an operator or
+    % quantifier in "stab".
+
+    read_pseudo = proc (scan: scanner, stab: symtab) returns (operator)
+	     signals (error)
+	id: identifier, loc: locator := scan_opId(scan, true, true)
+	   resignal error
+	msg: string
+	if token$is_colon(scan.nextToken)
+	   then scanner$get(scan)
+		sig: signature := psignature$read(scan, stab)
+		if id.arity ~= sig.arity then exit bad_arity end
+		   except when unknown: end
+		return(symtab$lookup_op(stab, operator${id: id, sig: sig}))
+	   else return(symtab$lookup_op_id(stab, id))
+	   end resignal error
+	   except when missing, variable: msg := "undeclared operator"
+		  when ambiguous: msg := "ambiguous operator"
+		  when bad_arity: msg := "wrong number of __'s in identifier"
+		  end
+	scanner$error_at(scan, loc, msg)
+	signal error
+	end read_pseudo
+
+
+    % Scans a (possibly qualified) operator from "scan" and yields all matching
+    % operators in "stab" together with a locator for the operator.  Signals
+    % "none" if there are no matching operators.  Writes a message to "scan",
+    % and signals "error", if "scan" does not begin with a legal "opId", or if
+    % the signature is not constructed from sorts in "stab".
+
+    read_overloadings = iter (scan: scanner, stab: symtab)
+			  yields (operator, locator)
+			  signals (error, none(locator))
+	id: identifier, loc: locator := scan_opId(scan, true, false)
+	   resignal error
+	sig: signature
+	sig_exists: bool := false
+	if token$is_colon(scan.nextToken) then
+	   scanner$get(scan)
+	   sig := signature$read(scan, stab)
+	   sig_exists := true
+	   if id.arity ~= sig.arity then
+	      scanner$error_at(scan, loc, "wrong number of __'s in identifier")
+	      signal error
+	      end except when unknown: end
+	   end resignal error
+	yielded: bool := false
+	for op: operator in symtab$matching_ops(stab, id) do
+	    if ~sig_exists cor op.sig = sig then
+	       yielded := true
+	       yield(op, loc)
+	       end
+	    end
+	if ~yielded then signal none(loc) end
+	end read_overloadings
+
+
+    % Scans an "opDcl" from "scan" and yields a sequence of identifiers,
+    % locators for the identifiers, and signatures.  Writes a message to
+    % "scan", and signals "error", if "scan" does not begin with a legal
+    % "opDcl", or if some signature is not constructed from sorts in "stab".
+
+    read_opDcl = iter(scan: scanner, stab: symtab)
+		   yields (identifier, locator, signature) signals (error)
+	while true do
+	    ids: id_arr := id_arr$[]
+	    locs: loc_arr := loc_arr$[]
+	    id: identifier, loc: locator := scan_opId(scan, false, false)
+	    id_arr$addh(ids, id)
+	    loc_arr$addh(locs, loc)
+	    while token$is_comma(scan.nextToken) do
+		scanner$get(scan)
+		id, loc := scan_opId(scan, false, false)
+		id_arr$addh(ids, id)
+		loc_arr$addh(locs, loc)
+		end
+	    scanner$expecting(scan, token$is_colon, "`:' before signature")
+	    sig: signature := psignature$read(scan, stab)
+	    for i: int in id_arr$indexes(ids) do
+		yield(ids[i], locs[i], sig)
+		end
+	    tagcase scan.nextToken
+	       tag comma: scanner$get(scan)
+	       tag eof: break
+	       others:
+	       end
+	    end resignal error
+	end read_opDcl
+
+
+    % Scans an "opId" from "scan" and returns it together with its locator.
+    % Accepts prefix, postfix, or infix operators without markers if
+    % "implicit_markers" is true.  Accepts a quantifier as an operator if
+    % "quant" is true.  Writes a message to "scan", and signals "error", if
+    % "scan" does not begin with a legal "opId".
+
+    scan_opId = proc (scan: scanner, implicit_markers, quant: bool)
+		  returns (identifier, locator) signals (error)
+	id: identifier
+	before: bool := scan_marker(scan)
+	tok: token := scan.nextToken
+	loc: locator := tok.loc
+	tagcase tok
+	   tag ifOp:
+	       if before then exit bad("illegal `__' before `if'") end
+	       scanner$get(scan)
+	       scanner$expecting(scan, token$is_markerSym, "`__' after `if'")
+	       scanner$expecting_id(scan, "then")
+	       scanner$expecting(scan, token$is_markerSym,
+				 "`__' after `if __ then'")
+	       scanner$expecting_id(scan, "else")
+	       scanner$expecting(scan, token$is_markerSym,
+				 "`__' after `if __ then __ else'")
+	       id := identifier$ifOp()
+	   tag openSym:
+	       open: string := scanner$get(scan).text
+	       places: int := count_markers(scan)
+	       close: string :=
+		   scanner$expecting(scan, token$is_closeSym,
+				     "closing symbol for mixfix operator").text
+	       id := identifier$make_mixfix(before, open, places, close,
+					    scan_marker(scan))
+	   tag selectSym:
+	       if ~implicit_markers cand ~before then
+		  exit bad("need `__' as placeholder before `.'")
+		  end
+	       scanner$get(scan)
+	       if token$is_unreservedSimpleId(scan.nextToken) then
+		  % Make record selector ".id" or "\select id"
+		  id := identifier$make_simple(scanner$get(scan).text)
+		  id := id.simple_to_postfix
+		  tok := scan.nextToken
+		  if scan_marker(scan) then exit bad("illegal `__'") end
+		elseif token$is_simpleId(scan.nextToken) then
+		  exit bad("illegal identifier for operator")
+		else % Make infix operator
+		     id := identifier$selectOp()
+		     tok := scan.nextToken
+		     if before then
+			scanner$expecting(scan, token$is_markerSym, "`__'")
+		      elseif scan_marker(scan) then exit bad("illegal `__'")
+		      end
+		end
+	   tag unreservedSimpleId:
+	       if before then
+		  exit bad("illegal `__' before function identifier")
+		  end
+	       id := identifier$make_simple(scanner$get(scan).text)
+	   tag somefixOp:
+	       scanner$get(scan)
+	       after: bool := scan_marker(scan)
+	       if ~implicit_markers cand ~before cand ~after then
+		  exit bad("need `__'s as placeholders for arguments")
+		  end
+	       id := identifier$make_somefix(before, tok.text, after)
+	   tag allSym:
+	       if quant 
+		  then id := identifier$allOp()
+		       scanner$get(scan)
+		  else exit bad("expecting operator, not quantifier")
+		  end
+	   tag existsSym:
+	       if quant 
+		  then id := identifier$existsOp()
+		       scanner$get(scan)
+		  else exit bad("expecting operator, not quantifier")
+		  end
+	   others:
+	       exit bad("missing identifier")
+	   end resignal error
+	   except when bad (s: string):
+		       scanner$error_at(scan, tok.loc, s)
+		       signal error
+		  end
+	return(id, loc)
+	end scan_opId
+
+
+    % (Internal procedure) If the next token in "scan" is a marker, removes
+    % that token from "scan" and returns "true".  Otherwise returns "false".
+
+    scan_marker = proc (scan: scanner) returns (bool)
+	found: bool := token$is_markerSym(scan.nextToken)
+	if found then scanner$get(scan) end
+	return(found)
+	end scan_marker
+
+
+    % (Internal procedure) Scans a comma-separated sequence of markers ("__")
+    % from "scan" and returns the number of markers found.  Writes a message to
+    % "scan", and signals "error", if some comma is not followed by a marker.
+
+    count_markers = proc (scan: scanner) returns (int) signals (error)
+	if ~scan_marker(scan) then return(0) end
+	n: int := 1
+	while token$is_comma(scan.nextToken) do
+	    scanner$get(scan)
+	    scanner$expecting(scan, token$is_markerSym, 
+		              "`__' in mixfix operator")
+	    n := n + 1
+	    end resignal error
+	return(n)
+	end count_markers
+
+
+    end poperator

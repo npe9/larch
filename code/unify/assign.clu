@@ -1,0 +1,481 @@
+#extend
+
+% A generator is a type used to build up solutions.  The solutions form a
+% commutative monoid which can be described by a basis, whose elements we call
+% generators.  The generators defined here will allow one to define a
+% particular class of commutative monoids whose elements are sequences of
+% integers.  Although the order of elements of type 't' in a generator (and
+% therefore in a solution) is important, we include the information of t to
+% value pairs so that some checking can be done while combining generators into
+% solutions.  Intuitively, the var_seq of a generator defines a "kind" of
+% solution which cannot sensibly be combined with or compared to a generator or
+% solution of a different "kind".
+
+generator = cluster [t:type] is create, get_vars, get_vals, replace_vals, lt, 
+				unparse, equal, similar, copy, copy1, similar1
+	    where t in equal_type
+    % Rep invariant: for all g: generator = Abstract(r),
+    % 		     is_complete(r) = true
+
+    rep = struct[vars: t_vec,
+		 assn: t_int_assn]
+
+    t_int_assn = assignment[t, int]
+    t_seq = sequence[t]
+    t_vec = vector[t]
+
+    create = proc (vars: t_vec, vals: int_seq) returns (cvt)
+	       signals (bounds, empty, duplicates)
+	return(rep${vars: vars, 
+		    assn: t_int_assn$seqs2assn(t_vec$v2seq(vars), vals)}) 
+	   resignal bounds, empty, duplicates
+	end create
+
+    replace_vals = proc (gen: cvt, vals: int_seq) returns (cvt) 
+		signals (bounds)
+	return(rep${vars: gen.vars, 
+		    assn: t_int_assn$replace_vals(gen.assn, vals)})
+	   resignal bounds
+	end replace_vals
+
+    get_vars = proc (gen: cvt) returns (t_vec)
+	return(gen.vars)
+	end get_vars
+
+    get_vals = proc (gen: cvt) returns (int_seq)
+	return(gen.assn.vals)
+	end get_vals
+
+    lt = proc (gen1, gen2: cvt) returns (bool) signals (incomparable)
+	return(gen1.assn < gen2.assn) resignal incomparable
+	end lt
+
+    unparse = proc (gen: cvt) returns (string)
+		where t in unparse_type
+	return(t_int_assn$unparse(gen.assn))
+	end unparse
+
+    equal = proc (gen1, gen2: cvt) returns (bool)
+	return (gen1 = gen2)
+	end equal
+
+    similar = proc (gen1, gen2: cvt) returns (bool)
+		where t in similar_type
+	return (rep$similar(gen1, gen2))
+	end similar
+
+    copy = proc (gen: cvt) returns (cvt)
+		where t in copy_type
+	return(rep$copy(gen))
+	end copy
+
+    copy1 = proc (gen: cvt) returns (cvt)
+	return (rep${vars: gen.vars, 
+		     assn: t_int_assn$copy1(gen.assn)})
+	end copy1
+
+    similar1 = proc (gen1, gen2: cvt) returns (bool)
+	return ((gen1.vars = gen2.vars) cand 
+		t_int_assn$similar1(gen1.assn, gen2.assn))
+	end similar1
+
+    end generator
+
+
+
+vector = cluster [t: type] is new, v2arr, arr2v, v2seq, seq2v, empty, size, 
+			      indexes, elements, equal, similar, similar1,
+			      copy, copy1
+	    where t in equal_type
+
+    rep = t_arr
+
+    t_arr = array[t]
+    t_seq = sequence[t]
+
+    new = proc () returns (cvt)
+	return(rep$new())
+        end new
+
+    arr2v = proc (at: t_arr) returns (cvt)
+	return(rep$copy1(at))
+        end arr2v
+
+    v2arr = proc (v: cvt) returns (t_arr)
+	return(rep$copy1(v))
+        end v2arr
+
+    seq2v = proc (st: t_seq) returns (cvt)
+	return(t_seq$s2a(st))
+        end seq2v
+
+    v2seq = proc (v: cvt) returns (t_seq)
+	return(t_seq$a2s(v))
+        end v2seq
+
+    empty = proc (v: cvt) returns (bool)
+	return(rep$empty(v))
+	end empty
+
+    size = proc (v: cvt) returns (int)
+	return(rep$size(v))
+        end size
+
+    indexes = iter (v: cvt) yields (int)
+	for i: int in rep$indexes(v) do
+	    yield(i)
+	    end
+	end indexes
+
+    elements = iter (v: cvt) yields (t)
+	for elem: t in rep$elements(v) do
+	    yield(elem)
+	    end
+	end elements
+
+    equal = proc (v1, v2: cvt) returns (bool)
+	return(v1 = v2)
+        end equal
+
+    similar = proc (v1, v2: cvt) returns (bool)
+		where t in similar_type
+	return(rep$similar(v1, v2))
+        end similar
+
+    similar1 = proc (v1, v2: cvt) returns (bool)
+	return(rep$similar1(v1, v2))
+	end similar1
+    
+    copy = proc (v: cvt) returns (cvt)
+		where t in copy_type
+	return(rep$copy(v))
+	end copy
+
+    copy1 = proc (v: cvt) returns (cvt)
+	return(rep$copy1(v))
+	end copy1
+
+    end vector
+
+
+
+% An assignment is a mutable type used to represent sets of generators, or
+% variable-value pairs, that result from solving an equation.  A generator is
+% restricted to the environment, or var_coll, with which it was created.  The
+% observers of a generator object are very restricted which allows a much more
+% efficient implementation than the more general notion of a mapping type which
+% is used elsewhere in lp.
+
+assignment = cluster [vartype, valtype: type] is create, assign, is_bound,
+						  empty, is_free, is_complete,
+						  add, bindings, get_vars,
+						  get_vals, assn2seqs,
+						  seqs2assn, replace_vals, lt, 
+						  unparse, equal, similar, 
+						  similar1, copy, copy1
+	    where vartype in equal_type
+
+    % could change the rep to an array of variables and an array of values--
+    % would have to change the interface of create and var_coll operations.
+    rep = struct [vars: var_seq,
+		  vals: val_seq]
+    var_seq = sequence[vartype]
+    var_arr = array[vartype]
+    val_seq = sequence[value]
+    value = variant[unbound: null, bound: valtype]
+
+    vv_bind = binding[vartype, valtype]
+    val_arr = array[value]
+    vt_arr = array[valtype]
+    vt_seq = sequence[valtype]
+
+    % Rep Invariants:
+    % 	for all a: assignment[t] = Abstract(r)
+    %		1)  for all i, int, between low(r.bindings) and 
+    %		    high(r.bindings), inclusive; 
+    %		    if r.bindings[i].domain = v, then exists(r.vars, v)
+    %		2) for all i1, i2, int, between low(r.bindings) and
+    %		    high(r.bindings), inclusive; 
+    % 		    if i1 ~= i2 then 
+    %			    r.bindings[i1].domain ~= r.bindings[i2].domain
+
+
+    % Makes a generator object with the variable sequence "env" as its
+    % environment.  The environment restricts the set of variables to which
+    % values can be assigned in the created object.
+
+    create  = proc (env: var_seq) returns (cvt) signals (empty, duplicates)
+	if var_seq$empty(env) then signal empty end
+	va: val_arr := val_arr$new()
+	for i: int in var_seq$indexes(env) do
+	    for j: int in int$from_to(1, i - 1) do
+		if env[i] = env[j] then signal duplicates end
+		end
+	    val_arr$addh(va, value$make_unbound(nil))
+	    end
+	return(rep${vars: env, vals: val_seq$a2s(va)})
+	end create	
+
+
+    % Assigns the variable "var" to the value "val" by mutating "assn".  Signal
+    % "already_bound" if "assn" already assigns "var" to a value.  Signals
+    % "not_in" if "var" is not in the environment of "assn".
+
+    assign = proc (assn: cvt, var: vartype, val: valtype) 
+	       signals (already_bound, not_in)
+	for i: int in var_seq$indexes(assn.vars) do
+	    if assn.vars[i] = var then
+	       tagcase assn.vals[i]
+		  tag bound: signal already_bound
+		  tag unbound:
+		      value$change_bound(assn.vals[i], val)
+		      return
+		  end
+	       end
+	    end
+	signal not_in 
+	end assign
+
+
+    % Returns true iff none of the variables in the environment are bound.
+
+    empty = proc (assn: cvt) returns (bool)
+	for v: value in val_seq$elements(assn.vals) do
+	    if value$is_bound(v) then return(false) end
+	    end
+	return(true)
+	end empty
+
+
+    % Returns true iff var is associated with a value in assn, if var is in the
+    % environment of the generator, but is not assigned, then false is
+    % returned.  If var is not in the environment, not_in is signalled.
+
+    is_bound = proc (assn: cvt, var: vartype) returns (bool) signals (not_in)
+	for i: int in var_seq$indexes(assn.vars) do
+	    if assn.vars[i] = var then
+	       tagcase assn.vals[i]
+		  tag bound: return (true)
+		  tag unbound: return(false)
+		  end
+	       end
+	    end
+	signal not_in
+	end is_bound
+
+
+    % Returns true iff var is not associated with a value in assn but is in the
+    % environment of assn.  If var is in the environment of the generator, but
+    % is assigned, then false is returned.  If var is not in the environment,
+    % not_in is signalled.
+
+    is_free = proc (assn: cvt, var: vartype) returns (bool) signals (not_in)
+	if is_bound(up(assn), var) 
+	   then return(false)
+	   else return(true)
+	   end resignal not_in
+	end is_free
+
+
+    % Returns true iff all variables in the 'environment' have been assigned a
+    % value.
+
+    is_complete = proc (assn: cvt) returns (bool) 
+	for v: value in val_seq$elements(assn.vals) do
+	    if value$is_unbound(v) then return(false) end
+	    end
+	return(true)
+ 	end is_complete
+
+
+    % Modifies a1 to contain all of the bindings in a2 as well as its own.  If
+    % the environment of a1 is different than that of a2, incompatible is
+    % signalled.  If some of the variables in a2 already have values in a1, the
+    % already bound is signalled.
+
+    add = proc (a1, a2: cvt) signals (incompatible, already_bound)
+	if a1.vars ~= a2.vars then signal incompatible end
+	for b: vv_bind in bindings(up(a2)) do
+	    assign(up(a1), b.domain, b.range)
+	    end resignal already_bound
+	end add
+
+
+    % Returns the assignment that contains the pairwise elements of vars and
+    % vals as bindings.  Signals bounds if the two sequences have different
+    % index ranges.  This procedure requires that the elements are the var_seq,
+    % "vars" are unique.  If any vartype element occurs more than once in
+    % "vars", the behavior of this routine and any further operations on the
+    % returned object are unspecified.
+
+    seqs2assn = proc (vars: var_seq, vals: vt_seq) returns (cvt) 
+		  signals(bounds, duplicates, empty)
+	if var_seq$empty(vars) then signal empty end
+	if var_seq$size(vars) ~= vt_seq$size(vals) 
+	   then signal bounds end
+	va: val_arr := val_arr$new()
+	for i: int in vt_seq$indexes(vals) do
+	    for j: int in int$from_to(1, i - 1) do
+		if vars[i] = vars[j] then signal duplicates end
+		end
+	    val_arr$addh(va, value$make_bound(vals[i]))
+	    end
+	return(rep${vars: vars, vals: val_seq$a2s(va)})
+	end seqs2assn
+
+
+    % Returns the sequence of bound variables and the sequence of their
+    % corresponding values (in the same order).
+
+    assn2seqs = proc (assn: cvt) returns (var_seq, vt_seq) 
+	vars: var_arr := var_arr$predict(1, var_seq$size(assn.vars))
+	vals: vt_arr := vt_arr$predict(1, var_seq$size(assn.vars))
+	for b: vv_bind in bindings(up(assn)) do
+	    var_arr$addh(vars, b.domain)
+	    vt_arr$addh(vals, b.range)
+	    end
+	return(var_seq$a2s(vars), vt_seq$a2s(vals))
+	end assn2seqs
+
+
+    replace_vals = proc (a: cvt, vals: vt_seq) returns (cvt) 
+		  signals(bounds)
+	if var_seq$size(a.vars) ~= vt_seq$size(vals) 
+	   then signal bounds end
+	va: val_arr := val_arr$predict(1, var_seq$size(a.vars))
+	for i: int in vt_seq$indexes(vals) do
+	    val_arr$addh(va, value$make_bound(vals[i]))
+	    end
+	return(rep${vars: a.vars, vals: val_seq$a2s(va)})
+	end replace_vals
+
+
+    % Compares the values assigned to a variable in a1 to the value assigned to
+    % the same variable in a2 and returns true iff any of the values in a1 are
+    % greater than the corresponding value in a2. Signals incomparable if the
+    % vars in a1 and a2 are different or if some bound values in a1 are unbound
+    % in a2 or vice versa.  Assumes (v1 > v2 & v2 ~= v1) => v1 > v2.
+
+    lt = proc (a1, a2: cvt) returns (bool) signals (incomparable)
+		where valtype in lt_type
+	if a1.vars ~= a2.vars then signal incomparable end
+	for i: int in val_seq$indexes(a1.vals) do
+	    if value$value_bound(a1.vals[i]) < value$value_bound(a2.vals[i])
+	       then return(true)
+	       end except when wrong_tag: signal incomparable end
+	    end
+	return(false)
+	end lt
+
+
+    % Yields all variable, value pairs in the generator, assn.  The order is
+    % not specified, but each pair will be yielded exactly once.  If there are
+    % no generators in the generators, then empty is signalled.
+
+    bindings = iter (assn: cvt) yields (vv_bind) signals (empty)
+	for i: int in var_seq$indexes(assn.vars) do
+	    if value$is_bound(assn.vals[i]) then
+	       yield(vv_bind${domain: assn.vars[i], 
+			      range: value$value_bound(assn.vals[i])})
+	       end         
+	    end
+	end bindings
+
+
+    get_vars = proc (assn: cvt) returns (var_seq)
+	return(assn.vars)
+	end get_vars
+
+    get_vals = proc (assn: cvt) returns (vt_seq)
+		 signals(incomplete)
+	va: vt_arr := vt_arr$predict(1, val_seq$size(assn.vals))
+	for v: value in val_seq$elements(assn.vals) do
+	    tagcase v
+	       tag bound(elem: valtype): vt_arr$addh(va, elem)
+	       tag unbound: signal incomplete
+	       end
+	    end
+	return(vt_seq$a2s(va))
+	end get_vals
+
+    unparse = proc (assn: cvt) returns (string)
+		where vartype in unparse_type,
+		      valtype in unparse_type
+	if empty(up(assn)) then return ("") end
+	str: string := "["
+	for b: vv_bind in bindings(up(assn)) do
+	    str := str || vartype$unparse(b.domain) || " <- "
+		     || valtype$unparse(b.range) || ", "
+	    end
+	str := string$substr(str, 1, string$size(str) - 2) || "]"
+	return(str)
+	end unparse
+
+    equal = proc (a1, a2: cvt) returns (bool)
+	return (a1 = a2)
+	end equal
+
+    similar = proc (a1, a2: cvt) returns (bool)
+		where vartype in similar_type,
+		      valtype in similar_type
+	return (rep$similar(a1, a2))
+	end similar
+
+    similar1 = proc (a1, a2: cvt) returns (bool)
+		where valtype in equal_type
+	if var_seq$size(a1.vars) ~= var_seq$size(a2.vars) 
+	   then return (false)
+	   end
+	for i: int in val_seq$indexes(a1.vals) do
+	    tagcase a1.vals[i]
+	       tag bound:
+		   if value$value_bound(a1.vals[i]) ~= 
+		      value$value_bound(a2.vals[i])
+		      then return(false)
+		      end except when wrong_tag: return(false) end
+	       tag unbound:
+		   if ~value$is_unbound(a2.vals[i]) 
+		      then return(false)
+		      end
+	       end
+	    end
+	return(true)
+	end similar1
+
+    copy = proc (assn: cvt) returns (cvt)
+		where  valtype in copy_type,
+		       vartype in copy_type
+	return(rep$copy(assn))
+	end copy
+
+    copy1 = proc (assn: cvt) returns (cvt)
+	va: val_arr := val_arr$new()
+	for v: value in val_seq$elements(assn.vals) do
+	    val_arr$addh(va, value$copy1(v))
+	    end
+	return(rep${vars: assn.vars, 
+		    vals: val_seq$a2s(va)})
+	end copy1
+
+    end assignment
+
+
+binding = cluster [dom, ran: type] is create, get_domain, get_range
+
+    rep = struct[domain: dom,
+		 range: ran]
+
+    create = proc(s: rep) returns (cvt)
+	return (s)
+	end create
+
+    get_domain = proc (b: cvt) returns (dom)
+	return(b.domain)
+	end get_domain
+
+    get_range = proc (b: cvt) returns (ran)
+	return(b.range)
+	end get_range
+
+
+    end binding

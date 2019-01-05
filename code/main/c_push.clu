@@ -1,0 +1,11 @@
+#extend
+
+% Process the "push-settings" command.
+
+c_push_settings = proc (i: interactive) signals (error)
+    check_end_of_line(i.io)
+       resignal error
+    settings$push(i)
+    end c_push_settings
+
+

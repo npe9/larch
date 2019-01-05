@@ -1,0 +1,20 @@
+#extend
+
+% Processes the "clear" command by resetting the statistics and the tracer, as
+% well as the prover, symbol table, system, and all local settings of "i".
+% Cancels all proofs in progress, deletes all facts, and discards all registry
+% information.  Does not affect global settings.
+
+c_clear = proc (i: interactive) signals (error)
+    check_end_of_line(i.io)
+       resignal error
+    statistics$reset()
+    i.symtab := symtab$[]
+    i.sys := system$[]
+    i.prover := prover${symtab: i.symtab, system: i.sys}
+    iodev$reset_script_indent(i.io)
+    tracer$reset(i.symtab)
+    front_end$report_command("clear")
+    end c_clear
+
+

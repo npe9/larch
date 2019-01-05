@@ -1,0 +1,80 @@
+\doc{Deduction rules}
+\ref{deduction-rules}
+\ref{when}
+\ref{yield}
+
+A \def{deduction rule} is logically equivalent to a single formula in
+multisorted first-order logic.  That formula has the form of a logical
+implication.  LP uses deduction rules to derive consequences from other
+formulas and rewrite rules.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{deduction-rule} ::= \f{when} \s{hypothesis}+, \f{yield} \s{conclusion}+,
+\sd{hypothesis}     ::= \slink{formula}{formula}
+\sd{conclusion}     ::= \slink{formula}{formula}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+when x < y, y < z yield x < z
+when p /\ q yield p, q
+when \A e (e \in s1 <=> e \in s2) yield s1 = s2
+\end{verbatim}
+
+\head{2}{Usage}
+
+Users can \clink{assert} or \dlink{../proof/of-dr}{prove} deduction rules.  A
+deduction rule is logically equivalent to the formula obtained by having the
+conjunction of its hypotheses imply the conjunction of its conclusions.  Thus
+the first example is logically equivalent to the formula 
+\fq{x < y /\ y < z => x < z}.
+\p
+A deduction rule can be \def{applied to} a formula or rewrite rule if there is
+a substitution that \olink{match}{matches} the first hypothesis of the
+deduction rule to the formula or rewrite rule.  The result of applying a
+deduction rule with one hypothesis is the set of formulas obtained by applying
+the substitution(s) that matched its hypothesis to each of its conclusions.
+For example, applying the second example to
+\fq{1 < f(x) /\ f(x) < 2} yields two formulas, \fq{1 < f(x)} and
+\fq{f(x) < 2}.  Likewise, applying the third example to 
+\fq{x \in s <=> x \in (s \U s)} yields the formula \fq{s = s \U s}.
+\p
+The result of applying a deduction rule with more than one hypothesis is the
+set of deduction rules obtained by deleting its first hypothesis (i.e., the one
+that was matched) and applying the substitution(s) that matched this hypothesis
+to the remainder of the deduction rule.  For example, applying the first
+example to the formula \fq{a < b} yields the deduction rule
+\begin{verbatim}
+when b < z yield a < z
+\end{verbatim}
+On the other hand, applying the logically equivalent deduction rule
+\begin{verbatim}
+when y < z, x < y yield x < z
+\end{verbatim}
+to the same formula yields a different result, namely,
+\begin{verbatim}
+when x < a yield x < b
+\end{verbatim}
+\p
+When applying deduction rules, LP produces the strongest valid conclusions by
+changing, when appropriate, variables in the conclusions that do not occur
+freely in the hypotheses.  For example, applying the deduction rule
+\begin{verbatim}
+when P(x) yield Q(x, y)
+\end{verbatim}
+to the formula \f{P(f(y))} yields the result \f{Q(f(y), y1)} and not the weaker
+result \f{Q(f(y), y)}.
+\p
+The results of applying a deduction rule are given the default
+\setlink{activity} and \setlink{immunity}, as established by the \clink{set} 
+command.
+\p
+LP maintains the invariant that all active deduction rules have been applied to
+all nonimmune formulas and rewrite rules in the system.
+\p
+To \clink{display} the deduction rules that LP currently has available for use,
+type \fq{display deduction-rules} (or \fq{disp d-r} for short).
+\p
+See \dlink{formula}{formulas} for a list of deduction rules that are hardwired
+into LP.  See also \dlink{partitioned-by}{partitioned-by}.

@@ -1,0 +1,73 @@
+\doc{The trace-level setting}
+\ref{trace-level-setting}
+
+The \def{trace-level setting} controls the amount of detail that LP outputs
+concerning its operation.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-trace-level-command} ::= \f{set trace-level} \slink{../symbols/symbols}{number}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set trace-level 3
+\end{verbatim}
+
+\head{2}{Usage}
+The \fq{trace-level} setting is an integer between 0 and 8; 1 is the default.
+LP prints increasing amounts of information at each level, as follows.
+
+\begin{description}
+\dt 0
+\dd 
+Only user interactions and the final results of commands.
+\dt 1
+\dd 
+The creation and deletion of facts: how many new facts have been asserted, when
+facts are deleted because they reduce to \fq{true}, when application of a
+deduction rule yields a nontrivial result, when a nontrivial critical pair or
+instantiation has been added to the system, and when a deduction rule is
+normalized to a set of formulas.
+\p
+Also, the size of the system at regular intervals, and when a critical pair
+computation is abandoned because a theorem has been proved.
+\dt 2
+\dd 
+Ordering actions: when a formula is oriented into a rewrite rule, when a
+rewrite rule is turned back into a formula because its left side was reduced,
+when the registry is extended, and when an incompatible formula cannot be
+oriented.  
+\p
+Also, the size of the system at more frequent intervals.
+\dt 3
+\dd
+Reduction actions: a formula, deduction rule, or the right side of a rewrite
+rule has been reduced as a result of adding a new rewrite rule to the system.
+\p
+Also, the accumulated running time at periodic intervals.
+\dt 4
+\dd
+Internormalization actions: processing new facts (by normalizing them and
+applying deduction rules), applying new rewrite rules, orienting formulas into
+rewrite rules, and computing critical pairs during completion.  Also,
+postponing the orientation of formulas because of their size or because they
+cannot be oriented using the current registry.
+\dt 5
+\dd
+Detailed information about critical pairs, deduction rules, and instantiations:
+instantiations that leave a formula, rewrite rule, or deduction rule unchanged;
+instantiations and the results of deduction rules that reduce to \fq{true}, and
+unreduced critical pair equations along with their normal forms.
+\dt 6
+\dd
+Successful application of a rewrite rule (debugging information).  The output
+produced at this and higher trace levels is not particularly well coordinated
+with the output produced by lower trace levels.
+\dt 7
+\dd
+Attempted application of a rewrite rule (debugging information).
+\dt 8
+\dd
+Times at which the events reported at levels 6 and 7 occur.
+\end{description}

@@ -1,0 +1,105 @@
+#extend
+
+% This cluster parses and unparses external representations for sorts using the
+% following syntax:
+
+%     sort   ::= sortId [ "[" sort+, "]" ]
+%     sortId ::= simpleId
+
+% The "token" cluster defines the terminal symbol "simpleId".
+
+
+psort = cluster is abbreviate, print, print_set, read, scan_sort
+    
+    rep = null
+
+
+    % Returns an abbreviation for "so" with at most "m" characters, for use in
+    % generating identifiers for variables ranging over "so".
+
+    abbreviate = proc (so: sort, m: int) returns (string)
+	s: string := so.id
+	if string$size(s) > m then s := string$substr(s, 1, m) end
+	return(slower(s))
+	end abbreviate
+    
+
+    % Prettyprints "s" on "p".
+    
+    print = proc (p: printer, so: sort)
+	if sort$is_simple(so) then
+	   printer$text(p, so.id)
+	   return
+	   end
+	printer$text(p, "~{")
+	printer$text(p, so.id)
+	if string$size(so.id) > 6 
+	   then printer$text(p, "~2I[~F")
+	   else printer$text(p, "[~J")
+	   end
+	printed: bool := false
+	for so1: sort in sort_seq$elements(so.args) do
+	    if printed then printer$text(p, ",~1A") end
+	    print(p, so1)
+	    printed := true
+	    end
+	printer$text(p, "]~}")
+	end print
+    
+    
+    % Prettyprints "msg" on "p" followed by the sorts in "ss".
+
+    print_set = proc (p: printer, msg: string, ss: sort_set)
+	printer$text(p, "\n~{~2I")
+	printer$text(p, msg)
+	printed: bool := false
+	for s: sort in sort_set$elements(ss) do
+	    if printed then printer$puts(p, ", ") end
+	    printed := true
+	    sort$print(p, s)
+	    end
+	printer$text(p, "~}")
+	end print_set
+
+
+    % Scans and returns a sort in "stab" from "scan".  Writes a message to
+    % "scan", and signals "error", if "scan" does not begin with a sort in
+    % "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (sort) signals (error)
+	loc: locator := scan.nextToken.loc
+	return(symtab$lookup_sort(stab, scan_sort(scan)))
+	   resignal error
+	   except when missing: end
+	scanner$error_at(scan, loc, "undeclared sort")
+	signal error
+	end read
+
+    
+    % Scans and returns a sort from "scan".  Writes a message to "scan", and
+    % signals "error", if "scan" does not begin with a legal sort.  Treats
+    % "Bool" and "bool" as the same sort.
+
+    scan_sort = proc (scan: scanner) returns (sort) signals (error)
+	s: string := 
+	    scanner$expecting(scan, token$is_unreservedSimpleId, "a sort").text
+	   resignal error
+        if token$is_left_bracket(scan.nextToken) 
+	     cand token$is_simpleId(scan.lookAhead)
+	   then scanner$get(scan)
+	        sa: sort_arr := sort_arr$[]
+	        while true do
+		    sort_arr$addh(sa, scan_sort(scan))
+		    if ~token$is_comma(scan.nextToken) then break end
+		    scanner$get(scan)
+		    end
+	        scanner$expecting(scan, token$is_right_bracket, 
+				  "a right bracket or a comma")
+		return(sort$make_composite(s, sort_seq$a2s(sa)))
+	   else if s = "bool" then s := "Bool" end
+		return(sort$make_simple(s))
+	   end resignal error
+	end scan_sort
+
+
+    end psort

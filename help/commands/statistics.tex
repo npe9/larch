@@ -1,0 +1,46 @@
+\doc{The statistics command}
+\ref{statistics-command}
+\ref{statistics-option}
+
+The \def{statistics} command displays information about the resources consumed
+by LP, as well as about the usage of rewrite and deduction rules.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{statistics-command} ::= \f{statistics} [ \s{statistics-option} ]
+\sd{statistics-option}  ::= \f{time} | \f{usage} [ \slink{../misc/names}{names} ]
+\end{verbatim}
+
+Note: The first word of the \s{statistics-option} command can be
+\dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+statistics
+stat usage nat
+\end{verbatim}
+
+\head{2}{Usage} 
+
+The \fq{statistics} command displays cumulative and recent (since the last
+display) information about LP's operation.  The default option is \fq{time},
+which displays information about the time used by LP together with the current
+size of the heap, the amount of free space available, and the number of garbage
+collections that have occurred.
+\p
+The \fq{usage} option displays information about the use of the rewrite and
+deduction rules matched by \s{names}, which defaults to \qf{*}.  For rewrite
+rules, the information includes the number of successful applications, the
+number of attempted applications, and the number of nontrivial critical pairs
+computed from the rule.  For deduction rules, the information includes the
+number of successful applications.  In the display, each name is preceded by
+\f{(rr)} or \f{(dr)} to  indicate whether the named fact is a rewrite rule
+or a deduction rule.  If two or more facts had the same name, then the display
+show separate statistics for each incarnation of the name (for example, if two
+theorems, \f{thm.1} and \f{thm.2}, were proved by cases, then two separate
+rewrite rules would have received the name \f{thmCaseHyp1.1}).
+
+\head{2}{See also}
+\begin{itemize}
+\item The \setlink{statistics-level} setting
+\end{itemize}

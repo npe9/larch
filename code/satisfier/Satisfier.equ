@@ -1,0 +1,50 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%  Equates for satisfier  %%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Arrays
+
+clause_arr      = array[clause]
+lit_arr         = array[literal]
+rat_arr         = array[rat]
+un_arr          = array[unknown]
+vert_arr 	= array[vertex]
+
+
+% Sequences
+
+clause_seq      = sequence[clause]
+lit_seq         = sequence[literal]
+rat_seq         = sequence[rat]
+vert_seq 	= sequence[vertex]
+
+
+% Structs
+
+real_ops = struct[add, sub, mul, div, minus, gt, lt, ge, le, equals: operator]
+int_ops  = struct[add, sub, mul,      minus, gt, lt, ge, le, equals: operator]
+nat_ops  = struct[add,      mul,             gt, lt, ge, le, equals: operator]
+
+
+% Other data types
+
+int_stack 	= stack[int]
+lin_eq 		= record[lhs: unknown, rhs: prod]
+lit_set		= undoable_set[literal]
+sign 		= oneof[positive, negative, zero: null]
+vertex 		= int
+no_vertex	= 0
+
+
+% Invariant: forall p: prod, size(p.uns) = size(p.cfs) - 1 
+% The resulting sum has free element, that is equal to high(cfs)
+
+prod 		= record[cfs: rat_arr, uns: un_arr]
+
+
+%%%%%%%%%% Expressions
+
+% A typical expression is c0 + c1*u1 + ... + cn*un, where ui are unknowns.
+
+term_expr 	= expression[term, rat]
+
+% A(r) : c0 = r.coeffs[high], ci = r.coeffs[i], ui = r.unkns[i]
+% I(r) : size(r.coeffs) = size(r.unkns) + 1

@@ -1,0 +1,30 @@
+#extend
+
+% Processes the "complete" command by attempting to complete the current
+% system.  Halts the completion procedure if a conjecture is established or an
+% inconsistency is detected, and then resumes work on other conjectures.
+% Returns control to the user if box checking fails or if the user types ^G or
+% types "interrupt" in response to a prompt for ordering information.
+
+c_complete = proc (i: interactive) signals (error)
+    check_end_of_line(i.io)
+       resignal error
+    already: bool := system$is_locally_complete(i.sys)
+    if ~already then
+       if tracer$get_level() > 2 then
+	  printer$text(i.p, "\nStarting the completion procedure.\n")
+	  end
+       prover$make_inferences(i, i.sys.completion_mode)
+       end except when interrupt, proved: return end
+    printer$text(i.p, "\nThe system ")
+    if ~i.sys.terminates then
+       printer$text(i.p, "is not guaranteed to terminate.  ")
+       printer$text(i.p, "If it does terminate, then it ")
+       end
+    if already
+       then printer$text(i.p, "is already complete.\n")
+       else printer$text(i.p, "is complete.\n")
+       end
+    end c_complete
+
+

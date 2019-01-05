@@ -1,0 +1,28 @@
+\doc{The qed command}
+\ref{qed-command}
+
+The \def{qed command} constitutes a claim that all proofs are finished.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{qed-command} ::= \f{qed}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+qed
+\end{verbatim}
+
+\head{2}{Usage} 
+
+The \fq{qed} command checks that the proof stack is empty.  If it is not, LP
+prints an error message and halts \dlink{execute}{execution} of all \f{.lp}
+files.
+
+\head{2}{See also}
+
+\begin{itemize}
+\item \dlink{box}{Box checking}
+\end{itemize}
+
+

@@ -1,0 +1,22 @@
+% Prints an error message, and signals "error", if any input remains on the
+% current line.
+    
+check_end_of_line = proc (io: iodev) signals (error)
+    iodev$end_of_line_check(io)
+       except when excess (s: string):
+		   iodev$prints(io, "\nCommand aborted.  ")
+		   iodev$printl(io, "Unrecognized excess input: " || s)
+		   signal error
+	      end
+    end check_end_of_line
+
+
+% Writes an error message to "scan", and signals "error", if "scan" contains
+% more tokens.
+    
+check_end_of_scan = proc (scan: scanner) signals (error)
+    if ~token$is_eof(scan.nextToken) then
+       scanner$error(scan, "expecting the end of the command")
+       signal error
+       end
+    end check_end_of_scan

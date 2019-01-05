@@ -1,0 +1,125 @@
+int_map = cluster [rng: type] is new, store, fetch, undefine, equal, copy,
+				 get_unused_dom, get_size, defined,
+				 range, bindings, _gcd, encode, decode, print
+
+    rep = array[entry]
+    entry = maybe_obj[rng]
+
+    new = proc (min: int) returns (cvt)
+	return (rep$[min:])
+	end new
+
+    store = proc (m: cvt, d: int, r: rng)
+	    signals (too_small, redefinition(rng))
+%addr: int := _cvt[rep,int](m)
+%debug_msg("Storing in int_map "||int$unparse(addr)||"\n")
+	old: rng := m[d].value
+          except when bounds:
+		      if d < rep$low(m) then signal too_small end
+		      for i: int in int$from_to(rep$high(m), d-2) do
+			  rep$addh(m, entry$none())
+			  end
+		      rep$addh(m, entry$make(r))
+		      return
+		 when wrong_tag:
+		      m[d] := entry$make(r)
+		      return
+		 end
+	signal redefinition(old)
+	end store
+
+    fetch = proc (m: cvt, d: int) returns (rng) signals (too_small, undefined)
+	if d < rep$low(m) then signal too_small end
+	return(entry$value(m[d]))
+	  except when bounds, wrong_tag: signal undefined end
+	end fetch
+
+    undefine = proc (m: cvt, d: int) returns (rng) signals (already_undefined)
+    	ans: rng := m[d].value
+	  except when bounds, wrong_tag: signal already_undefined end
+	m[d] := entry$none()
+	return(ans)
+	end undefine
+
+    equal = proc (m1, m2: cvt) returns (bool)
+	return (m1 = m2)
+	end equal
+
+    copy = proc (m: cvt) returns (cvt)
+	where rng has copy: proctype (rng) returns (rng)
+	ans: rep := rep$copy(m)
+%debug_msg("Copying int_map "||int$unparse(_cvt[rep,int](m))||" to "||int$unparse(_cvt[rep,int](ans))||"\n")
+	return(ans)
+	end copy
+
+
+    % Returns the smallest int i >= 0 such that i is undefined in m.
+
+    get_unused_dom = proc (m: cvt) returns (int)
+	for i: int in rep$indexes(m) do
+	    if ~entry$exists(m[i]) then return(i) end
+	    end
+	return(rep$high(m)+1)
+	end get_unused_dom
+
+    get_size = proc (m: cvt) returns (int)
+	size: int := 0
+	for e: entry in rep$elements(m) do
+	    if entry$exists(e) then size := size + 1 end
+	    end
+	return(size)
+	end get_size	
+
+    defined = proc (m: cvt, i: int) returns (bool)
+	return(entry$exists(m[i])) except when bounds: return(false) end
+	end defined
+
+    range = iter (m: cvt) yields (rng)
+	for e: entry in rep$elements(rep$copy1(m)) do
+	    yield(entry$value(e)) except when wrong_tag: end
+	    end
+	end range
+
+    bindings = iter (m: cvt) yields (int, rng)
+	for i: int in rep$indexes(m) do
+	    yield(i, entry$value(m[i])) except when wrong_tag: end
+	    end
+	end bindings
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where rng has _gcd: proctype(rng, gcd_tab) returns(int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where rng has decode: proctype(istream) returns (rng)
+  		              signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where rng has encode: proctype(rng, istream)
+			      signals(not_possible(string))
+%addr: int := _cvt[rep,int](c)
+%debug_msg("Encoding int_map "||int$unparse(addr)||" of size "||int$unparse(up(c).size)||"\n")
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    print = proc (m: cvt, ps: pstream)
+	where rng has print: proctype(rng, pstream)
+	pstream$start(ps, "[int_map: ")
+	pstream$text(ps, "addr " || int$unparse(_cvt[rep,int](m)) || " ")
+	for i: int in rep$indexes(m) do
+	    r: rng := m[i].value except when wrong_tag: continue end
+	    int$print(i, ps)
+	    if ~pstream$text(ps, " -> ") then break end		% abort mode
+	    rng$print(r, ps)
+	    if ~pstream$pause(ps, ",") then break end		% abort mode
+	    end
+	pstream$stop(ps,  " ]")
+	end print
+
+    end int_map

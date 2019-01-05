@@ -1,0 +1,588 @@
+#extend
+
+% A "deduction_system" contains deduction rules used to derive consequences
+% from formulas.
+
+deduction_system = cluster is
+	new, add, change_activity, change_immunity, 
+	deduce, delete, delete_op, delete_subset, display,
+	elements, fetch, get_new, get_normalized, get_ops, get_used, is_empty,
+	lists, named_subset, reduce, size, subsystem_ops, subsystem_vars, 
+	write, copy, _gcd, decode, encode
+
+    rep = record[new, normalized, used: dr_prop_list]
+    axioms = axiom_system[deduction_rule, deduction_system]
+
+    % ENHANCE: divide deduction rules up into hash-coded lists so that we can
+    % test quickly whether a deduction rule might apply to a formula.
+
+    
+    % Returns an empty "deduction_system".
+
+    new = proc () returns (cvt)
+	return(rep${new, normalized, used: dr_prop_list$[]})
+	end new
+
+
+    % Adds "dr" as a new deduction rule to "dsys" with activity and immunity
+    % given by "ai" (except that deduction rules are not made ancestor immune).
+    % Puts "dr" the end of the list of new deduction rules if "last" is true;
+    % otherwise inserts "dr" at the beginning of the list.
+
+    add = proc (dsys: deduction_system, dr: deduction_rule, ai: ai_settings, 
+	        last: bool)
+	for dr1: dr_prop in elements(dsys) do
+	    if deduction_rule$similar(dr, dr1.prop) then return end
+	    end
+	if ai.immune = immunity_anc then 
+	   ai := ai_settings$copy(ai)
+	   ai.immune := immunity_off
+	   end
+	axioms$add(dsys, dr, ai, last)
+	end add
+
+
+    % Sets the activity of all deduction rules in "dsys" named by "ns" to
+    % "active".  Moves activated deduction rules in "dsys.used" to
+    % "dsys.normalized".
+
+    change_activity = proc (dsys: cvt, ns: name_set, active: bool)
+        if ~ns.has_drs then return end
+	for dlist: dr_prop_list in lists(up(dsys)) do
+	    for drp: dr_prop in dr_prop_list$elements(dlist) do
+		if drp.active ~= active 
+		     cand name_set$contains_dr(ns, drp.prop) then
+		   drp.active := active
+		   if active cand dlist = dsys.used then
+		      dr_prop_list$move_current_to_end(dlist, dsys.normalized)
+		      end
+		   end
+		end
+	    end
+	end change_activity
+
+
+    % Sets the immunity of all deduction rules in "dsys" named by "ns" to
+    % "immune", unless "immune" is "immunity_anc", which does not apply to
+    % deduction rules.  Moves deimmunized deduction rules to "dsys.new".
+
+    change_immunity = proc (dsys: cvt, ns: name_set, immune: immunity)
+	if immune = immunity_anc then return end
+        if ns.has_drs then axioms$change_immunity(up(dsys), ns, immune) end
+	end change_immunity
+
+
+    % Returns an "eq_prop_list" and a "dr_prop_list" containing the formulas
+    % and deduction rules deducible from "eqp".  Names the results, and gives
+    % them the activity and immunity specified by "ai".  Signals "delete" if
+    % "eqp" is provable from the resulting formulas or if it is an identity.
+    % Signals "inconsistent" if "eqp" leads to an inconsistency, i.e., if
+    % (1) "e.left" and "e.right" are different variables of sort "bool", or
+    % (2) one of "e.left" and "e.right" is a variable "x:Bool" and the other 
+    %     is a compound term that does not contain "x", or
+    % (3) "e" has the form "f(...) = g(...)", where "f" and "g" are free with
+    %     respect to one another, or
+    % (4) one of "e.left" and "e.right" is a variable "x", the other is a 
+    %     compound term containing "x" that is headed by a free operator "f", 
+    %     and either another operator is free with respect to "f" or some 
+    %     occurrence of "x" in this term occurs only in subterms headed by "f",
+    %	  or
+    % (5) "e" has the form "x = t" or "(x <=> t) = false", where "x" is
+    %     a variable that does not occur in "t".
+    % Signals "immune" if "eqp" is immune and does not lead to an
+    % inconsistency.  Applies the following hardwired deduction rules in
+    % addition to those in "dsys".  Does not apply ancestors of "eqp" to "eqp"
+    % if it is ancestor-immune.
+    
+    % when f(x1, ..., xn) = f(y1, ..., yn) 	(f free)
+    % yield x1 = y1, ..., xn = yn
+
+    % when x1 /\ x2 yield x1, x2
+    % when ~(x1 \/ x2) yield ~x1, ~x2
+
+    % The hypotheses of the hardwired deduction rules produce all appropriate
+    % matches when /\ and \/ are AC.
+
+    deduce = proc (dsys: cvt, osys: op_system, stab: symtab, eqp: eq_prop,
+	    	   ai: ai_settings) returns (eq_prop_list, dr_prop_list) 
+	       signals (immune, inconsistent, 
+		        delete(eq_prop_list, dr_prop_list))
+
+	own o_true: operator := op_true()
+	own o_false:operator := op_false()
+	own o_and: operator := op_and()
+	own o_iff: operator := op_iff()
+	own o_implies: operator := op_implies()
+	own o_not: operator := op_not()
+	own o_or: operator := op_or()
+	own tt: term := term_true()
+	own ff: term := term_false()
+	
+	left_args: term_seq
+	left_is_bool, right_is_bool: bool
+	left_is_var, right_is_var: bool
+	left_is_funct, right_is_funct: bool
+	left_root, right_root: operator
+	left_var, right_var: variable
+
+	
+	% Give values to the above variables.  Reverse equation (locally), if
+	% necessary, to ensure that "e.left" is a variable, "true", or "false"
+	% only if "e.right" is also one of these.
+
+	e: equation := eqp.prop
+	if e.is_conditional then signal immune end
+	while true do
+	    left_is_var := false
+	    left_is_funct := false
+	    left_is_bool := false
+	    begin
+		left_var := e.left.var
+		left_is_var := true
+		left_is_bool := false
+		end except when wrong_tag:
+				begin
+				    left_root := e.left.root
+				    left_args := e.left.args
+				    left_is_bool := left_root = o_true cor 
+						    left_root = o_false
+				    left_is_funct := true
+				    end except when wrong_tag: end
+			   end
+	    right_is_var := false
+	    right_is_funct := false
+	    right_is_bool := false
+	    begin
+		right_var := e.right.var
+		right_is_var := true
+		right_is_bool := false
+		end except when wrong_tag:
+				begin
+				    right_root := e.right.root
+				    right_is_bool := right_root = o_true cor 
+						     right_root = o_false
+				    right_is_funct := true
+				    end except when wrong_tag: end
+			   end
+	    if (left_is_var cor left_is_bool)
+		 cand ~(right_is_var cor right_is_bool)
+	       then e1: equation := 
+			equation$create(term2(e.eqOp, e.right, e.left))
+		    e1.name := e.name
+		    e := e1
+	       else break
+	       end
+	    end
+
+	% Signals "delete" if "e.left" and "e.right" are the same variable.
+	% Signal "inconsistent" if "e.left" is a variable of sort "Bool" and
+	% "e.right" is not the same variable (because "e.right" is either
+	% "true", "false", or a different variable).  This takes care of case
+	% (1).
+	if left_is_var then
+	   if right_is_var cand right_var = left_var then
+	      signal delete(eq_prop_list$[], dr_prop_list$[])
+	      end
+	   if left_var.sort = bool_sort() then signal inconsistent end
+	   end
+	% Now we know "~left_is_var".
+	
+	if left_is_funct then
+	   left_free: op_set := op_system$free_wrt(osys, left_root)
+	   if right_is_var then
+	      if var_set$exists(e.left.fvars, right_var) then
+		 f: int := op_set$size(left_free)
+		 if f > 1 cor (f = 1 cand one_op_to_var(e.left)) then
+		    signal inconsistent  % Case 4
+		    end
+	       elseif right_var.sort = bool_sort() then
+		 signal inconsistent     % Case 2
+	       end
+	    elseif right_is_funct 
+		     cand op_set$exists(left_free, right_root) then
+	      if left_root = right_root
+		 then if equation$is_identity(e) then
+			 signal delete(eq_prop_list$[], dr_prop_list$[])
+			 end
+		      ot: op_theory := op_system$lookup_theory(osys, left_root)
+		      signal delete(separate(e, ot, ai, stab), dr_prop_list$[])
+		 else signal inconsistent     % Case 3
+		 end
+	    elseif right_is_funct cand right_root = o_false
+		     cand (is_op_equals(left_root) cor left_root = o_iff) then
+	      for t: term in term_seq$elements(e.left.args) do
+		  v: variable := t.var
+		     except when wrong_tag: continue end
+		  for t1: term in term_seq$elements(e.left.args) do
+		      if term$same_object(t, t1) then continue end
+		      if ~var_set$exists(t1.fvars, v) then 
+			 signal inconsistent	% Case 5
+			 end
+		      end
+		  end
+	    end
+	   end
+        if eqp.immune = immunity_on then signal immune end
+
+        eqs: eq_prop_list := eq_prop_list$[]
+        drs: dr_prop_list := dr_prop_list$[]
+	
+	% Apply hardwired deduction rules
+        if left_is_funct cand right_is_funct then 
+	   statistics$start_deduction()
+
+	   % Handle "t1 /\ t2"
+	   if (left_root = o_and cand right_root = o_true) then
+	      for arg: term in term_seq$elements(left_args) do
+		  eq: equation := equation$create(arg)
+		  eq.name := symtab$new_subname(stab, e.name)
+		  eq_prop_list$addh(eqs, eq_prop$create(eq, ai))
+		  end
+	      tracer$applied_dr(e, hardwired_and_is_true().name, true, eqs)
+	      statistics$success_deductions(eq_prop_list$size(eqs))
+	      signal delete(eqs, drs)
+	      end
+
+	   % Handle "t => t1 /\ t2"
+	   if (interactive$get_conditional() cand left_root = o_implies 
+	       cand right_root = o_true cand left_args[2].root = o_and) then
+	      hyp: term := left_args[1]
+	      for arg: term in term_seq$elements(left_args[2].args) do
+		  eq: equation := equation$create(term2(o_implies, hyp, arg))
+		  eq.name := symtab$new_subname(stab, e.name)
+		  eq_prop_list$addh(eqs, eq_prop$create(eq, ai))
+		  end
+	      tracer$applied_dr(e, hardwired_and_is_true().name, true, eqs)
+	      statistics$success_deductions(eq_prop_list$size(eqs))
+	      signal delete(eqs, drs)
+	      end except when wrong_tag: end
+
+	   % Handle "(t1 \/ t2) = false"
+	   % FIX: also handle "~(t1 \/ t2)"
+	   if  left_root = o_or cand right_root = o_false then
+	      for arg: term in term_seq$elements(left_args) do
+		  eq: equation := equation$create(term1(op_not(), arg))
+		  eq.name := symtab$new_subname(stab, e.name)
+		  eq_prop_list$addh(eqs, eq_prop$create(eq, ai))
+		  end
+	      tracer$applied_dr(e, hardwired_or_is_false().name, true, eqs)
+	      statistics$success_deductions(eq_prop_list$size(eqs))
+	      signal delete(eqs, drs)
+	      end
+
+	   statistics$fail_deduction()
+	   end
+       
+	% Apply user-defined deduction rules
+	del: bool := false
+	for drp: dr_prop in dr_prop_list$elements(dsys.used) do
+	    if ~drp.active then continue end
+	    if eqp.immune = immunity_anc
+		 cand name$is_ancestor(drp.prop.name, e.name) then continue end
+	    eq_prop_list$append(eqs, apply_dr(drp.prop, e, osys, ai, stab))
+	       except when delete (eqpl: eq_prop_list):
+			   eq_prop_list$append(eqs, eqpl)
+			   del := true
+		      when drs (drpl: dr_prop_list):
+			   dr_prop_list$append(drs, drpl)
+		      when no_results:
+		      end
+	    end
+	if del then signal delete(eqs, drs) end
+	return(eqs, drs)
+
+	end deduce
+    
+    
+    % (Internal procedure) Returns "true" if some variable subterm of "t"
+    % occurs only in subterms headed by the root operator of "t".  E.g.,
+    % returns "true" for
+    %    x, s(x), s(s(x)), f(l(x), x), f(x, r(x))
+    % and "false" for
+    %    0, s(p(x)), s(s(p(x))), f(l(x), r(x))
+    
+    one_op_to_var = proc (t: term) returns (bool)
+	op: operator := t.root
+	   except when wrong_tag: return(true) end
+	for t1: term in term_seq$elements(t.args) do
+	    if op = t1.root cand one_op_to_var(t1) then return(true) end
+	       except when wrong_tag: return(true) end
+	    end
+	return(false)
+	end one_op_to_var
+
+
+    % (Internal procedure) Assumes "e" is "f(l1, ..., ln) = f(r1, ..., rn)",
+    % where "f" is "ot.op".  Returns a list containing the equations "l1 =
+    % r1", ..., "ln = rn" with the activity and immunity specified by "ai".
+
+    separate = proc (e: equation, ot: op_theory, ai: ai_settings, stab: symtab)
+		 returns (eq_prop_list)
+	if debugging then
+	   if ~term$is_funct(e.left) cor ~term$is_funct(e.right)
+		cor e.left.root ~= e.right.root
+		cor term_seq$size(e.left.args) ~= term_seq$size(e.right.args)
+	      then fail("deduction_system$%separate")
+	      end
+	   end
+	eqs: eq_prop_list := eq_prop_list$[]
+	for i: int in term_seq$indexes(e.left.args) do
+	    left: term := e.left.args[i]
+	    eqOp: operator := op_equals(left.sort, stab)
+	    eq: equation := equation$create(term2(eqOp, left, e.right.args[i]))
+	    eq.name := symtab$new_subname(stab, e.name)
+	    eq_prop_list$addh(eqs, eq_prop$create(eq, ai))
+	    end
+	tracer$applied_ot(e, ot, eqs)
+	return(eqs)
+	end separate
+
+
+    % Deletes the deduction rule named "n" from "dsys".  Signals "missing" if
+    % there is no such deduction rule.  
+
+    delete = proc (dsys: cvt, n: name) returns (dr_prop) signals (missing)
+	return(axioms$delete(up(dsys), n))
+	   resignal missing
+	end delete
+
+
+    % Deletes all deduction rules in "dsys" that contain "op".  Signals
+    % "missing" if there is no such deduction rule.
+
+    delete_op = proc (dsys: deduction_system, op: operator) signals (missing)
+	if dr_prop_list$empty(axioms$delete_op(dsys, op)) then
+	   signal missing
+	   end
+	end delete_op
+
+
+    % Deletes all deduction rules in "dsys" named by "ns".  Signals "missing"
+    % if there are no such deduction rules.  Otherwise returns a list of the
+    % deleted deduction rules.
+
+    delete_subset = proc (dsys: deduction_system, ns: name_set)
+		      returns (dr_prop_list) signals (missing)
+	if ~ns.has_drs then signal missing end
+	drp: dr_prop_list := axioms$delete_subset(dsys, ns)
+	if dr_prop_list$empty(drp) then signal missing end
+	return(drp)
+	end delete_subset
+
+
+    % Displays all deduction rules in "dsys" named by "ns".
+    
+    display = proc (p: printer, dsys: cvt, ns: name_set, stab: symtab)
+		signals (interrupt)
+	if ~ns.has_drs then return end
+	axioms$display(p, up(dsys), "Deduction rules", ns, stab)
+	   resignal interrupt
+	end display
+    
+    
+    % Yields the annotated deduction rules in "dsys".
+
+    elements = iter (dsys: deduction_system) yields (dr_prop)
+	for drp: dr_prop in axioms$elements(dsys) do yield(drp) end
+	end elements
+
+
+    % Returns the annotated deduction rule named "n" from "dsys".
+
+    fetch = proc (dsys: cvt, n: name) returns (dr_prop) signals (missing)
+	return(axioms$fetch(up(dsys), n))
+	   resignal missing
+	end fetch
+    
+    
+    % Returns the list of new deduction rules in "dsys".
+    
+    get_new = proc (dsys: cvt) returns (dr_prop_list)
+	return(dsys.new)
+	end get_new
+    
+    
+    % Returns the list of normalized deduction rules in "dsys".
+    
+    get_normalized = proc (dsys: cvt) returns (dr_prop_list)
+	return(dsys.normalized)
+	end get_normalized
+    
+    
+    % Returns the set of operators in "dsys".
+
+    get_ops = proc (dsys: deduction_system) returns (op_set)
+	return(axioms$get_ops(dsys))
+	end get_ops
+
+
+    % Returns the list of used deduction rules in "dsys".
+    
+    get_used = proc (dsys: cvt) returns (dr_prop_list)
+	return(dsys.used)
+	end get_used
+
+
+    % Returns "true" iff "dsys" contains no deduction rules.
+
+    is_empty = proc (dsys: deduction_system) returns (bool)
+	return(size(dsys) = 0)
+	end is_empty
+
+
+    % Yields the lists of "new", "normalized", and "used" deduction rules in
+    % "dsys", in that order.
+
+    lists = iter (dsys: cvt) yields (dr_prop_list)
+	yield(dsys.new)
+	yield(dsys.normalized)
+	yield(dsys.used)
+	end lists
+
+
+    % Returns a sequence containing all deduction rules in "dsys" with names in
+    % "ns".
+    
+    named_subset = proc (dsys: cvt, ns: name_set) returns (dr_seq)
+	if ~ns.has_drs then return(dr_seq$[]) end
+	return(axioms$named_subset(up(dsys), ns))
+	end named_subset
+
+
+    % Moves all deduction rules in "dsys - dsys.new" that are reducible by
+    % "rsys" to "dsys.new".
+    
+    reduce = proc (dsys: cvt, rsys: rewriting_system, osys: op_system,
+		   stab: symtab)
+	reduce_list(dsys.normalized, dsys.new, rsys, osys, stab)
+	reduce_list(dsys.used, dsys.new, rsys, osys, stab)
+	end reduce
+    
+
+    % (Internal procedure) Reduces all nonimmune deduction rules in "source"
+    % with respect to "rsys".  Traces changed deduction rules and moves them to
+    % "dest".
+
+    reduce_list = proc (source, dest: dr_prop_list, rsys: rewriting_system,
+			osys: op_system, stab: symtab)
+	for drp: dr_prop in dr_prop_list$elements(source) do
+	    if drp.immune = immunity_on then continue end
+	    dr: deduction_rule := deduction_rule$reduce(drp.prop, rsys, osys,
+							stab)
+	       except when already_normal_form: continue end
+	    tracer$reduced_dr(drp.prop, dr)
+	    drp.prop := dr
+	    dr_prop_list$move_current_to_end(source, dest)
+	    end
+	end reduce_list
+    
+    
+    % Returns the number of deduction rules in "dsys".
+
+    size = proc (dsys: deduction_system) returns (int)
+	return(axioms$size(dsys))
+	end size
+
+
+    % Returns the set of operators occurring in deduction rules in "dsys" 
+    % with names in "ns" (irrespective of the value of "ns.has_drs").
+    
+    subsystem_ops = proc (dsys: cvt, ns: name_set) returns (op_set)
+	return(axioms$subsystem_ops(up(dsys), ns))
+	end subsystem_ops
+    
+    
+    % Returns the set of variables occurring in deduction rules in "dsys" named
+    % by "ns" (irrespective of the value of "ns.has_drs").
+    
+    subsystem_vars = proc (dsys: cvt, ns: name_set) returns (var_set)
+	return(axioms$subsystem_vars(up(dsys), ns))
+	end subsystem_vars
+    
+    
+    % Writes commands to re-read all deduction rules in "dsys" named by "ns".
+    
+    write = proc (p: printer, dsys: cvt, ns: name_set, stab: symtab,
+		  ai: ai_settings)
+	if ~ns.has_drs then return end
+	axioms$write(p, up(dsys), "Deduction rules", ns, stab, ai)
+	end write
+    
+    
+    % Returns a new deduction system containing each of the deduction rules in
+    % "dsys".
+
+    copy = proc (dsys: cvt) returns (cvt)
+	return(rep$copy(dsys))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end deduction_system
+
+
+% If "dr" has a single hypothesis, returns an "eq_prop_list" containing the
+% non-identity equations that result from applying "dr" to "e".  Signals
+% "no_results" if there are no such equations.  Names any resulting formulas
+% and gives them the activity and immunity specified by "ai".  Signals "delete"
+% if these formulas imply "e".
+
+% If "dr" has more than one hypothesis, signals "drs" with a "dr_prop_list"
+% containing the deduction rules that result from applying "dr" to "e".
+% Signals "no_results" if there are no such deduction rules.  Names any
+% resulting deduction rules and gives them the activity and immunity specified
+% by "ai".
+    
+apply_dr = proc (dr: deduction_rule, e: equation, osys: op_system,
+		 ai: ai_settings, stab: symtab) returns (eq_prop_list) 
+	     signals (delete(eq_prop_list), drs(dr_prop_list), no_results)
+    eqs: eq_prop_list    
+    drs: dr_prop_list 
+    statistics$start_deduction()
+    multHyp: bool := false
+    yielded: int := 0
+    for e1: equation in deduction_rule$apply(dr, e, osys, stab) do
+        if yielded = 0 then eqs := eq_prop_list$[] end
+	e1.name := symtab$new_subname(stab, e.name)
+	eq_prop_list$addh(eqs, eq_prop$create(e1, ai))
+	yielded := yielded + 1
+	end except when too_many_hyps: multHyp := true end
+    if multHyp then
+       for dr1: deduction_rule 
+	     in deduction_rule$apply_mult(dr, e, osys, stab) do
+	   if yielded = 0 then drs := dr_prop_list$[] end
+	   dr1.name := symtab$new_subname(stab, dr.name)
+	   dr_prop_list$addh(drs, dr_prop$create(dr1, ai))
+	   yielded := yielded + 1
+	   end
+       end
+    if yielded = 0 
+       then statistics$fail_deduction()
+	    % FIX: Record attempted application, as in tracer$applied_dr
+	    signal no_results
+       else statistics$success_deductions(yielded)
+	    if multHyp
+	       then tracer$applied_dr_mult(e, dr.name, drs)
+		    signal drs(drs)
+	       else tracer$applied_dr(e, dr.name, dr.reversible, eqs)
+		    if dr.reversible then signal delete(eqs) end
+		    return(eqs)
+	       end
+       end
+    end apply_dr

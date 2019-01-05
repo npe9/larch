@@ -1,0 +1,283 @@
+#extend
+
+% A "name_set" is a set of exact names.
+
+name_set = cluster is new, insert, union, intersection, difference, elements,
+    	              ancestors, print, unparse,
+		      contains_dr, contains_eq, contains_fact, contains_ir,
+		      contains_name, contains_ot, contains_rr, get_has_drs,
+		      get_has_eqs, get_has_irs, get_has_ots, get_has_rrs,
+		      is_universal, universal, copy, _gcd, decode, encode
+		       
+    rep = record[names: name_table, drs, eqs, irs, ots, rrs, universal: bool]
+    name_table = hash_table[name, null]
+    
+    
+    % Returns a new, empty "name_set".
+    
+    new = proc () returns (cvt)
+	return(rep${names: name_table$[], universal: false,
+	    	    drs: true, eqs: true, irs: true, ots: true, rrs: true})
+	end new
+    
+    
+    % Modifies "ns" by adding "n".
+    
+    insert = proc (ns: cvt, n: name)
+	if ns.universal then return end
+	name_table$insert(ns.names, n, nil, name$hash_val, name$equal)
+	   except when exists: end
+	ns.drs := true
+	ns.eqs := true
+	ns.irs := true
+	ns.ots := true
+	ns.rrs := true
+        end insert
+    
+    
+    % Returns a new "name_set" containing the union of "n1" and "n2".
+    
+    union = proc (ns1, ns2: cvt) returns (cvt)
+	if ns1.universal cor ns2.universal then return(down(universal())) end
+	names1: name_table := ns1.names
+	names2: name_table := ns2.names
+	if name_table$size(names1) > name_table$size(names2) then 
+	   names1, names2 := names2, names1
+	   end
+	names: name_table := name_table$copy1(names2)
+	for n: name, x: null in name_table$elements(names1) do
+	    name_table$insert(names, n, nil, name$hash_val, name$equal)
+	       except when exists: end
+	    end
+	return(rep${names: names, 
+	            drs: ns1.drs cor ns2.drs, 
+		    eqs: ns1.eqs cor ns2.eqs, 
+		    irs: ns1.irs cor ns2.irs, 
+		    ots: ns1.ots cor ns2.ots, 
+		    rrs: ns1.rrs cor ns2.rrs, 
+		    universal: false})
+	end union
+    
+    
+    % Returns a new "name_set" containing the intersection of "n1" and "n2".
+    
+    intersection = proc (ns1, ns2: cvt) returns (cvt)
+	if ns1.universal then return(down(copy(up(ns2))))
+	 elseif ns2.universal then return(down(copy(up(ns2))))
+	 end
+	names1: name_table := ns1.names
+	names2: name_table := ns2.names
+	if name_table$size(names1) > name_table$size(names2) then 
+	   names1, names2 := names2, names1
+	   end
+	names: name_table := name_table$[]
+	for n: name, x: null in name_table$elements(names1) do
+	    if name_table$exists(names2, n, name$hash_val, name$equal) then
+	       name_table$insert(names, n, nil, name$hash_val, name$equal)
+	       end
+	    end
+	return(rep${names: names, 
+	            drs: ns1.drs cand ns2.drs, 
+		    eqs: ns1.eqs cand ns2.eqs, 
+		    irs: ns1.irs cand ns2.irs, 
+		    ots: ns1.ots cand ns2.ots, 
+		    rrs: ns1.rrs cand ns2.rrs, 
+		    universal: false})
+	end intersection
+    
+    
+    % Returns a new "name_set" containing the difference of "n1" and "n2".
+    % Assumes: "~ns1.universal".
+    
+    difference = proc (ns1, ns2: cvt) returns (cvt)
+	if ns1.universal then fail("name_set$difference")
+	 elseif ns2.universal then return(down(new()))
+	 end
+	names: name_table := name_table$[]
+	for n: name, x: null in name_table$elements(ns1.names) do
+	    if ~name_table$exists(ns2.names, n, name$hash_val, name$equal) then
+	       name_table$insert(names, n, nil, name$hash_val, name$equal)
+	       end
+	    end
+	return(rep${names: names, 
+	            drs: ns1.drs, 
+		    eqs: ns1.eqs, 
+		    irs: ns1.irs, 
+		    ots: ns1.ots, 
+		    rrs: ns1.rrs, 
+		    universal: false})
+	end difference
+    
+    
+    
+    % Returns a "name_set" containing the names of all ancestors of names in
+    % "ns".  The ancestor relation is proper if "proper" is true.
+    
+    ancestors = proc (ns: name_set, proper: bool) returns (name_set)
+	ns1: name_set := name_set$[]
+	for n: name in elements(ns) do
+	    if ~proper then name_set$insert(ns1, n) end
+	    while true do
+		n := n.parent
+		name_set$insert(ns1, n)
+		end except when none, exists: end
+	    end
+	return(ns1)
+	end ancestors
+
+    
+    print = proc (p: printer, ns: name_set, stab: symtab)
+	if down(ns).universal then 
+	   printer$puts(p, "*") 
+	   return
+	   end
+	printer$text(p, "~{(~J")
+	printed: bool := false
+	for n: name in elements(ns) do
+	    if printed then printer$text(p, ",~1A") end
+	    name$print(p, n)
+	    printer$puts(p, "!")
+	    printed := true
+	    end
+	printer$text(p, ")~}")
+	end print
+    
+    
+    % Returns a string representation of "ns".
+    
+    unparse = proc (ns: name_set) returns (string)
+        return(unparse_item_with_ids[name_set](ns))
+	end unparse
+    
+
+    % Yields the elements in "ns".
+    % Assumes: "~ns.universal".
+    
+    elements = iter (ns: cvt) yields (name)
+	if ns.universal then fail("name_set$elements") end
+	for n: name, x: null in name_table$elements(ns.names) do yield(n) end
+	end elements
+    
+    
+    % ENHANCE: eventually get rid of these procedures, replacing their uses by
+    % calls of contains_name, but being careful to catch the "none" exception.
+    
+    contains_dr = proc (ns: cvt, dr: deduction_rule) returns (bool)
+	return(ns.drs cand contains_name(up(ns), dr.name))
+	   except when none: return(false) end
+	end contains_dr
+    
+
+    contains_eq = proc (ns: cvt, eq: equation) returns (bool)
+	return(ns.eqs cand contains_name(up(ns), eq.name))
+	   except when none: return(false) end
+	end contains_eq
+    
+
+    contains_fact = proc (ns: name_set, f: fact) returns (bool)
+	tagcase f
+	   tag dr (dr: deduction_rule): return(contains_dr(ns, dr))
+	   tag eq (eq: equation):       return(contains_eq(ns, eq))
+	   tag ir (ir: induction_rule): return(contains_ir(ns, ir))
+	   tag ot (ot: op_theory):      return(contains_ot(ns, ot))
+	   tag rr (rr: rewrite_rule):   return(contains_rr(ns, rr))
+	   end
+	end contains_fact
+    
+    
+    contains_ir = proc (ns: cvt, ir: induction_rule) returns (bool)
+	return(ns.irs cand contains_name(up(ns), ir.name))
+	   except when none: return(false) end
+	end contains_ir
+    
+    
+    % Returns "true" if "n" is a member of "ns.ranges".
+    
+    contains_name = proc (ns: cvt, n: name) returns (bool)
+	return(ns.universal cor 
+	       name_table$exists(ns.names, n, name$hash_val, name$equal))
+	end contains_name
+
+    
+    contains_ot = proc (ns: cvt, ot: op_theory) returns (bool)
+	return(ns.ots cand contains_name(up(ns), ot.name))
+	   except when none: return(false) end
+	end contains_ot
+    
+
+    contains_rr = proc (ns: cvt, rr: rewrite_rule) returns (bool)
+	return(ns.rrs cand contains_name(up(ns), rr.name))
+	   except when none: return(false) end
+	end contains_rr
+
+   
+    % Returns "true" if one of the names in "ns" might be that of a deduction
+    % rule.
+
+    get_has_drs = proc (ns: cvt) returns (bool)
+	return(ns.drs)
+	end get_has_drs
+    
+
+    get_has_eqs = proc (ns: cvt) returns (bool)
+	return(ns.eqs)
+	end get_has_eqs
+   
+   
+    get_has_irs = proc (ns: cvt) returns (bool)
+	return(ns.irs)
+	end get_has_irs
+    
+
+    get_has_ots = proc (ns: cvt) returns (bool)
+	return(ns.ots)
+	end get_has_ots
+    
+
+    get_has_rrs = proc (ns: cvt) returns (bool)
+	return(ns.rrs)
+	end get_has_rrs
+
+    
+    % Returns a named set encompassing all names.
+    
+    universal = proc () returns (cvt)
+	own ns: rep := rep${names: name_table$[],
+			    drs: true, eqs: true, irs: true, ots: true, 
+			    rrs: true, universal: true}
+	return(ns)
+	end universal
+    
+    is_universal = proc (ns: cvt) returns (bool)
+	return(ns.universal)
+	end is_universal
+
+    
+    % Returns a copy of "ns".
+
+    copy = proc (ns: cvt) returns (cvt)
+	return(rep${names: name_table$copy(ns.names, name$hash_val, name$equal),
+	            universal: ns.universal, drs: ns.drs, eqs: ns.eqs, 
+		    irs: ns.irs, ots: ns.ots, rrs: ns.rrs})
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end name_set
+

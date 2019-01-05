@@ -1,0 +1,48 @@
+\doc{Precedence}
+\ref{precedence}
+\ref{binding-strength}
+
+\head{2}{Parsing}
+
+When parsing a \dlink{term}{term}, LP binds some operators more tightly than
+others, thereby reducing the need for parentheses.  The operators in the
+following list bind increasingly tightly:
+\begin{itemize}
+\item \f{if __ then __ else __}
+\item \f{<=>}
+\item \f{=>}
+\item \f{/\} and \f{\/}
+\item \f{=} and \f{~=}
+\item 
+All infix, postfix, and prefix operators not otherwise mentioned in this list
+\item 
+Postfix selection operators (of the form \f{.}\s{simpleId}) and \fq{.} as an
+infix operator
+\end{itemize}
+Parentheses are required elsewhere to specify associativity, except that terms
+such as \fq{t1 + t2 + ...  + tn}, which involve a sequence of terms separated
+by a single infix identifier (other than \f{=>}, \f{=}, and \f{~=}), do not
+need parentheses and are associated to the left.
+\p
+Quantifiers bind more tightly than all operators.
+
+\head{3}{Examples}
+\begin{verbatim}
+Unparenthesized version    Interpretation
+----------------------     --------------
+a < b + c                  Error
+p /\ q \/ r                Error
+p => q => r                Error
+x - y - z                  (x - y) - z
+a = b + c => b < s(a)      (a = (b + c)) => (b < s(a))
+a.b.c!                     ((a.b).c)!
+~p /\ ~x.pre               (~p) /\ (~(x.pre))
+\E x (x < c) => c > 0      (\E x (x < c)) => (c > 0)
+\A x \E y x < y            (\A x \E y x) < y
+\end{verbatim}
+
+\head{2}{Ordering}
+
+When \dlink{../commands/order}{orienting} formulas into rewrite rules, LP
+sometimes uses a partial ordering on operators that is known in the literature
+as a \def{precedence relation}.  See \dlink{../ordering/registered}{register}.

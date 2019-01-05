@@ -1,0 +1,38 @@
+\doc{The page-mode setting}
+\ref{page-mode-setting}
+
+The \def{page-mode setting} controls whether or not LP pauses to enable users
+to read its output before it is scrolled off the screen.
+
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-page-mode-command} ::= \f{set page-mode} ( \f{on} | \f{off} )
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set page-mode on
+\end{verbatim}
+
+\head{2}{Usage}
+
+When \fq{page-mode} is \fq{off} (the default), LP does not pause during output.
+When it is \fq{on}, LP displays output a screen at a time.  After LP displays
+each screenful of output, it prompts the user with \fq{--More--} to type a
+character indicating what to do next.  The options are as follows:
+
+\begin{verbatim}
+Response  Action
+--------  ------
+\v{space}      display next screenful
+\v{return}     display next line
+\v{digit}      display next \v{digit} lines
+d         display next half screenful
+u         display continuously until next user interaction
+q         display nothing until next user interaction
+?         display this menu
+\end{verbatim}
+
+Most Unix systems also allow users to control output is by using the \fq{^S}
+and \fq{^Q} keys; \fq{^S} stops output, and \fq{^Q} resumes printing.

@@ -1,0 +1,28 @@
+\doc{Design philosophy}
+\ref{philosophy}
+
+The philosophy behind LP is different from that underlying most theorem
+provers.  Its design is based on the observation that initial attempts to state
+interesting conjectures correctly, and then prove them, hardly ever succeed on
+the first try.  Sometimes the conjecture is wrong.  Sometimes the formalization
+is incorrect or incomplete.  Sometimes the proof strategy is flawed or not
+detailed enough.  As a result, LP is designed to assist in reasoning by
+carrying out routine (and possibly lengthy) steps in a proof automatically and
+by providing useful information about why proofs fail, if and when they do.
+\p
+Because conjectures are often flawed, LP is not designed to find difficult
+proofs automatically.  For example, LP does not use heuristics to formulate
+additional conjectures that might be useful in a proof.  Instead, LP makes it
+easy for users to employ standard techniques such as simplification and proofs
+by cases, induction, and contradiction, either to construct proofs or to
+understand why they have failed.
+\p
+LP also provides support for rechecking proofs following changes in axioms,
+conjectures, or proof strategies.  This support assists users in regression
+testing during proof construction: when users discover they must change a
+formalization in order to establish some conjecture, regression testing ensures
+that the change does not invalidate previously constructed proofs.  This
+support also promotes proof re-use: users can edit old proofs to prove new
+conjectures, and LP will check that the progress of the proof stays ``in
+sync'' with the users' intentions.
+

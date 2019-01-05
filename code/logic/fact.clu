@@ -1,0 +1,53 @@
+#extend
+
+% Returns the unparsed form of f.  The tag of f is not included in the result.
+
+fact_unparse = proc (f: fact) returns (string)
+    tagcase f
+       tag dr (dr: deduction_rule): return(deduction_rule$unparse(dr))
+       tag eq (fo: formula):  	    return(formula$unparse(fo))
+       tag ir (ir: induction_rule): return(induction_rule$unparse(ir))
+       tag ot (ot: op_theory):	    return(op_theory$unparse(ot))
+       tag rr (rr: rewrite_rule):   return(rewrite_rule$unparse(rr))
+       end
+    end fact_unparse
+
+% Returns "true" if "f" is named.
+
+fact_named = proc (f: fact) returns (bool)
+    tagcase f
+       tag dr (dr: deduction_rule): return(dr.named)
+       tag eq (fo: formula):  	    return(fo.named)
+       tag ir (ir: induction_rule): return(ir.named)
+       tag ot (ot: op_theory):	    return(ot.named)
+       tag rr (rr: rewrite_rule):   return(rr.named)
+       end
+    end fact_named
+
+
+% Returns the name of "f".  Signals "none" if "f" is not named.
+
+get_fact_name = proc (f: fact) returns (name) signals (none)
+    tagcase f
+       tag dr (dr: deduction_rule): return(dr.name)
+       tag eq (fo: formula):  	    return(fo.name)
+       tag ir (ir: induction_rule): return(ir.name)
+       tag ot (ot: op_theory):	    return(ot.name)
+       tag rr (rr: rewrite_rule):   return(rr.name)
+       end resignal none
+    end get_fact_name
+
+
+% Sets the name of "f" to "n".  Signals "impossible" if "f" is already named.
+
+set_fact_name = proc (f: fact, n: name) signals (impossible)
+    tagcase f
+       tag dr (dr: deduction_rule): dr.name := n
+       tag eq (fo: formula):  	    fo.name := n
+       tag ir (ir: induction_rule): ir.name := n
+       tag ot (ot: op_theory):	    ot.name := n
+       tag rr (rr: rewrite_rule):   rr.name := n
+       end resignal impossible
+    end set_fact_name
+
+

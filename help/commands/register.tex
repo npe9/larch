@@ -1,0 +1,44 @@
+\doc{The register command}
+\ref{register-command}
+\ref{ordering-constraint}
+\ref{registry}
+\ref{constraints}
+
+The \def{register command} provides LP with hints for use in orienting formulas
+into terminating sets of rewrite rules.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{register-command}    ::= \f{register} \s{ordering-constraint}
+\sd{ordering-constraint} ::= \slink{../ordering/height}{height-constraint} | \slink{../ordering/status}{status-constraint}
+                             | \slink{../ordering/polynomial}{polynomial-constraint}
+\end{verbatim}
+
+Note: The first word in the \s{ordering-constraint} can be
+\dlink{../misc/abbreviation}{abbreviated}.
+
+
+\head{2}{Examples}
+\begin{verbatim}
+register height f > g
+register status multiset +
+register polynomials + x + y + 1, x + 2
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{register} command adds constraints to a \def{registry} that LP uses in
+conjunction with ordering methods that attempt to orient formulas into a set of
+terminating rewrite rules.  The height and status constraints are used by LP's
+\dlink{../ordering/registered}{registered orderings}, and the polynomial
+constraints are used by LP's
+\dlink{../ordering/polynomial}{polynomial ordering}.
+\p
+When the \setlink{automatic-registry} setting is \fq{on} and the
+\setlink{ordering-method} setting is a registered ordering, LP automatically 
+adds height and status constraints to the registry, as necessary, to orient
+equations in order to ensure that the resulting set of rewrite rules is
+terminating.
+\p
+The \dflink{display}{display ordering} command displays the constraints in the
+registry.  Ordering constraints can be removed from the registry with the
+\cflink{unregister} command.

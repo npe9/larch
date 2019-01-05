@@ -1,0 +1,34 @@
+\doc{Proofs by cases}
+\ref{proof-by-cases}
+\ref{cases}
+
+Conjectures can often be simplified by dividing a proof into cases.  When a
+conjecture reduces to \fq{true} in all cases, it is a theorem.  Case analysis
+has two primary uses.  If a conjecture is a theorem, a proof by cases may
+circumvent a lack of completeness in the rewrite rules.  If a conjecture is not
+a theorem, an attempted proof by cases may simplify the conjecture and make it
+easier to understand why the proof is not succeeding.
+\p
+The command \fq{prove F by cases F1, ..., Fn} directs LP to prove a formula 
+\fq{F} by division into \fq{n} cases defined by the formulas \fq{F1}, ..., 
+\fq{Fn} (or into two cases, \fq{F1} and \fq{~F1} if \fq{n = 1}).  The command 
+\fq{resume by cases F1, ..., Fn} directs LP to resume the proof of the current 
+conjecture by division into cases.
+\p
+A proof by cases involves \fq{n+1} subgoals.  If \fq{n > 1}, the first subgoal
+involves proving \fq{F1 \/ ... \/ Fn} to show that the cases exhaust all
+possibilities.  If \fq{n = 1}, LP generates a default second case of \fq{~F1},
+but does not generate a disjunction as the first subgoal.  Then, for each case
+\fq{i}, LP generates a subgoal \fq{F'} and an additional hypothesis \fq{Fi'} by
+substituting new \llink{constant}{constants} for the free variables of \fq{Fi}
+in both \fq{F} and \fq{Fi}.  If an \llink{inconsistency}{inconsistency} results
+from adding a case hypothesis, that case is impossible and the subgoal is
+vacuously true.  Otherwise the subgoal must be shown to follow from the axioms
+supplemented by the case hypothesis.  The names of the case hypotheses have the
+form \s{simpleId}\fq{CaseHyp.}\s{number}, where \s{simpleId} is the current
+value of the \setlink{name-prefix} setting.
+\p
+In each case of a proof by cases, LP first adds the case hypothesis without
+using it to reduce the other rewrite rules in the system.  Only if this action
+fails to reduce the desired conclusion to \fq{true} does LP use the case
+hypothesis to reduce the other rewrite rules.

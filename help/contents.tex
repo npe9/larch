@@ -1,0 +1,244 @@
+\doc{Table of contents}
+\ref{contents}
+
+\begin{itemize}
+\item \dlink{introduction}{Introduction}
+  \begin{itemize}
+  \item \dlink{misc/philosophy}{Design philosophy}
+  \item \dlink{misc/sample}{A sample proof}
+    \begin{itemize}
+    \item \dlink{misc/sample_start}{Getting started}
+    \item \dlink{misc/sample_declare}{Sample declarations} for sorts, operators
+    \item \dlink{misc/sample_assert}{Sample axioms} for finite sets
+    \item \dlink{misc/sample_axioms}{Useful kinds of axioms}
+    \item \dlink{misc/sample_conjectures}{Sample conjectures}
+    \item \dlink{misc/sample_proof1}{Two easy theorems}
+    \item \dlink{misc/sample_proof2}{Three theorems} about union
+    \item \dlink{misc/sample_proof3}{Alternative proofs} of theorems about union
+    \item \dlink{misc/sample_proof4}{Three theorems} about subset
+    \item \dlink{misc/sample_proof5}{An alternate induction rule}
+    \item \dlink{misc/sample_proof6}{Two final theorems} about subset
+    \item \dlink{misc/sample_guidance}{How to guide a proof}
+    \end{itemize}
+  \item \dlink{symbols/notation}{Notational conventions}
+    \begin{itemize}
+    \item \dlink{symbols/syntax}{Syntax descriptions}
+    \item \dlink{symbols/symbols}{Symbols}
+    \item \dlink{symbols/keyword}{Keywords}
+    \end{itemize}
+  \item \dlink{commands/commands}{Command summary}
+    \begin{itemize}
+    \item \dlink{misc/command-arguments}{Command arguments}
+    \item \dlink{misc/abbreviation}{Abbreviations for commands and arguments}
+    \item \dlink{operation/interrupt}{Interrupting command execution}
+    \end{itemize}
+  \end{itemize}
+
+\item \dlink{logic/logic}{Logical syntax and semantics}
+  \begin{itemize}
+  \item \dlink{logic/sort}{Sorts}
+  \item \dlink{logic/variable}{Variables}
+  \item \dlink{logic/operator}{Operators}
+    \begin{itemize}
+    \item \dlink{logic/signature}{Signatures}
+    \item \dlink{logic/constant}{Constants}
+    \item \dlink{logic/equality}{Equality operators}
+    \item \dlink{logic/connective}{Logical operators}
+    \item \dlink{logic/conditional}{Conditional operators}
+    \item Notations
+    \begin{itemize}
+    \item \dlink{logic/bracket}{Bracketed operators}
+    \item \dlink{logic/function}{Functional operators}
+    \item \dlink{logic/infix}{Infix, prefix, and postfix operators}
+    \end{itemize}
+    \end{itemize}
+  \item \dlink{logic/quantifier}{Quantifiers}
+    \begin{itemize}
+    \item \dlink{glossary/prenex}{Prenex form}
+    \item \dlink{glossary/capture}{Capturing variables}
+    \end{itemize}
+  \item \dlink{logic/term}{Terms}
+    \begin{itemize}
+    \item \dlink{logic/overload}{Overloaded identifiers}
+    \item \dlink{logic/precedence}{Precedence of operators}
+    \end{itemize}
+  \item \dlink{logic/formula}{Formulas}
+    \begin{itemize}
+    \item \dlink{logic/equation}{Equations}
+    \end{itemize}
+  \end{itemize}
+
+\item \dlink{logic/system}{Operational syntax and semantics}
+  \begin{itemize}
+  \item \dlink{logic/inconsistency}{Inconsistencies}
+  \item \dlink{logic/rewrite-rule}{Rewrite rules}
+  \item \dlink{logic/operator-theory}{Operator theories}
+  \item \dlink{logic/induction-rule}{Induction rules}
+  \item \dlink{logic/deduction-rule}{Deduction rules}
+  \item \dlink{logic/partitioned-by}{Partitioned-by rules}
+  \item \dlink{misc/naming}{Naming}
+    \begin{itemize}
+    \item \dlink{misc/name}{Assigning names to facts}
+    \item \dlink{misc/names}{Naming facts in commands}
+    \item \dlink{misc/class}{Name classes}
+    \end{itemize}
+  \item \dlink{commands/assert}{The assert command}
+  \item \dlink{commands/declare}{The declare command}
+  \item \dlink{commands/make}{The make command}
+  \item \dlink{commands/order}{The order command}
+    \begin{itemize}   
+    \item \dlink{ordering/brute-force}{Brute force orderings}
+    \item \dlink{ordering/registered}{Registered orderings}
+    \item \dlink{ordering/dsmpos}{The dsmpos ordering}
+    \item \dlink{ordering/polynomial}{Polynomial orderings}
+    \item \dlink{ordering/interactive}{Interactive ordering mechanisms}
+    \end{itemize}
+  \item \dlink{commands/register}{The register command}
+    \begin{itemize}
+    \item \dlink{ordering/height}{Operator height}
+    \item \dlink{ordering/status}{Operator status}
+    \end{itemize}
+  \item \dlink{commands/unorder}{The unorder command}
+  \item \dlink{commands/unregister}{The unregister command}
+  \end{itemize}
+
+\item \dlink{proof/forward}{Forward inference}
+  \begin{itemize}
+  \item \dlink{commands/apply}{The apply command}
+  \item \dlink{commands/complete}{The complete command}
+  \item \dlink{commands/critical-pairs}{The critical-pairs command}
+  \item \dlink{commands/fix}{The fix command}
+  \item \dlink{commands/instantiate}{The instantiate command}
+  \item \dlink{commands/normalize}{The normalize command}
+  \item \dlink{commands/rewrite}{The rewrite command}
+  \item \dlink{proof/by-consistency}{Proofs by consistency}
+  \end{itemize}
+
+\item \dlink{proof/backward}{Backward inference}
+  \begin{itemize}
+  \item \dlink{proof/methods}{Overview of proof methods for formulas}
+  \item \dlink{proof/by-normalization}{Proofs by normalization}
+  \item \dlink{proof/by-cases}{Proofs by cases}
+  \item \dlink{proof/by-contradiction}{Proofs by contradiction}
+  \item \dlink{proof/by-induction}{Proofs by induction}
+    \begin{itemize}
+    \item \dlink{proof/structural}{Structural induction}
+    \item \dlink{proof/multilevel-induction}{Multilevel structural induction}
+    \item \dlink{proof/well-founded}{Well founded induction}
+    \end{itemize}
+  \item Proof mechanisms for particular syntactic forms
+    \begin{itemize}
+    \item \dlink{proof/by-generalization}{Proofs by generalization}
+    \item \dlink{proof/by-specialization}{Proofs by specialization}
+    \item \dlink{proof/of-conjunction}{Proofs of conjunctions}
+    \item \dlink{proof/of-implication}{Proofs of implications}
+    \item \dlink{proof/of-biconditional}{Proofs of logical equivalence}
+    \item \dlink{proof/of-conditional}{Proofs of conditionals}
+    \item \dlink{proof/of-dr}{Proofs of deduction rules}
+    \item \dlink{proof/of-ir}{Proofs of induction rules}
+    \item \dlink{proof/of-ot}{Proofs of operator theories}
+    \end{itemize}
+  \item \dlink{proof/explicit}{Proofs by explicit commands}
+  \item Backward inference commands
+    \begin{itemize}
+    \item \dlink{commands/apply}{The apply command}
+    \item \dlink{commands/cancel}{The cancel command}
+    \item \dlink{commands/normalize}{The normalize command}
+    \item \dlink{commands/prove}{The prove command}
+    \item \dlink{commands/qed}{The qed command}
+    \item \dlink{commands/resume}{The resume command}
+    \item \dlink{commands/rewrite}{The rewrite command}
+    \item \dlink{commands/box}{The box and diamond commands}
+    \end{itemize}
+  \end{itemize}
+
+\item \dlink{commands/commands}{Other commands}
+  \begin{itemize}
+  \item \dlink{commands/clear}{The clear command}
+  \item \dlink{commands/comment}{The comment command}
+  \item \dlink{commands/define-class}{The define-class command}
+  \item \dlink{commands/delete}{The delete command}
+  \item \dlink{commands/display}{The display command}
+  \item \dlink{commands/execute}{The execute command}
+  \item \dlink{commands/forget}{The forget command}
+  \item \dlink{commands/freeze_thaw}{The freeze and thaw commands}
+  \item \dlink{commands/help}{The help command}
+  \item \dlink{commands/history}{The history command}
+  \item \dlink{commands/push_pop}{The push-settings and pop-settings commands}
+  \item \dlink{commands/quit}{The quit command}
+  \item \dlink{commands/set}{The set command}
+    \begin{itemize}
+    \item \dlink{settings/activity}{The activity setting}
+    \item \dlink{settings/automatic-ordering}{The automatic-ordering setting}
+    \item \dlink{settings/automatic-registry}{The automatic-registry setting}
+    \item \dlink{settings/box-checking}{The box-checking setting}
+    \item \dlink{settings/completion-mode}{The completion-mode setting}
+    \item \dlink{settings/directory}{The directory setting}
+    \item \dlink{settings/display-mode}{The display-mode setting}
+    \item \dlink{settings/hardwired-usage}{The hardwired-usage setting}
+    \item \dlink{settings/immunity}{The immunity setting}
+    \item \dlink{settings/log}{The log-file setting}
+    \item \dlink{settings/lp-path}{The lp-path setting}
+    \item \dlink{settings/name-prefix}{The name-prefix setting}
+    \item \dlink{settings/ordering-method}{The ordering-method setting}
+    \item \dlink{settings/page-mode}{The page-mode setting}
+    \item \dlink{settings/prompt}{The prompt setting}
+    \item \dlink{settings/proof-methods}{The proof-methods setting}
+    \item \dlink{settings/reduction-strategy}{The reduction-strategy setting}
+    \item \dlink{settings/rewriting-limit}{The rewriting-limit setting}
+    \item \dlink{settings/script}{The script-file setting}
+    \item \dlink{settings/statistics-level}{The statistics-level setting}
+    \item \dlink{settings/trace-level}{The trace-level setting}
+    \item \dlink{settings/write-mode}{The write-mode setting}
+    \end{itemize}
+  \item \dlink{commands/show}{The show command}
+  \item \dlink{commands/statistics}{The statistics command}
+  \item \dlink{commands/stop}{The stop command}
+  \item \dlink{commands/unset}{The unset command}
+  \item \dlink{commands/version}{The version command}
+  \item \dlink{commands/write}{The write command}
+  \end{itemize}
+
+\item \dlink{misc/hints}{Hints on using LP}
+  \begin{itemize}
+  \item \dlink{misc/hints_io}{Preparing input and recording work}
+  \item \dlink{misc/hints_formalizing}{Formalizing axioms and conjectures}
+  \item \dlink{misc/hints_ordering}{Orienting formulas into rewrite rules}
+  \item \dlink{misc/hints_proofs}{Managing proofs}
+  \item \dlink{misc/hints_speed}{Making proofs go faster}
+  \item \dlink{misc/command-line}{Unix command line options}
+  \end{itemize}
+
+\item \dlink{releases/releases}{Releases}
+  \begin{itemize}
+  \item \dlink{releases/installation}{Installing LP}
+  \item \dlink{releases/bugs}{Reporting problems}
+  \item \dlink{releases/development}{Development history}
+    \begin{itemize}
+    \item \dlink{releases/features3_1}{Features added in Release 3.1}
+    \item \dlink{releases/changes3_1}{Changes from Release 2.4 to Release 3.1}
+    \item \dlink{releases/release3_1a}{Release 3.1a}
+    \item \dlink{releases/release3_1b}{Release 3.1b}
+    \end{itemize}
+  \end{itemize}
+
+\item Glossary
+  \begin{itemize}
+  \item \dlink{glossary/accessible}{Accessible quantifiers}
+  \item \dlink{glossary/confluent}{Confluent rewriting systems}
+  \item \dlink{misc/conjecture}{Conjecture}
+  \item \dlink{glossary/conservative}{Conservative extension}
+  \item \dlink{glossary/convergent}{Convergent rewriting systems}
+  \item \dlink{operation/equational-rewriting}{Equational term-rewriting}
+  \item \dlink{operation/flatten}{Flattened representations for terms}
+  \item \dlink{operation/match}{Matching}
+  \item \dlink{operation/normalization}{Normalization}
+  \item \dlink{operation/reduce}{Reduction by rewrite rules}
+  \item \dlink{glossary/skolem}{Skolem constants and functions}
+  \item \dlink{glossary/substitution}{Substitutions}
+  \item \dlink{misc/subgoal}{Subgoal}
+  \item \dlink{glossary/terminate}{Terminating rewriting systems}
+  \item \dlink{operation/unify}{Unification}
+  \end{itemize}
+
+\end{itemize}

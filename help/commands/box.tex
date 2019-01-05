@@ -1,0 +1,51 @@
+\doc{The box and diamond commands}
+\ref{box-command}
+\ref{diamond-command}
+\ref{<>}
+\ref{[]}
+
+A \f{[]} (\def{box}) or a \f{<>} (\def{diamond}) appearing as the first
+nonblank characters of an input line begins a checkable comment, which LP uses
+to ensure that replayed proofs do not diverge from the way users expect them to
+proceed. 
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{diamond-command} ::= \f{<>} \s{character}*
+\sd{box-command}     ::= \f{[]} \s{character}*
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+<> induction step
+[] induction step
+\end{verbatim}
+
+\head{2}{Usage} 
+
+LP generates \f{[]}'s and \f{<>}'s in the \clink{history} and \setlink{script}
+files.  Users generally copy the \f{<>} and \f{[]} annotations supplied by LP
+into their command files rather than attempt to generate these annotations
+themselves.  LP generates a \f{<>} whenever it introduces a subgoal in a proof,
+and it generates a \f{[]} whenever it finishes the proof of a subgoal or of a
+conjecture.  After a successful proof, the number of \f{[]}'s in the history
+and script file equals the number of \cflink{prove} commands plus the number of
+\f{<>}'s.
+\p
+LP checks \f{<>}'s and \f{[]}'s when it \dlink{execute}{executes} commands from
+a \f{.lp} file and the \setlink{box-checking} setting is \fq{on}.  Whenever it
+generates a \f{<>} or a \f{[]}, LP checks that the next nonblank line in the
+\f{.lp} file contains a corresponding \f{<>} or \f{[]} command.  The special LP
+\dlink{../settings/prompt}{prompts} \f{<>?} and \f{[]?}  indicate that LP 
+expects a confirming \f{<>} or \f{[]} in the \f{.lp} file.  LP prints an error
+message if the confirming \f{<>} or \f{[]} is missing, or if an unexpected
+\f{<>} or \f{[]} appears in the \f{.lp} file.
+\p
+Regardless of whether box-checking is on or off, LP does not copy \f{<>} and
+\f{[]} commands from its input to the history or to a script file.  Instead, it
+puts into the history and script file the \f{<>} and \f{[]} commands that it
+produces as it creates and discharges subgoals.  Thus, the history and the
+script file will be annotated in a way that correctly reflects the actual
+progress of the proof.
+\p 
+See also the \cflink{qed} command.

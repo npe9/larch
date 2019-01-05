@@ -1,0 +1,75 @@
+#extend
+
+% Processes the "prove" command by getting a conjecture from the user, entering
+% it in "i.prover", and invoking "resume_proof" to get a proof method, if any,
+% from the user and begin the proof.  Prints an error message and returns if
+% the conjecture or proof method is not valid.
+
+c_prove = proc (i: interactive) signals (error)
+    scan: scanner := scanner$from_string("", i.p)
+    method_exists: bool := false
+    f: fact := system$flatten_fact(get_conjecture(scan, i.symtab), i.sys)
+       except when none: return
+	      when error:
+		   aborted(i.p, "error in conjecture")
+	      when method_follows (f1: fact, scan1: scanner):
+		   f := f1
+		   scan := scan1
+		   method_exists := true
+	      end resignal error
+    if op_theory$is_free(fact$value_ot(f)) then
+       aborted(i.p, "not implemented yet")
+       resignal error
+       end except when wrong_tag: end
+    m: proof_method := proof_method$make_default(nil)
+    if method_exists then
+       m := resume_args(scan, i, f)
+       if ~prover$valid_method(m, f) then
+	  aborted(i.p, "proof method doesn't apply to the conjecture")
+	  end
+       end resignal error
+       except when none: printer$text(i.p, "\nCommand aborted.\n")
+			 return
+	      end
+    % NOTE: "check_end_of_line" not needed here
+    prover$add_conjecture(i, f)
+       except when implied_ir:
+	  printer$text(i.p, "\n~{The conjectured induction rule is subsumed ")
+	  printer$text(i.p, "by an existing induction rule.~}\n")
+	  return
+	  end
+    prover$reset_method(i, m)
+    prover$attempt_proofs(i)
+    end c_prove
+
+    
+% Reads a conjecture for the "prove" command using the multiline input
+% convention.
+
+get_conjecture = proc (scan: scanner, stab: symtab) returns (fact)
+	       signals (none, method_follows(fact, scanner), error)
+    query$get_more(scan, "a conjecture to prove", prove_syntax)
+       resignal none
+    f: fact := pfact$read(scan, stab)
+       resignal error
+    tagcase scan.nextToken
+       tag simpleId:
+	   if ~token$is_reserved_word(scan.nextToken, "by") then
+	      exit bad
+	    elseif ~fact$is_eq(f) then
+	      scanner$error(scan, "proof method not allowed for a " ||
+				  "conjecture that is not a formula")
+	      signal error
+	    end
+	   signal method_follows(f, scan)
+       tag eof:
+       others: exit bad
+       end
+       except when bad:
+		   scanner$error(scan, "expecting the end of the conjecture or `by'")
+		   signal error
+	      end
+    return(f)
+    end get_conjecture
+
+

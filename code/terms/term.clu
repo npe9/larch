@@ -1,0 +1,1397 @@
+#extend
+
+% A "term" can be a variable ("var"), an application of a function ("funct"),
+% or a quantified formula ("quant").  A variable term contains a variable (its
+% "var").  A function application contains an operator (its "root") and a
+% sequence of terms (its "args").  A quantified formula contains a quantifier
+% (its "quant") and a subformula (its "subform").
+
+% LP maintains the invariant that all variables and operators in terms are in
+% the symbol table.  Terms are immutable.
+
+term = cluster is
+	make_var, make_var_without_checking, 
+	make_funct, make_funct_without_checking, make_quant, 
+	change_args, flip_args,
+	is_funct, is_quant, is_var, 
+	get_args, get_bvars, get_depth, get_flipped, get_footprint, get_fvars, 
+	get_hardwired_applied,
+	get_has_quantifiers, get_nvars, get_ops, get_quant,
+	get_renamed, get_root, get_root_or_quant, get_size, get_sort, 
+	get_subform, get_subform_for_matching, get_subterms, get_unrenamed, 
+	get_var, get_vars, hash,
+	print, read, rename_variables, replace_arg, replace_quantifiers, 
+	replace_subterm, set_hardwired_applied, subterm, unparse, 
+	unrename_variables, lt, get_enode, set_enode, reset_enode,
+	equal, similar, same_object, copy, _gcd, decode, encode,
+	set_encode_canonicalize, set_decode_canonicalize
+
+
+    % The rep for a term is a record, rather than a struct, to make it possible
+    % to determine whether two terms are the same object.  The "tree" in the
+    % rep determines the structure of the term.  The "flipped" field is
+    % significant only when the rep is for an equality term with two arguments
+    % (i.e., for a term "t1 = t2" or "t1 <=> t2", but not for a flattened term
+    % "t1 <=> t2 <=> t3"); "flipped" is true if the order of the arguments has
+    % been changed by flattening.  The "footprint" field is a bit-coded int
+    % with the property that "t1.ops" is a subset of "t2.ops" only if
+    % "i_and(t1.footprint, i_not(t2.footprint)) = 0".  The other fields are
+    % used solely to optimize the performance of LP.  Except for "nops" and
+    % "nvars", they are not computed until they are needed; once computed, they
+    % are kept for future reference.
+
+    % bvars:	         set of all bound variables in term
+    % contents:		 bit-coded integer
+    %                      contains_quantifier
+    %			   contains_renamed_variable
+    %			   contains_variable
+    % fvars:	         set of all free variables in term
+    % no_hardwired:	 no hardwired rr applies (set by rewriting_system)
+    % ops:	         set of all operators in term
+    % renamed:           term with free variables replaced by constants
+    % unrenamed:	 term with constants reconverted to variables
+
+    rep = record[bvars: vars_type,
+		 contents: int,
+		 enode: enode_type,			% Experimental
+                 flipped: bool,
+		 footprint: int,
+    	         fvars: vars_type,
+		 no_hardwired: bool,
+                 nops: int, 
+		 nvars: int, 
+		 ops: ops_type, 
+    	         renamed: renamed_type, 
+		 tree: tree,
+		 unrenamed: renamed_type]
+
+    tree  = oneof[var: variable, funct: funct, quant: quant]
+    funct = struct[root: operator, args: term_seq]
+    quant = struct[quant: quantifier, 
+                   rest: term_seq, 			% size(rest) = 1
+		   rest1: renamed_type]
+
+    % For a term headed by a quantifier "quant", "rest" is a one-element 
+    % sequence containing the term that is the scope of the quantifier.  
+    % Wrapping this term in a sequence avoids an allocation in "get_subterms".
+    % The field "rest1" is defined when a term has had its variables replaced
+    % by constants (via term$get_renamed) and constant replacing the quantified
+    % variable needs to be converted back into a variable for the matching
+    % routines.
+    ops_type     = variant[ops: op_set, none: null]
+    renamed_type = variant[exists: term, none, same: null]
+    vars_type    = variant[vars: var_set, none: null]
+    enode_type   = oneof[exists: enode, none: null]
+    
+    contains_quantifier		= 1
+    contains_renamed_variable	= 2
+    contains_variable		= 4
+    
+    % Owns for encode/decode
+
+    canon_tab = hash_table[term, int]
+
+    own encode_terms: canon_tab := canon_tab$predict(1000)
+    own decode_terms: term_arr := term_arr$predict(1000, 0)
+    own encode_canonicalize: bool := false
+    own decode_canonicalize: bool := false
+    own total_transmitted: int := 0
+    own total_repetitions: int := 0
+    own total_redundant: int := 0
+
+    % manual optimization for PCLU
+    own term_hash: proctype(term, int) returns (int) := term$hash
+    own term_similar: proctype(term, term) returns (bool) := term$similar
+
+    % Returns a new variable term containing "v".
+    
+    make_var = proc (v: variable) returns (term)
+	if debugging cand v.key = 0 then fail("term$make_var") end
+	return(make_var_without_checking(v))
+	end make_var
+
+
+    % The same as "make_var", but does not check that "v.key" is defined.
+    
+    make_var_without_checking = proc (v: variable) returns (cvt)
+	return(rep${bvars: vars_type$make_none(nil),
+		    contents: contains_variable,
+	            enode: enode_type$make_none(nil),
+	            flipped: false,
+		    footprint: 0,
+		    fvars: vars_type$make_none(nil),
+		    no_hardwired: true,
+	    	    nops: 0,
+		    nvars: 1,
+		    ops: ops_type$make_none(nil),
+		    renamed: renamed_type$make_none(nil),
+		    tree: tree$make_var(v),
+		    unrenamed: renamed_type$make_none(nil)})
+	end make_var_without_checking
+
+
+    % Returns a new compound term containing the root operator "op" and the
+    % arguments "args".  ASSUMES: "args" contains the appropriate number of
+    % terms of the appropriate sorts.  WARNING: the result is not flattened.
+    
+    make_funct = proc (op: operator, args: term_seq) returns (term)
+	emsg = "term$make_funct: "
+	if debugging then
+	   %	   if op.key = 0 then fail(emsg || "bad operator") end
+	   if op.arity ~= term_seq$size(args) then
+	      if op.arity = 2 cand op.dom[1] = op.dom[2] 
+		   cand op.rng = op.dom[1]
+		 then % Assume "op" is AC
+		      for i: int in term_seq$indexes(args) do
+			  if args[i].sort ~= op.dom[1] then
+			     fail(emsg || "wrong sort in flattened term")
+			     end
+			  end
+		 else fail(emsg || "wrong number of arguments")
+		 end
+	      else
+		   for i: int in term_seq$indexes(args) do
+		       if args[i].sort ~= op.dom[i] then
+			  fail(emsg || "wrong sort of argument")
+			  end
+		       end
+	      end
+	   end
+        return(make_funct_without_checking(op, args))
+	end make_funct
+
+    
+    % The same as "make_funct", but does not check the assumptions.
+
+    make_funct_without_checking = proc (op: operator, args: term_seq)
+				    returns (cvt)
+	nops: int := 1
+	nvars: int := 0
+	footprint: int := op.footprint
+	contents: int := 0
+	if operator$is_renamed_variable(op) then 
+	   contents := contains_renamed_variable
+	   end
+	for arg: term in term_seq$elements(args) do
+	    nops := nops + down(arg).nops
+	    nvars := nvars + down(arg).nvars
+	    footprint := i_or(footprint, down(arg).footprint)
+	    contents := i_or(contents, down(arg).contents)
+	    end
+	return(rep${bvars: vars_type$make_none(nil),
+	            contents: contents,
+	            enode: enode_type$make_none(nil),
+	            flipped: false,
+		    footprint: footprint,
+		    fvars: vars_type$make_none(nil),
+		    no_hardwired: false,
+	    	    nops: nops,
+		    nvars: nvars,
+		    ops: ops_type$make_none(nil),
+		    renamed: renamed_type$make_none(nil),
+		    tree: tree$make_funct(funct${root: op, args: args}),
+		    unrenamed: renamed_type$make_none(nil)})
+	end make_funct_without_checking
+
+
+    % Returns a new quantified term obtained by applying "q" to "t".
+    
+    make_quant = proc (q: quantifier, t: term) returns (cvt)
+	if debugging cand t.sort ~= bool_sort() then
+	   fail("term$make_quantified")
+	   end
+        qu: quant := quant${quant: q, 
+	                    rest: term_seq$[t],
+			    rest1: renamed_type$make_none(nil)}
+	return(rep${bvars: vars_type$make_none(nil),
+	    	    contents: i_or(down(t).contents, contains_quantifier),
+	            enode: enode_type$make_none(nil),
+                    flipped: true,
+		    footprint: i_or(q.pseudo_op.footprint, down(t).footprint),
+		    fvars: vars_type$make_none(nil),
+		    no_hardwired: false,
+	    	    nops: down(t).nops + 1,
+		    nvars: down(t).nvars + 1,
+		    ops: ops_type$make_none(nil),
+		    renamed: renamed_type$make_none(nil),
+		    tree: tree$make_quant(qu),
+		    unrenamed: renamed_type$make_none(nil)})
+	end make_quant
+
+
+    % Returns "true" iff "t" is a function application.
+
+    is_funct = proc (t: cvt) returns (bool)
+	return(tree$is_funct(t.tree))
+	end is_funct
+
+
+    % Returns "true" iff "t" is a quantified term.
+
+    is_quant = proc (t: cvt) returns (bool)
+	return(tree$is_quant(t.tree))
+	end is_quant
+
+
+    % Returns "true" iff "t" is a variable term.
+
+    is_var = proc (t: cvt) returns (bool)
+	return(tree$is_var(t.tree))
+	end is_var
+
+
+    % Changes the arguments of "t" to "args".  Assumes that "t" is a functional
+    % term and that "args" is a legal set of arguments for "t.root".
+    
+    change_args = proc (t: cvt, args: term_seq) returns (cvt)
+	op: operator := tree$value_funct(t.tree).root
+	   except when wrong_tag: fail("term$change_args") end
+	t1: rep := down(make_funct_without_checking(op, args))
+	t1.flipped := t.flipped
+	return(t1)
+	end change_args
+   
+
+    % Changes the order of "t.args".  Assumes: "t" is a function application
+    % of arity 2 and that both its arguments have the same sort.
+    
+    flip_args = proc (t: cvt) returns (cvt)
+	f: funct
+	begin
+	    f := tree$value_funct(t.tree)
+	    if f.root.arity ~= 2 then exit bad end
+	    end except when bad, wrong_tag: fail("term$flip_args") end
+	t := rep$copy1(t)
+	t.enode := enode_type$make_none(nil)
+	t.no_hardwired := false
+	t.tree := tree$make_funct(funct${root: f.root,
+					 args: term_seq$[f.args[2], f.args[1]]})
+	t.flipped := ~t.flipped
+	if renamed_type$is_exists(t.renamed) then
+	   t.renamed := renamed_type$make_none(nil)
+	   end
+        if renamed_type$is_exists(t.unrenamed) then
+	   t.unrenamed := renamed_type$make_none(nil)
+	   end
+	return(t)
+	end flip_args
+   
+
+    % Returns the arguments in the function application term "t".  Signals
+    % "wrong_tag" if "t" is is not a function application.
+
+    get_args = proc (t: cvt) returns (term_seq) signals (wrong_tag)
+        return(tree$value_funct(t.tree).args)
+	   resignal wrong_tag
+	end get_args
+
+
+    % Returns the set of variables with bound occurrences in "t".  ASSUMES:
+    % callers do not modify this set.
+    
+    get_bvars = proc (t: cvt) returns (var_set)
+	vs: var_set
+	tagcase t.bvars
+	   tag vars (tvs: var_set): vs := tvs
+	   tag none: tagcase t.tree
+			tag var: vs := var_set$[]
+			tag funct (f: funct):
+			    vs := var_set$[]
+			    for sub: term in term_seq$elements(f.args) do
+				var_set$merge(vs, sub.bvars)
+				end
+			tag quant (q: quant):
+			    vs := var_set$copy1(q.rest[1].bvars)
+			    var_set$insert(vs, q.quant.var)
+			       except when exists: end
+			end
+		     vars_type$change_vars(t.bvars, vs)
+	   end
+	return(vs)
+	end get_bvars
+
+
+    % Returns the "depth" of "t", where the depth of a variable term is 0, the
+    % depth of a function application is one more than the maximum depth of its
+    % arguments, and the depth of a quantified formula is one more than the
+    % depth of its subformula.
+    
+    get_depth = proc (t: cvt) returns (int)
+	tagcase t.tree
+	   tag var: return(0)
+	   tag funct (f: funct):
+	       d: int := 0
+	       for arg: term in term_seq$elements(f.args) do
+		   d := int$max(d, arg.depth)
+		   end
+	       return(d+1)
+	   tag quant (q: quant): return(q.rest[1].depth + 1)
+	   end
+	end get_depth
+    
+    
+    % Returns "true" if the order of the arguments in "t" have been flipped.
+    
+    get_flipped = proc (t: cvt) returns (bool)
+	return(t.flipped)
+	end get_flipped
+
+    
+    % Returns the "footprint" of "t".
+    
+    get_footprint = proc (t: cvt) returns (int)
+	return(t.footprint)
+	end get_footprint
+    
+    
+    % Returns the set of variables with free occurrences in "t".  ASSUMES:
+    % callers do not modify this set.
+
+    get_fvars = proc (t: cvt) returns (var_set)
+	vs: var_set
+	tagcase t.fvars
+	   tag vars (tvs: var_set): vs := tvs
+	   tag none: tagcase t.tree
+			tag var (v: variable): vs := var_set$[v]
+			tag funct (f: funct):
+			    vs := var_set$[]
+			    for sub: term in term_seq$elements(f.args) do
+				var_set$merge(vs, sub.fvars)
+				end
+			tag quant (q: quant):
+			    vs := var_set$copy1(q.rest[1].fvars)
+			    var_set$delete(vs, q.quant.var)
+			       except when missing: end
+			end
+		     vars_type$change_vars(t.fvars, vs)
+	   end
+	return(vs)
+	end get_fvars
+
+    
+    % Returns "t.no_hardwired".
+    
+    get_hardwired_applied = proc (t: cvt) returns (bool)
+	return(t.no_hardwired)
+	end get_hardwired_applied
+    
+
+    % Returns "true" if "t" contains quantifiers.
+    
+    get_has_quantifiers = proc (t: cvt) returns (bool)
+	return(i_and(t.contents, contains_quantifier) = contains_quantifier)
+	end get_has_quantifiers
+    
+
+    % Returns the number of occurrences of variables in "t".  FIX: The only
+    % client of this procedure is "general_match", which only cares whether "t"
+    % has a free variable.  That procedure will continue to work as long as
+    % "nvars" bounds the number of free variables, as it does not.  But we may
+    % be able to make it work better if "nvars" is the number of free
+    % variables.
+    
+    get_nvars = proc (t: cvt) returns (int)
+	return(t.nvars)
+	end get_nvars
+        
+
+    % Returns a set consisting of all the operators in "t".  ASSUMES: a caller
+    % has not changed a previously-returned op_set.
+
+    get_ops = proc (t: cvt) returns (op_set)
+	os: op_set
+	tagcase t.ops
+	   tag ops (ops: op_set): os := ops
+	   tag none: tagcase t.tree
+			tag var: os := op_set$[]
+			tag funct (f: funct):
+			    os := op_set$[f.root]
+			    for sub: term in term_seq$elements(f.args) do
+				op_set$merge(os, sub.ops)
+				end
+			tag quant (q: quant): os := q.rest[1].ops
+			end
+		     ops_type$change_ops(t.ops, os)
+	   end
+	return(os)
+	end get_ops
+
+ 
+    % Returns the quantifier in a quantified term "t".  Signals "wrong_tag" if
+    % "t" is not quantified.
+    
+    get_quant = proc (t: cvt) returns (quantifier) signals (wrong_tag)
+        return(tree$value_quant(t.tree).quant)
+	   resignal wrong_tag
+	end get_quant
+
+    
+    % Returns "t" with all variables replaced by constants.
+
+    get_renamed = proc (t: cvt) returns (term)
+	return(renamed_work(t, true))
+	end get_renamed
+    
+
+    % (Internal procedure) Does the work for "get_renamed" if "rename" is true
+    % and for "get_unrenamed" otherwise.
+    
+    % CONSIDER: Do something better about renaming bound variables.
+    
+    renamed_work = proc (t: rep, rename: bool) returns (term)
+	if rename
+	   then tagcase t.renamed
+		   tag exists (t2: term): return(t2)
+		   tag same:              return(up(t))
+		   tag none:
+		   end
+	   else tagcase t.unrenamed
+		   tag exists (t2: term): return(t2)
+		   tag same:              return(up(t))
+		   tag none:
+		   end
+	   end
+        t1: term := up(t)
+        changed: bool := false
+        tagcase t.tree
+	   tag funct (f: funct):
+	       args: term_arr
+	       i: int := 0
+	       for arg: term in term_seq$elements(f.args) do
+		   i := i + 1
+ 		   arg1: term := renamed_work(down(arg), rename)
+		   if ~same_object(arg, arg1) then
+		      if ~changed then
+			 args := term_seq$s2a(f.args)
+			 changed := true
+			 end
+		      args[i] := arg1
+		      end
+		   end
+	       if changed then
+		  t1 := term$change_args(t1, term_seq$a2s(args))
+		elseif i = 0 cand ~rename then
+		  t1 := term$make_var(operator$c2v(f.root))
+		  changed := true
+		end except when not_renamed: end
+	   tag var (v: variable):
+	       if rename then
+		  t1 := term0(operator$v2c(v))
+		  changed := true
+		  end
+	   tag quant (q: quant):
+	       sf: term := q.rest[1]
+	       sfr: term := renamed_work(down(sf), rename)
+	       if ~same_object(sf, sfr) then
+		  t1 := term$make_quant(q.quant, sfr)
+		  changed := true
+		  end
+	   end
+	if rename
+	   then if changed
+		   then renamed_type$change_exists(t.renamed, t1)
+			renamed_type$change_same(down(t1).renamed, nil)
+		   else renamed_type$change_same(t.renamed, nil)
+		   end
+		if i_and(down(t1).contents, contains_renamed_variable) = 0 then
+		   renamed_type$change_exists(down(t1).unrenamed, up(t))
+		   end
+	   else if changed
+		   then renamed_type$change_exists(t.unrenamed, t1)
+			renamed_type$change_same(down(t1).unrenamed, nil)
+		   else renamed_type$change_same(t.unrenamed, nil)
+		   end
+		if i_and(down(t1).contents, contains_variable) = 0 then
+		   renamed_type$change_exists(down(t1).renamed, up(t))
+		   end
+	   end
+	return(t1)
+	end renamed_work
+
+    
+    % Returns the root operator in a function application "t".  Signals
+    % "wrong_tag" if "t" is not a function application.
+
+    get_root = proc (t: cvt) returns (operator) signals (wrong_tag)
+	return(tree$value_funct(t.tree).root)
+	   resignal wrong_tag
+	end get_root
+
+
+    % Returns the root operator in a function application "t" or an operator
+    % corresponding to the quantifier in a quantified term "t".  Signals
+    % "wrong_tag" if "t" is a variable term.
+
+    get_root_or_quant = proc (t: cvt) returns (operator) signals (wrong_tag)
+	return(tree$value_funct(t.tree).root)
+	   except when wrong_tag: end
+	return(tree$value_quant(t.tree).quant.pseudo_op)
+	   resignal wrong_tag
+	end get_root_or_quant
+
+
+    % Returns the combined total of the number of operators, quantifiers, and
+    % variables in "t".
+
+    get_size = proc (t: cvt) returns (int)
+	return(t.nops + t.nvars)
+	end get_size
+
+    
+    % Returns the sort of the term "t".
+
+    get_sort = proc (t: cvt) returns (sort)
+	tagcase t.tree
+	   tag var (v: variable): return(v.sort)
+	   tag funct (f: funct): return(f.root.rng)
+	   tag quant: return(bool_sort())
+	   end
+	end get_sort
+
+
+    % Returns the subformula in a quantified term "t".  Signals "wrong_tag" if
+    % "t" is not quantified.
+    
+    get_subform = proc (t: cvt) returns (term) signals (wrong_tag)
+	return(tree$value_quant(t.tree).rest[1])
+	   resignal wrong_tag
+	end get_subform
+
+
+    % Returns the subformula in a quantified term "t", with the constant
+    % substituted for the quantified variable (if any) replaced by the
+    % variable.  Signals "wrong_tag" if "t" is not quantified.
+
+    get_subform_for_matching = proc (t: cvt) returns (term) signals (wrong_tag)
+	qu: quant := tree$value_quant(t.tree)
+	   resignal wrong_tag
+	tagcase qu.rest1
+	   tag exists (t1: term):  return(t1)
+	   tag same:               return(qu.rest[1])
+	   tag none:
+	   end
+	t1: term := qu.rest[1]
+	if i_and(t.contents, contains_renamed_variable) = 0 then
+	   return(t1)
+	   end
+	t2: term := unrename_var(t1, qu.quant.var)
+	   except when same: renamed_type$change_same(qu.rest1, nil)
+			     return(t1)
+		  end
+	renamed_type$change_exists(qu.rest1, t2)
+	return(t2)
+	end get_subform_for_matching
+    
+    
+    % (Internal procedure) Returns "t" with all free renamings of "v" replaced
+    % by "v".  Signals "same" if there are no free renamings of "v" in "t".
+    
+    unrename_var = proc (t: cvt, v: variable) returns (term) signals (same)
+        tagcase t.tree
+	   tag funct (f: funct):
+	       args: term_arr
+	       changed: bool := false
+	       i: int := 0
+	       for arg: term in term_seq$elements(f.args) do
+		   i := i + 1
+ 		   arg1: term := unrename_var(arg, v)
+		      except when same: continue end
+		   if ~changed then
+		      args := term_seq$s2a(f.args)
+		      changed := true
+		      end
+		   args[i] := arg1
+		   end
+	       if changed then
+		  return(term$change_args(up(t), term_seq$a2s(args)))
+		elseif i = 0 cand f.root = operator$v2c(v) then
+		  return(term$make_var(v))
+		end 
+	       signal same
+	   tag var:
+	       signal same
+	   tag quant (q: quant):
+	       if q.quant.var = v then signal same end
+	       return(term$make_quant(q.quant, unrename_var(q.rest[1], v)))
+		  resignal same
+	   end
+	end unrename_var
+
+    
+    % Returns the immediate subterms of a nonvariable term "t".  Signals
+    % "wrong_tag" if "t" is a variable term.
+    
+    get_subterms = proc (t: cvt) returns (term_seq) signals (wrong_tag)
+	return(tree$value_funct(t.tree).args)
+	   except when wrong_tag: end
+	return(tree$value_quant(t.tree).rest)
+	   resignal wrong_tag
+	end get_subterms
+
+
+    % Returns "t" with all constants introduced by "get_renamed" replaced by
+    % the original variables.
+    
+    get_unrenamed = proc (t: cvt) returns (term)
+	return(renamed_work(t, false))
+	end get_unrenamed
+    
+
+    % Returns the variable in the variable term "t".  Signals "wrong_tag" if
+    % "t" is not a variable term.
+
+    get_var = proc (t: cvt) returns (variable) signals (wrong_tag)
+	return(tree$value_var(t.tree))
+	   resignal wrong_tag
+	end get_var
+
+
+    % Returns a set consisting of all the variables in "t".  ASSUMES: a caller
+    % has not changed a previously-returned var_set.
+    
+    get_vars = proc (t: term) returns (var_set)
+	return(t.fvars + t.bvars)
+	end get_vars
+
+
+    % Similar terms have the same hash value.
+
+    hash = proc (t: cvt, max: int) returns (int)
+	return((t.footprint * 19 + t.nops * 23 + t.nvars * 29) // max)
+	   except when overflow:
+		       return(i_or(t.footprint, t.nops * 23 + t.nvars * 29)
+				// max)
+		  end
+	end hash
+
+
+    % Prettyprints "t" on "p".
+    
+    print = proc (p: printer, t: term, stab: symtab)
+	unpterm$print(p, t, stab)
+	end print
+    
+    
+    % Reads and returns a term from "scan".  Writes a message to "scan", and
+    % signals "error", if "scan" does not begin with a representation for a
+    % term constructed from identifiers in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (term) signals (error)
+	return(pterm$read(scan, stab))
+	   resignal error
+	end read
+
+
+    % Returns a term with all variables replaced by their aliases.
+      
+    % ENHANCE:  Stash renaming in rep?
+    
+    rename_variables = proc (t: cvt) returns (term)
+	tagcase t.tree
+	   tag var (v: variable):
+	       return(make_var_without_checking(v.alias))
+	   tag funct (f: funct):
+	       args: term_arr
+	       i: int := 0
+	       changed: bool := false
+	       for arg: term in term_seq$elements(f.args) do
+		   i := i + 1
+		   arg1: term := rename_variables(arg)
+		   if same_object(arg, arg1) then continue end
+		   if ~changed then
+		      args := term_seq$s2a(f.args)
+		      changed := true
+		      end
+		   args[i] := arg1
+		   end
+	       if changed
+		  then return(change_args(up(t), term_seq$a2s(args)))
+		  else return(up(t))
+		  end
+	   tag quant (q: quant):
+	       v: variable := q.quant.var
+	       return(make_quant(quantifier$change_var(q.quant, v.alias),
+				 rename_variables(q.rest[1])))
+	   end
+	end rename_variables
+      
+      
+    % Returns a new term that is equal to "t" with argument "i" replaced by
+    % "arg".  Assumes "i" is a valid index for an argument in "t".
+
+    replace_arg = proc (t: term, i: int, arg: term) returns (term)
+	tagcase t
+	   tag funct:
+	       t1: term := make_funct(t.root, term_seq$replace(t.args, i, arg))
+	       down(t1).flipped := down(t).flipped
+	       return(t1)
+	   tag quant:
+	       if i ~= 1 then exit bad end
+	       return(make_quant(t.quant, arg))
+	   tag var:
+	       exit bad
+	   end
+	   except when bad, bounds: fail("term$replace_arg") end
+	end replace_arg
+
+
+    % Replaces every quantified subterm of the form "Qx:T P(x)" of "t" by a
+    % subterm "Q'(true, P(true))", where "Q'" is an operator with signature "T,
+    % Bool -> Bool".  Note that the result may not type-check.
+
+    replace_quantifiers = proc (t: term) returns (term)
+	if ~t.has_quantifiers then return(t) end
+	return(replace_qfr_work(t, var_set$[]))
+	end replace_quantifiers
+    
+    replace_qfr_work = proc (t: term, vars: var_set) returns (term)
+	if ~var_set$intersect(t.vars, vars) cand ~t.has_quantifiers then
+	   return(t)
+	   end
+	tagcase down(t).tree
+	   tag var:
+	       return(term_true())
+	   tag funct (f: funct):
+	       args: term_arr := term_seq$s2a(f.args)
+	       for i: int in term_arr$indexes(args) do
+		   args[i] := replace_qfr_work(args[i], vars)
+		   end
+	       return(change_args(t, term_seq$a2s(args)))
+	   tag quant (q: quant):
+	       v: variable := q.quant.var
+	       if ~var_set$exists(vars, v) then
+		  vars := var_set$copy1(vars)
+		  var_set$insert_unique(vars, v)
+		  end
+	       args: term_seq :=
+		   term_seq$[term_true(), replace_qfr_work(q.rest[1], vars)]
+	       return(make_funct_without_checking(q.quant.pseudo_op, args))
+	   end
+	end replace_qfr_work
+
+
+    % Returns a new term that is equal to "t" with the subterm at occurrence
+    % "oc" in "t" replaced by "sub".  Signals "bad_occurrence" if "oc" is not a
+    % valid occurrence in "t".  (Not used.)
+
+    replace_subterm = proc (t: term, oc: path, sub: term) returns (term)
+			signals (bad_occurrence)
+	if path$empty(oc) then return(sub) end
+	i: int := int$abs(path$bottom(oc))
+	oc1: path := path$copy(oc)
+	path$reml(oc1)
+	tagcase t
+	   tag funct:
+	       arg: term := replace_subterm(t.args[i], oc1, sub)
+	       t1: term := make_funct(t.root, term_seq$replace(t.args, i, arg))
+	       down(t1).flipped := down(t).flipped
+	       return(t1)
+	   tag quant:
+	       sf: term := replace_subterm(t.subform, oc1, sub)
+	       return(make_quant(t.quant, sf))
+	   tag var:
+	       signal bad_occurrence
+	   end resignal bad_occurrence
+	   except when bounds: signal bad_occurrence end
+	end replace_subterm
+
+
+    % Sets "t.no_hardwired" to "b".
+    
+    set_hardwired_applied = proc (t: cvt, b: bool)
+	t.no_hardwired := b
+	end set_hardwired_applied
+    
+
+    % Returns the subterm at occurrence "oc" in "t".  Signals "bad_occurrence"
+    % if "oc" is not a valid occurrence in "t".  (Not used.)
+
+    subterm = proc (t: term, oc: path) returns (term) signals (bad_occurrence)
+	for p: int in path$elements(oc) do t := t.subterms[int$abs(p)] end
+	   except when bounds, wrong_tag: signal bad_occurrence end
+	return(t)
+	end subterm
+
+
+    % Returns a prettyprinted string representation of "t".  Uses the current
+    % value of the "display-mode" setting to determine how to qualify "t".
+    
+    unparse = proc (t: term) returns (string)
+	return(unparse_item_with_ids[term](t))
+	end unparse
+
+
+    % Dumps the structure of "t" on the primary output for debugging.
+    
+    dump = proc (t: term)
+	p: printer := tracer$get_printer()
+	stab: symtab := tracer$get_symtab()
+	dump_work(t, p, stab)
+	printer$newline(p)
+	end dump
+    
+    dump_work = proc (t: cvt, p: printer, stab: symtab)
+	tagcase t.tree
+	   tag var (v: variable):
+	       printer$text(p, "\n~{")
+	       variable$print(p, v, stab)
+	       printer$text(p, "~}")
+	   tag funct (f: funct):
+	       printer$text(p, "\n~{~2I")
+	       operator$print(p, f.root, stab)
+	       for t1: term in term_seq$elements(f.args) do 
+		   dump_work(t1, p, stab) 
+		   end
+	       printer$text(p, "~}")
+	   tag quant (q: quant):
+	       printer$text(p, "\n~{~2I")
+	       if q.quant.is_universal
+		  then printer$text(p, "\\A ")
+		  else printer$text(p, "\\E ")
+		  end
+	       variable$print(p, q.quant.var, stab)
+	       dump_work(q.rest[1], p, stab)
+	       printer$text(p, "~}")
+	   end
+	end dump_work
+
+
+    % Returns a term equal to "t" after "unrenaming" variables generated by
+    % "term$rename_variables" and "var_gen$next".  Specifically, if "v" is a
+    % renamed variable in "t", "v" is unrenamed unless the unrenamed variable
+    % also occurs in "t"; in this case, "v" is replaced by a variable with an
+    % identifier that is different from other identifiers in "t" and that
+    % consists of either "v.id" or the leading nondigits in "v.id" followed by
+    % an integer.  If "v" is a variable in "t" that was generated by
+    % "var_gen$next", it is renamed to one with beginning with the letter "v",
+    % as above.
+
+    unrename_variables = proc (t: term, stab: symtab) returns (term)
+	symtab$begin_changes(stab)
+	used: var_set := var_set$copy(t.vars)
+	count: int := 0
+	for v: variable in var_set$elements(t.vars) do
+	    if variable$is_internal(v) then
+	       count := count + 1
+	     elseif variable$is_alias(v) then
+	       count := count + 1
+	       var_set$insert(used, v.alias)
+	     end except when exists: end
+	    end
+	sigma: substitution := substitution$predict(count)
+	for v: variable in var_set$elements(t.vars) do
+	    new_var: variable
+	    if variable$is_alias(v) then
+	       new_var := v.alias
+	       if var_set$exists(t.vars, v.alias) then
+		  new_var := variable$different(new_var.sort, used, stab)
+		  var_set$insert(used, new_var)
+		  end
+	     elseif variable$is_internal(v) then
+	       new_var := variable$different(v.sort, used, stab)
+	       var_set$insert(used, new_var)
+	     else continue
+	     end
+	    sigma[v] := term$make_var(new_var)
+	    end
+	symtab$commit_changes(stab)
+	return(unrename_work(t, sigma))
+	end unrename_variables
+
+    unrename_work = proc (t: cvt, sigma: substitution) returns (term)
+	tagcase t.tree
+	   tag var (v: variable):
+	       return(sigma[v])
+	   tag funct (f: funct):
+	       args: term_arr
+	       i: int := 0
+	       changed: bool := false
+	       for arg: term in term_seq$elements(f.args) do
+		   i := i + 1
+		   arg1: term := unrename_work(arg, sigma)
+		   if same_object(arg, arg1) then continue end
+		   if ~changed then
+		      args := term_seq$s2a(f.args)
+		      changed := true
+		      end
+		   args[i] := arg1
+		   end
+	       if changed
+		  then return(change_args(up(t), term_seq$a2s(args)))
+		  else return(up(t))
+		  end
+	   tag quant (q: quant):
+	       v: variable := sigma[q.quant.var].var
+	       return(make_quant(quantifier$change_var(q.quant, v),
+				 unrename_work(q.rest[1], sigma)))
+	   end
+	end unrename_work
+
+
+    % Returns "true" if "t1" precedes "t2" in the following lexicographical
+    % ordering on terms.  Functional terms are less than quantified terms,
+    % which are less than variables.  Variables are ordered using
+    % "variable$lt".  Nonvariable terms with different root operators or
+    % quantifiers are ordered using "operator$lt" on their root operators or
+    % "quantifier$lt" on the quantifier.  Nonvariable terms with the same root
+    % operator or quantifier are ordered using "term$lt" recursively to compare
+    % their arguments lexicographically.  
+    
+    % NOTE: This operation was implemented originally outside of the "term"
+    % cluster.  It was moved here (on 93/10/20) in order to optimize its
+    % implementation and to ensure that it does not fall in the same block in
+    % the instruction cache as "term$get_args".  Just such a cache collision
+    % caused the performance of LP to degrade by 50% on an example that
+    % involved many successful AC matches.
+
+    lt = proc (t1, t2: cvt) returns (bool)
+	tagcase t1.tree
+	   tag var (v1: variable):
+	       return(v1 < tree$value_var(t2.tree))
+		  except when wrong_tag: return(false) end
+	   tag funct (f1: funct):
+	       f2: funct := tree$value_funct(t2.tree)
+		  except when wrong_tag: return(true) end
+	       root1: operator := f1.root
+	       root2: operator := f2.root
+	       if root1 = root2 then
+		  args1: term_seq := f1.args
+		  args2: term_seq := f2.args
+		  i: int := 1
+		  while true do
+		      a1: term := args1[i]
+		      a2: term := args2[i]
+		      if a1 < a2 then return(true)
+		       elseif a2 < a1 then return(false)
+		       else i := i + 1
+		       end
+		      end except when bounds: end
+		  return(term_seq$size(args1) < term_seq$size(args2))
+		  % QUERY: Does the "else" clause suffice?
+		elseif operator$is_renamed_variable(root1) then
+		  return(operator$is_renamed_variable(root2) cand
+			 root1 < root2)
+		elseif operator$is_renamed_variable(root2) then return(true)
+		else return(root1 < root2)
+		end
+	   tag quant (q1: quant):
+	       q2: quant := tree$value_quant(t2.tree)
+		  except when wrong_tag: return(tree$is_var(t2.tree)) end
+	       if q1.quant = q2.quant
+		  then return(q1.rest[1] < q2.rest[1])
+		  else return(q1.quant < q2.quant)
+		  end
+	   end
+	end lt
+
+    
+    % Experimental procedures to link terms to nodes in the congruence
+    % closure graph used by the satisfier.
+    
+    set_enode = proc (t: cvt, node: enode) signals (impossible)
+	if enode_type$is_none(t.enode)
+	   then t.enode := enode_type$make_exists(node)
+	   else signal impossible end
+	end set_enode
+      
+    reset_enode = proc (t: cvt)
+	t.enode := enode_type$make_none(nil)
+	end reset_enode
+       
+    get_enode = proc (t: cvt) returns (enode) signals (none)
+	return(enode_type$value_exists(t.enode))
+	   except when wrong_tag: signal none end
+	end get_enode
+   
+
+    % Returns "true" iff "t1" and "t2" represent the same term modulo changes
+    % of bound variables (ignoring the values of the as-needed components of
+    % the rep).
+
+    equal = proc (t1, t2: cvt) returns (bool)
+	% Checking object equality is a fast way of finding similar terms;
+	% checking the number of operators and variables is a fast way of 
+	% finding dissimilar terms.
+	if t1 = t2 then return(true) end
+	if t1.contents ~= t2.contents cor t1.nops ~= t2.nops
+	     cor t1.nvars ~= t2.nvars
+	   then return(false)
+	   end
+	if i_and(t1.contents, contains_quantifier) = contains_quantifier then
+	   if ~var_set$similar(up(t1).fvars, up(t2).fvars) then
+	      return(false)
+	      end
+	   stab: symtab := interactive$current_symtab()
+	   osys: op_system := interactive$current_system().osys
+	   t2r: term := up(t2).renamed
+	   t1r: term := up(t1).unrenamed
+	   if ~var_set$empty(t1r.fvars) then
+	      sigma: substitution := substitution$[]
+	      for v: variable in var_set$elements(t1r.fvars) do
+		  sigma[v] := term0(operator$v2c(v))
+		  end
+	      t1r := substitution$apply(sigma, t1r, stab)
+	      end
+	   for sigma: substitution in general_match(t2r, t1r, osys, stab) do
+	       return(true)
+	       end except when no_match: end
+	   return(false)
+	   end
+	tagcase t1.tree
+	   tag var (v1: variable):
+	       return(v1 = tree$value_var(t2.tree))
+	   tag funct (f1: funct):
+	       f2: funct := tree$value_funct(t2.tree)
+	       return(f1.root = f2.root cand f1.args = f2.args)
+	   tag quant (q1: quant):
+	       q2: quant := tree$value_quant(t2.tree)
+	       return(q1.quant = q2.quant cand q1.rest = q2.rest)
+	   end except when wrong_tag: return(false) end
+	end equal
+
+
+    % Returns "true" iff "t1" are "t2" structurally equivalent.
+    % (Bound variables must be identical to establish structural equivalence.)
+
+    similar = proc (t1, t2: cvt) returns (bool)
+	% Checking object equality is a fast way of finding similar terms;
+	% checking the number of operators and variables is a fast way of 
+	% finding dissimilar terms.
+	if t1 = t2 then return(true) end
+	if t1.contents ~= t2.contents cor t1.nops ~= t2.nops
+	     cor t1.nvars ~= t2.nvars
+	   then return(false)
+	   end
+	tagcase t1.tree
+	   tag var (v1: variable):
+	       return(v1 = tree$value_var(t2.tree))
+	   tag funct (f1: funct):
+	       f2: funct := tree$value_funct(t2.tree)
+	       return(f1.root = f2.root cand
+		      term_seq$similar(f1.args, f2.args))
+	   tag quant (q1: quant):
+	       q2: quant := tree$value_quant(t2.tree)
+	       return(q1.quant = q2.quant cand
+		      term_seq$similar(q1.rest, q2.rest))
+	   end except when wrong_tag: return(false) end
+	end similar
+
+
+    % Returns "true" iff "t1" and "t2" are the same object.  Checking equality
+    % of a mutable rep is faster (CLU compares pointers) than checking equality
+    % of an immutable abstraction (CLU checks that the objects have the same
+    % structure).  Hence this procedure is an efficient alternative to "equal";
+    % we can invoke it if we know that both procedures will return the same
+    % result.
+
+    same_object = proc (t1, t2: cvt) returns (bool)
+	return(t1 = t2)
+	end same_object
+
+
+    % Returns "t".
+
+    copy = proc (t: cvt) returns (cvt)
+	return(t)
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+	       signals (end_of_file, not_possible(string))
+	begin
+	    spot: int
+	    if decode_canonicalize then
+	       if bool$decode(s)
+		  then  id: int := int$decode(s)
+			return(down(decode_terms[id]))
+		  else term_arr$addh(decode_terms, _cvt[int,term](0))
+		       spot := term_arr$high(decode_terms)
+		       % need to save this place in decode_terms;
+		       % others will be added by recursive calls in tree$decode
+		  end
+	       end
+	    contents: int := 0
+	    footprint: int := 0
+	    nops: int := 1
+	    nvars: int := 0
+	    tr: tree := tree$decode(s)
+	    tagcase tr
+	       tag var(v: variable):
+		   nops := 0
+		   nvars := 1
+		   contents := contains_variable
+	       tag funct(f: funct):
+		   footprint := f.root.footprint
+		   for arg: term in term_seq$elements(f.args) do
+		       contents := i_or(contents, down(arg).contents)
+		       footprint := i_or(footprint, down(arg).footprint)
+		       nops := nops + down(arg).nops
+		       nvars := nvars + down(arg).nvars
+		       end
+	       tag quant(q: quant):
+		   subt: rep := down(q.rest[1])
+		   contents := i_or(contains_quantifier, subt.contents)
+		   footprint := i_or(q.quant.pseudo_op.footprint,
+				     subt.footprint)
+		   nops := subt.nops + 1
+		   nvars := subt.nvars + 1
+	       end
+	    ans: rep :=
+		rep${bvars: vars_type$make_none(nil),
+		     contents: contents,
+		     enode: enode_type$make_none(nil),
+		     flipped: bool$decode(s),
+		     footprint: footprint,
+		     fvars: vars_type$make_none(nil),
+		     no_hardwired: tree$is_var(tr),
+		     nops: nops,
+		     nvars: nvars,
+		     ops: ops_type$make_none(nil),
+		     renamed: renamed_type$make_none(nil),
+		     tree: tr,
+		     unrenamed: renamed_type$make_none(nil)}
+	    if decode_canonicalize then decode_terms[spot] := up(ans) end
+	    return(ans)
+	    end resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	total_transmitted := total_transmitted + 1
+	begin
+	    if encode_canonicalize then
+	       id: int := canon_tab$image(encode_terms, up(c),
+					  term_hash, term_similar)
+	       total_repetitions := total_repetitions + 1
+	       bool$encode(true, s)      % found it
+	       int$encode(id, s)
+	       return
+	       end
+	       except when missing:       % didn't find it; - new cannonical term
+			   bool$encode(false, s)
+			   canon_tab$insert(encode_terms,
+					    up(c), canon_tab$size(encode_terms),
+					    term_hash, term_similar)
+		      end
+	    tree$encode(c.tree, s)
+	    bool$encode(c.flipped, s)
+	    end resignal not_possible
+	end encode
+	
+    % Turns canonicalization on/off for encode and decode.
+
+    % Sender and receiver must use the same value, and neither sender nor
+    % receiver should communicate to a third party when canonicalization is on.
+    % Returns the total number of terms transmitted (encoded or decoded) since
+    % the last call, and the total number of repetitions.  A repetition is
+    % a call to encode/decode for a term that was previously encoded/decoded
+    % since the last call to set_{en,de}code_canonicalize.
+    %
+    % Third return value: number of calls to encode/decode on a term that isn't
+    % the canonical representative.
+
+    % Note: When done encoding/decoding with canonicalization on, call
+    % these procedures again to free up storage.
+
+    set_encode_canonicalize = proc (b: bool) returns (int, int, int)
+	% disable; causes bug.
+	% to trigger: use 2 workers with canon enabled;
+	%  thaw 40 (wait for file current)
+	%  decl op dum:->Bool (wait for file current)
+	%  prove dum (hit return before current_xld_ack)
+	%return(0,0,0)
+	own last: bool := false
+	%return(0,0,0)
+	if b cand last
+	   then fail("term$set_encode_canonicalize -- nesting?")
+	   else last := b
+	   end
+	encode_canonicalize := b
+	canon_tab$delete_all(encode_terms)
+	trans: int := total_transmitted
+	repet: int := total_repetitions
+	redun: int := total_redundant
+	total_transmitted := 0
+	total_repetitions := 0
+	total_redundant := 0
+	return(trans, repet, redun)
+        end set_encode_canonicalize
+
+    set_decode_canonicalize = proc (b: bool)
+	own last: bool := false
+	%return
+	if b cand last
+	   then fail("term$set_decode_canonicalize -- nesting?")
+	   else last := b
+	   end
+	decode_canonicalize := b
+	decode_terms := term_arr$predict(term_arr$size(decode_terms), 0)
+	% array$trim impl doesn't enable gc of elements
+        end set_decode_canonicalize
+
+    end term
+
+
+
+% Returns a zero-ary term consisting of "op"
+
+term0 = proc (op: operator) returns (term)
+    own empty_seq: term_seq := term_seq$[]
+    return(term$make_funct(op, empty_seq))
+    end term0
+
+
+% Returns a unary term consisting of "op" applied to "t".
+
+term1 = proc (op: operator, t: term) returns (term)
+    return(term$make_funct(op, term_seq$[t]))
+    end term1
+
+
+% Returns a binary term consisting of "op" applied to "t1" and "t2".
+
+term2 = proc (op: operator, t1, t2: term) returns (term)
+    return(term$make_funct(op, term_seq$[t1, t2]))
+    end term2
+
+
+% Returns a ternary term consisting of "op" applied to "t1", "t2", and "t3".
+
+term3 = proc (op: operator, t1, t2, t3: term) returns (term)
+    return(term$make_funct(op, term_seq$[t1, t2, t3]))
+    end term3
+
+
+% Yields "(t1, 1)", ..., "(tn, n)" if "t" has the form "t1 /\ ... /\ tn".
+% Otherwise yields "(t, 0)".
+
+conjuncts = iter (t: term) yields (term, int)
+    if t.root = op_and() then
+       for i: int in term_seq$indexes(t.args) do yield(t.args[i], i) end
+       return
+       end except when wrong_tag: end
+    yield(t, 0)
+    end conjuncts
+
+
+% Returns the term "true" if "i = 0".  Signals "impossible" if "t" does not
+% have the form "t1 /\ ... /\ tn", "i < 0", or "i > n".  Otherwise returns the
+% term "t1 /\ ... /\ t_{i-1} /\ t_{i+1} /\ ... /\ tn".
+
+remove_conjunct = proc (t: term, i: int) returns (term) signals (impossible)
+    if i = 0 then return(term_true()) end
+    if t.root = op_and() then 
+       if term_seq$size(t.args) = 2 
+	  then return(t.args[3-i])
+	  else return(term$make_funct(op_and(), delete_at_seq[term](t.args, i)))
+	  end
+       end except when wrong_tag, bounds: end 
+    signal impossible 
+    end remove_conjunct
+
+
+% Yields "(t1, 1)", ..., "(tn, n)" if "t" has the form "t1 \/ ... \/ tn".
+% Otherwise yields "(t, 0)".
+
+disjuncts = iter (t: term) yields (term, int)
+    if t.root = op_or() then
+       for i: int in term_seq$indexes(t.args) do yield(t.args[i], i) end
+       return
+       end except when wrong_tag: end
+    yield(t, 0)
+    end disjuncts
+
+
+% Returns the term "false" if "i = 0".  Signals "impossible" if "t" does not
+% have the form "t1 \/ ... \/ tn", "i < 0", or "i > n".  Otherwise returns the
+% term "t1 \/ ... \/ t_{i-1} \/ t_{i+1} \/ ... \/ tn".
+
+remove_disjunct = proc (t: term, i: int) returns (term) signals (impossible)
+    if i = 0 then return(term_false()) end
+    if t.root = op_or() then 
+       if term_seq$size(t.args) = 2 
+	  then return(t.args[3-i])
+	  else return(term$make_funct(op_or(), delete_at_seq[term](t.args, i)))
+	  end
+       end except when wrong_tag, bounds: end 
+    signal impossible 
+    end remove_disjunct
+
+
+% The following procedures are used by the "find_instantiations" command in
+% DLP.
+
+% Returns true iff "t" denotes a predicate applied on arguments that are
+% variable-free literals. (A boolean constant is not a predicate; it's a
+% "term".)  (A literal does not contain boolean connectives or quantifiers.)
+
+is_ground_literal = proc (t: term) returns (bool)
+    own bool_connectives: op_set := 
+	    op_set$[op_or(), op_and(), op_iff(), op_bool_neq(), op_implies()]
+    if t.sort ~= bool_sort() cor var_set$size(t.fvars) ~= 0
+         cor t.has_quantifiers
+       then return(false)
+       end
+    % Note: t must be a funct (no free vars and no quantifiers)
+    if op_set$exists(bool_connectives, t.root) then return(false) end
+    for st: term in term_seq$elements(t.args) do
+	if ~is_ground_term(st) then return(false) end
+	end
+    return(true)
+    end is_ground_literal
+
+
+% Returns true iff "t" is a variable-free term constructed from boolean
+% constants and functions with non-boolean ranges.
+
+is_ground_term = proc (t: term) returns (bool)
+    if var_set$size(t.fvars) ~= 0 cor t.has_quantifiers then return(false) end
+    % CONSIDER: if var_set$size(t.vars) ~= 0 then return(false) end
+    % Note: t must be a funct (no free vars and no quantifiers)
+    for op: operator in op_set$elements(t.ops) do
+	sig: signature := op.sig
+	if sig.rng = bool_sort() cand sort_seq$size(sig.dom) > 0 then
+	   return(false)
+	   end
+	end
+    return(true)
+    end is_ground_term
+
+
+% Returns "t1" if "t" has the form "~t1"; otherwise returns "t".  Signals
+% "wrong_tag" if "t" is not the application of a function.
+
+strip_not = proc (t: term) returns (term) signals (wrong_tag)
+    if t.root = op_not() then return(t.args[1]) end
+       resignal wrong_tag
+    return(t)
+    end strip_not
+
+
+% Yields the subterms of "t", including "t" itself if "strict" is false.
+% Provides no guarantees about yielding duplicates.  Yielded terms may contain
+% free variables that are bound in "t".
+
+subterms = iter (t: term, strict: bool) yields (term)
+    if ~strict then yield(t) end
+    for sub: term in term_seq$elements(t.subterms) do
+	for sub2: term in subterms(sub, false) do yield(sub2) end
+	end except when wrong_tag: end  % "wrong_tag" means "t" is a variable
+    end subterms
+
+
+% Yields the boolean subterms of "t", including "t" itself if "strict" is false
+% and "t" is boolean.  Provides no guarantees about yielding duplicates.
+% Yielded terms may contain free variables that are bound in "t".
+
+boolean_subterms = iter (t: term, strict: bool) yields (term)
+    for sub: term in subterms(t, strict) do
+        if sub.sort = bool_sort() then yield(sub) end
+	end
+    end boolean_subterms

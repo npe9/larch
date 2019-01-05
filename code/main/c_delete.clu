@@ -1,0 +1,38 @@
+#extend
+
+% Processes the "delete" command.  If the user has not entered any input on the
+% same line as the command, prompts the user for it.  Attempts to interpret the
+% input as a list of fact types followed by a list of names.  Deletes those
+% facts of the specified types with the specified names.
+    
+c_delete = proc (i: interactive) signals (error)
+    own keys: keyword_table := keyword_table$[]
+    key: string, ns: name_set :=
+	query$one_name_set(i, "facts to delete", keys, false)
+       except when none, no_names (*): return
+	      when error: aborted(i.p, "error in names")
+	      end resignal error
+    system$delete(i.sys, ns)
+       except when reflatten_conj: prover$reflatten(i) end
+    end c_delete
+
+
+% (Unused) Gets a list of operators from the user.  Deletes them and all facts
+% and conjectures that contain them from the system.  ENHANCE: Reimplement
+% this.  Delete conjectures containing operator.  Disallow deleting built-in
+% operators and quantifiers.  Change to allow deleting variables too.
+
+delete_ops = proc (i: interactive) signals (error)
+    ops: op_arr := query$operators("operators", i.symtab)
+       except when none: return
+	      when error: aborted(i.p, "illegal operator")
+	      end resignal error
+    for op: operator in op_arr$elements(ops) do
+	symtab$delete_op(i.symtab, op)
+	system$delete_operator(i.sys, op)
+	end
+    printer$text(i.p, "\nDeleted " ||
+		      plural_noun("operator", op_arr$size(ops)) || ".\n")
+    end delete_ops
+
+

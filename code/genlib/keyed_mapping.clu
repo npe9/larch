@@ -1,0 +1,247 @@
+#extend
+
+% A "keyed_mapping" maps objects of type "dom" to objects of type "ran" using
+% positive integer keys, when such keys exist.  It is useful when the keys are
+% nearly contiguous, so that they can be used directly (i.e., without hashing)
+% as indices into an array.  When keys are zero, a "keyed_mapping" works just
+% like an ordinary mapping.
+
+keyed_mapping = cluster [dom, ran: type] is
+	new, predict, insert, image, change_image, delete, exists, any_pair,
+	elements, domain, range, size, empty, equal, copy, _gcd, decode,
+	encode
+	    where dom in ok_type, ran in ok_type,
+		  dom has get_key: proctype (dom) returns (int)
+
+    ok_type = {t | t has copy: proctype (t) returns (t),
+			 equal: proctype (t, t) returns (bool),
+			 similar: proctype (t, t) returns (bool),
+			 _gcd: proctype (t, gcd_tab) returns (int)}
+
+    rep       = record[entries: entry_arr, rest: fin_map, size: int]
+    entry_arr = array[entry]
+    entry     = oneof[exists: pair, missing: null]
+    pair      = record[dom: dom, rng: ran]
+    dom_set   = set[dom]
+    ran_set   = set[ran]
+    fin_map   = mapping[dom, ran]
+
+
+    % Returns a new, empty mapping.  Note that using the "#extend" mode of the
+    % compiler, the form "keyed_mapping$[]" can be used to invoke this
+    % operation.
+
+    new = proc () returns (cvt)
+	return(rep${entries: entry_arr$[], rest: fin_map$[], size: 0})
+	end new
+
+
+    % Returns a new mapping, where it is predicted that domain elements with
+    % keys up to "k" will be inserted.  This may allow "insert" operations on
+    % the returned mapping to execute somewhat faster.  Signals
+    % "nonpositive_size" if "k" is <= 0.
+
+    predict = proc (k: int) returns (cvt) signals (nonpositive_size)
+	if k <= 0 then signal nonpositive_size end
+	return(rep${entries: entry_arr$predict(1, k), 
+	            rest: fin_map$[], 
+		    size: 0})
+	end predict
+
+
+    % Defines "m(d)" to be "r".  Signals "exists", and does not change "m", if
+    % "m(d)" is already defined.  Signals "impossible" if "d" has a negative
+    % key or if some other element in the domain of "m" has the same key as
+    % "d".
+
+    insert = proc (m: cvt, d: dom, r: ran) signals (exists, impossible)
+	if entry$value_exists(m.entries[d.key]).dom = d
+	   then signal exists
+	   else signal impossible
+	   end
+	   except when bounds:
+		       if d.key < 0 then signal impossible end
+		       if d.key = 0 then
+			  fin_map$insert(m.rest, d, r)
+			  m.size := m.size + 1
+			  return
+			  end resignal exists
+		       while entry_arr$size(m.entries) < d.key do
+			   entry_arr$addh(m.entries, entry$make_missing(nil))
+			   end
+		  when wrong_tag:
+		  end
+	m.entries[d.key] := entry$make_exists(pair${dom: d, rng: r})
+	m.size := m.size + 1
+	end insert
+
+
+    % Returns "m(d)".  Signals "missing" if "m(d)" is undefined.
+
+    image = proc (m: cvt, d: dom) returns (ran) signals (missing)
+	return(find_pair(m, d).rng)
+	   except when missing: end
+	if d.key ~= 0 then signal missing end
+	return(fin_map$image(m.rest, d))
+	   resignal missing
+	end image
+
+
+    % Changes "m(d)" to be "r".  Signals "missing" and does not change "m" if
+    % "m(d)" is undefined.
+
+    change_image = proc (m: cvt, d: dom, r: ran) signals (missing)
+	find_pair(m, d).rng := r
+	   except when missing: end
+	if d.key ~= 0 then signal missing end
+	if fin_map$exists(m.rest, d) 
+	   then fin_map$change(m.rest, d, r)
+	   else signal missing
+	   end
+	end change_image
+
+
+    % Makes "m(d)" undefined; returns its old value.  Signals "missing" and
+    % does not changed "m" if it is already undefined.
+
+    delete = proc (m: cvt, d: dom) returns (ran) signals (missing)
+	r: ran := find_pair(m, d).rng
+	   except when missing:
+		       if d.key ~= 0 then signal missing end
+		       r := fin_map$delete(m.rest, d)
+		       m.size := m.size - 1
+		       return(r)
+		  end
+	m.entries[d.key] := entry$make_missing(nil)
+	m.size := m.size - 1
+	return(r)
+	end delete
+
+
+    % Returns "true" if "m(d)" is defined.
+
+    exists = proc (m: cvt, d: dom) returns (bool)
+	find_pair(m, d)
+	   except when missing: 
+	          return(d.key = 0 cand fin_map$exists(m.rest, d))
+		  end
+	return(true)
+	end exists
+
+
+    % Returns some "d" and "r" such that "m(d) = r".  Signals "empty" if "m" is
+    % completely undefined.
+
+    any_pair = proc (m: cvt) returns (dom, ran) signals (empty)
+	if m.size = 0 then signal empty end
+	for d: dom, r: ran in elements(up(m)) do
+	    return(d, r)
+	    end
+	end any_pair
+
+
+    % Yields all "d" and "r" such that "m(d) = r".
+
+    elements = iter (m: cvt) yields (dom, ran)
+	for e: entry in entry_arr$elements(m.entries) do
+	    p: pair := entry$value_exists(e)
+	       except when wrong_tag: continue end
+	    yield(p.dom, p.rng)
+	    end
+	for d: dom, r: ran in fin_map$elements(m.rest) do
+	    yield(d, r)
+	    end
+	end elements
+
+
+    % Returns the domain of "m"; i.e., returns a set containing each of the
+    % domain objects in "m".
+
+    domain = proc (m: cvt) returns (dom_set)
+	ds: dom_set := dom_set$predict(m.size)
+        for d: dom, r: ran in elements(up(m)) do
+	    dom_set$insert_unique(ds, d)
+	    end
+	return(ds)
+	end domain
+
+
+    % Returns the range of "m"; i.e., returns a set containing each of the
+    % range objects in "m".
+
+    range = proc (m: cvt) returns (ran_set)
+	rs: ran_set := ran_set$[]
+        for d: dom, r: ran in elements(up(m)) do
+	    ran_set$insert(rs, r)
+	       except when exists: end
+	    end
+	return(rs)
+	end range
+
+
+    % Returns the size of the domain of "m".
+
+    size = proc (m: cvt) returns (int)
+	return(m.size)
+	end size
+
+
+    % Returns "true" if "m" is completely undefined.
+
+    empty = proc (m: cvt) returns (bool)
+	return(m.size = 0)
+	end empty
+
+
+    % Returns "true" if "m1" and "m2" are the same object.
+
+    equal = proc (m1, m2: cvt) returns (bool)
+	return(m1 = m2)
+	end equal
+
+
+    % Returns a copy of "m".
+
+    copy = proc	(m: cvt) returns (cvt)
+	return(rep$copy(m))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    % The following do not preserve sharing
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where dom has decode: proctype(istream) returns (dom)
+    	 	              signals (end_of_file, not_possible(string)),
+	      ran has decode: proctype(istream) returns (ran)
+    	 	              signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where dom has encode: proctype(dom, istream)
+			      signals(not_possible(string)),
+	      ran has encode: proctype(ran, istream)
+			      signals(not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    % (Internal procedure) Returns the pair in "m.entries" that contains "d".
+    % Signals "missing" if there is no such pair.
+
+    find_pair = proc (m: rep, d: dom) returns (pair) signals (missing)
+	p: pair := entry$value_exists(m.entries[d.key])
+	   except when bounds, wrong_tag: signal missing end
+        if p.dom = d then return(p) else signal missing end
+	end find_pair
+
+
+    end keyed_mapping

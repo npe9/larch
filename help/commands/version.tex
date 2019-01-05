@@ -1,0 +1,23 @@
+\doc{The version command}
+\ref{version-command}
+
+The \def{version command} redisplays the identifying information that LP prints
+when it starts up.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{version-command} ::= \f{version}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+version
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{version} command causes LP to identify which version of LP is being run
+and how it was installed.  In particular, it reports the maximum size for LP's
+heap (which limits the size of LP's logical system and proof stack) and the
+identity of the directory \fq{~lp} that LP
+\dlink{../settings/lp-path}{searches} for help messages and examples.
+

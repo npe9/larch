@@ -1,0 +1,48 @@
+\doc{Hints on orienting formulas into rewrite rules}
+\ref{hints-ordering}
+
+If you put some well-selected ordering constraints in the
+\dlink{../commands/register}{registry}, LP will
+\dlink{../commands/order}{orient} formulas more quickly and with fewer 
+surprises.  Put the \llink{induction-rule}{generators} for a sort, such as
+\fq{0} and \fq{s} for \fq{Nat}, at the bottom of the registry.  Enter
+defining formulas, such as \fq{P(x) = P1(x) /\ P2(x)}, with the term being
+defined on the left side of the equality sign.
+\p
+When a proof fails unexpectedly, look at the rewrite rules to see if any are
+oriented in surprising directions.  If so, there are several potentially useful
+things to try.
+
+\begin{itemize}
+\item
+Set \setlink{automatic-registry} \fq{ off}, instruct LP to \clink{order} only
+the offending formula, and choose one of the presented
+\dlink{../ordering/interactive}{suggestions} that order the formula as desired.
+Then add \cflink{register} commands corresponding to that suggestion to your
+command file and try running the proof again.
+\p
+\item
+Alternatively, rerun the proof at a \setlink{trace-level} (e.g., 2) that prints
+out extensions to the registry; then use a text editor and the \f{.lplog} file
+to locate extensions dealing with operators appearing in the offending rewrite
+rule.  This may suggest a set of \cflink{register} commands that will force the
+formulas to be ordered as desired.
+\p
+\item
+Alternatively, rerun the proof with \setlink{automatic-registry} \fq{off} to
+find a set of suggestions that will order things the way you want them.  Then
+add \cflink{register} commands with the appropriate suggestions to your command
+file, and execute it again with \setlink{automatic-registry} \fq{on}.  This
+last step is important because proof scripts with \setlink{automatic-registry}
+\fq{off} are not usually robust.
+\end{itemize}
+
+Occasionally, LP will fail to orient a set of formulas for which a terminating
+set of rewrite rules does indeed exist.  At this point you should consider
+changing the ordering to use a more powerful ordering strategy (e.g., the
+\dflink{../ordering/dsmpos}{dsmpos} ordering rather than  \f{noeq-dsmpos}) or 
+an ordering strategy that makes no attempt to check termination (e.g.,
+\dflink{../ordering/brute-force}{left-to-right}).  It is also worth keeping in
+mind that although LP will not automatically give operators equal height when
+using \f{noeq-dsmpos}, the \cflink{register} command can be used to do so
+explicitly.

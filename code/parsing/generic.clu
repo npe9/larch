@@ -1,0 +1,142 @@
+#extend
+
+% This file contains generic procedures for parsing and unparsing syntactic
+% items.  In these procedures, "label" (e.g., "term") is a name for the type
+% "t" of an item.
+
+
+% Parses "s" and returns the corresponding item of type "t".  Writes a message
+% to "error", and signals "error", if "s" does not represent an item of type
+% "t".
+
+parse_item = proc [t: type] (itemKind, s: string, error: printer) returns (t)
+	       signals (error)
+	    where t has read: proctype (scanner) returns (t) signals (error)
+    scan: scanner := scanner$from_string(s, error)
+    item: t := t$read(scan)
+       resignal error
+    if token$is_eof(scan.nextToken) then return(item) end
+    scanner$error(scan, "expecting end of " || itemKind)
+    signal error
+    end parse_item
+
+
+% Parses "s" as an item of type "t" constructed from identifiers in "stab" and
+% returns the corresponding item.  Writes a message to "error", and signals
+% "error", if "s" does not represent an item of type "t".
+
+parse_item_with_ids = proc [t: type] (itemKind, s: string, stab: symtab,  
+				      error: printer)
+			returns (t) signals (error)
+	    where t has read: proctype (scanner, symtab) returns (t)
+				signals (ambiguous(string), error)
+    scan: scanner := scanner$from_string(s, error)
+    begin
+	item: t := t$read(scan, stab)
+	if token$is_eof(scan.nextToken) then return(item) end
+	scanner$error(scan, "expecting end of " || itemKind)
+	end except when ambiguous, error (*): end
+    signal error
+    end parse_item_with_ids
+
+
+% Returns a string denoting "item" suitable for printing on the terminal.
+    
+unparse_item = proc [t: type] (item: t) returns (string)
+	    where t has print: proctype (printer, t)
+    s: stream := stream$create_output()
+    p: printer := printer$create_stream(s)
+    t$print(p, item)
+    printer$end_of_output(p)
+    unp: string := stream$get_contents(s)
+    stream$close(s)
+    return(unp)
+    end unparse_item
+
+
+
+% Returns a string denoting "item" suitable for printing on the terminal.
+% Uses the current "display-mode" setting to determine how to qualify "item".
+
+unparse_item_with_ids = proc [t: type] (item: t) returns (string)
+	    where t has print: proctype (printer, t, symtab)
+    s: stream := stream$create_output()
+    p: printer := printer$create_stream(s)
+    t$print(p, item, symtab$blank())
+    printer$end_of_output(p)
+    unp: string := stream$get_contents(s)
+    stream$close(s)
+    return(unp)
+    end unparse_item_with_ids
+
+
+% Prettyprints the elements of "a" as a comma-separated list preceded by the
+% label "header" in one of the following formats:
+%      (1) header list
+%      (2) header
+%            list
+% Prints nothing if "a" is empty.
+ 
+print_arr = proc [t: type](p: printer, header: string, a: t_arr)
+	    where t has print: proctype (printer, t)
+    t_arr = array[t]
+    if t_arr$empty(a) then return end
+    printer$text(p, "~{")
+    printer$text(p, header)
+    printer$text(p, "~2I~1A~{")
+    printed: bool := false
+    for x: t in t_arr$elements(a) do
+	if printed then printer$text(p, ", ") end
+	t$print(p, x)
+	printed := true
+	end
+    printer$text(p, "~}~}\n")
+    end print_arr
+
+    
+% The same as "print_arr", but for types "t" that require a symbol table for
+% printing.
+ 
+print_arr_with_ids = proc [t: type](p: printer, header: string, a: t_arr, 
+			            stab: symtab)
+	    where t has print: proctype (printer, t, symtab)
+    t_arr = array[t]
+    if t_arr$empty(a) then return end
+    printer$text(p, "~{")
+    printer$text(p, header)
+    printer$text(p, "~2I~1A~{")
+    printed: bool := false
+    for x: t in t_arr$elements(a) do
+	if printed then printer$text(p, ", ") end
+	t$print(p, x, stab)
+	printed := true
+	end
+    printer$text(p, "~}~}\n")
+    end print_arr_with_ids
+
+
+% The same as "print_arr", but appends a line consisting of ".." if the output
+% occupies more than one line.
+
+write_arr = proc [t: type](p: printer, header: string, a: t_arr)
+	    where t has print: proctype (printer, t)
+    t_arr = array[t]
+    line: int := p.total_lines
+    print_arr[t](p, header, a)
+    if p.total_lines > line + 1 then printer$text(p, "..\n") end
+    end write_arr
+
+    
+% The same as "print_arr_with_ids", but appends a line consisting of ".." if
+% the output occupies more than one line.
+
+write_arr_with_ids = proc [t: type](p: printer, header: string, a: t_arr, 
+			            stab: symtab)
+	    where t has print: proctype (printer, t, symtab)
+    t_arr = array[t]
+    line: int := p.total_lines
+    print_arr_with_ids[t](p, header, a, stab)
+    if p.total_lines > line + 1 then printer$text(p, "..\n") end
+    end write_arr_with_ids
+
+

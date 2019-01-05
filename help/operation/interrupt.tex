@@ -1,0 +1,13 @@
+\doc{Interrupting LP}
+\ref{interrupting}
+\ref{interrupts}
+
+Often one wants to interrupt an \cflink{execute}, \cflink{order}, 
+\cflink{critical-pairs}, or \cflink{complete} command (e.g., to change the 
+\dlink{../commands/register}{registry}, to \clink{display} the system, to alter
+the \setlink{trace-level}, or to \dflink{../commands/freeze_thaw}{freeze} the
+system).  This can be done by typing \fq{^G} (hold down the control key and
+type \fq{g}), which will return the user to the LP command level (it may take
+several seconds for this to happen).  The \cflink{complete} and \cflink{order}
+commands can be issued again to resume their execution.
+

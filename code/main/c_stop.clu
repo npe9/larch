@@ -1,0 +1,12 @@
+#extend
+
+% Processes the "stop" command.  Terminates execution of all script files.
+    
+c_stop = proc (i: interactive) signals (error)
+    check_end_of_line(i.io)
+       resignal error
+    while true do iodev$stop_reading_script(i.io, false) end
+       except when no_script: end
+    end c_stop
+
+    

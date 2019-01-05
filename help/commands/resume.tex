@@ -1,0 +1,30 @@
+\doc{The resume command}
+\ref{resume-command}
+
+The \def{resume command} allows the user to resume work on the current
+conjecture.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{presume-command} ::= \f{resume} [ \f{by} \s{proof-method} ]
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+resume by induction on i
+resume by cases x < 0, x = 0, x > 0
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{resume} command resumes work on the current conjecture using the
+specified method.  If no method is specified, LP uses the method in effect when
+the proof was suspended.  
+
+\head{2}{See also}
+
+\begin{itemize}
+\item The \cflink{prove} command
+\end{itemize}
+
+

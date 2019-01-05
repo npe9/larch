@@ -1,0 +1,29 @@
+\doc{The rewriting-limit setting}
+\ref{rewriting-limit-setting}
+
+The \def{rewriting-limit setting} sets an upper bound on the number of
+reductions that LP will perform when normalizing a term with respect to a
+rewriting system that is not guaranteed to terminate.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-rewriting-limit-command} ::= \f{set rewriting-limit} \slink{../symbols/symbols}{number}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set rewriting-limit 50
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{rewriting-limit} setting is local to the current proof context.  Its
+default value is 1000.
+\p
+If LP exceeds the rewriting limit when \olink{normalization}{normalizing} a
+formula, rewrite rule, or deduction rule, it
+\dlink{../settings/immunity}{immunizes} that fact.  If it exceeds the rewriting
+limit when attempting to prove a conjecture by normalization or rewriting, the
+user can continue normalizing the conjecture by typing \cflink{resume} (after
+raising the rewriting limit, if desired).
+

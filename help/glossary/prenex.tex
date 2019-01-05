@@ -1,0 +1,49 @@
+\doc{Prenex form}
+\ref{prenex-existential}
+\ref{prenex-universal}
+\ref{prenex-formula}
+
+Every formula is logically equivalent to a \def{prenex formula}, that is, to a
+formula consisting of a string of quantifiers applied to a quantifier-free
+formula.  For example, the following formulas are logically equivalent:
+\begin{verbatim}
+\E w \A x P(w, x) => \A y \E z P(z, y)
+\A w \A y \E x \E z (P(w, x) => P(z, y))
+\A w \A y \E x (P(w, x) => P(x, y))
+\end{verbatim}
+Every quantifier in a formula can be classified as a \def{prenex-universal}, a
+\def{prenex-existential} quantifier, or neither depending on whether it
+corresponds to a universal (\f{\A}) quantifier, an existential (\f{\E})
+quantifier, or more than one quantifier in a systematically derived logically
+equivalent prenex formula.  The leading quantifiers in \fq{\A x P} and 
+\fq{\E x P} are prenex-universal and prenex-existential quantifiers, 
+respectively.  If a quantifier is prenex-universal (prenex-existential) in
+\fq{P}, then it is the same in \fq{P /\ Q}, \fq{P \/ Q}, \fq{Q => P}, 
+\fq{\A y P}, and \fq{\E y P}; it is prenex-existential (prenex-universal) in 
+\fq{~P} and \fq{P => Q}; and it is neither in any other formula, e.g., in 
+\fq{P <=> Q}.
+\p
+Formulas can be transformed systematically into prenex formulas using changes
+of bound variables and the following logical validities.
+\begin{verbatim}
+\A x P         <=>  P                            (x not free in P)
+\E x P         <=>  P                            (x not free in P)
+\A x ~P        <=>  ~\E x P
+\E x ~P        <=>  ~\A x P
+\A x (P /\ Q)  <=>  \A x P /\ \A x Q
+\E x (P /\ Q)  <=>  \E x P /\ Q                  (x not free in Q)
+\A x (P \/ Q)  <=>  \A x P \/ Q                  (x not free in Q)
+\E x (P \/ Q)  <=>  \E x P \/ \E x Q
+\A x (P => Q)  <=>  \E x P) => Q                 (x not free in Q)
+\A x (P => Q)  <=>  P => \A x Q                  (x not free in P) 
+\E x (P => Q)  <=>  \A x P => \E x Q
+F(\A x P)      <=>  (F(true) /\ \A x P) 
+                       \/ (F(false) /\ ~\A x P)
+\end{verbatim}
+\p
+The \cflink{instantiate} and \cflink{fix} commands enable users to eliminate
+certain prenex-universal and prenex-existential quantifiers from facts.  The
+\dlink{../proof/by-generalization}{generalization} and
+\dlink{../proof/by-specialization}{specialization} proof methods provide the 
+corresponding functionality for conjectures.
+

@@ -1,0 +1,145 @@
+#extend
+
+% This file exports the procedures "embed" and "embed_var", which are used to
+% rewrite terms involving the conditional operator "if".  All other procedures
+% should be considered as internal procedures.
+
+
+% Assumes "t1", "t2" are variable-free terms.  If "t1" occurs as a subterm of
+% "t2", returns a term "t3" in which "t1" does not occur as a subterm such that
+% "t2" is "t3[embed_var() gets t1]".  Otherwise signals "no_match".
+
+embed = proc (t1, t2: term, osys: op_system) returns (term) signals (no_match)
+
+    % Perform some quick checks to determine if a match is plausible
+    if t1.size > t2.size then signal no_match end
+    % NOTE: This used to be "cor ~op_set$is_subset(t1.ops, t2.ops)".  To
+    % allow embedding modulo changes of bound variables, however, we need to
+    % exclude renamed bound variables from the subset check.  The following
+    % code also excludes renamed free variables from the subset check.  This
+    % could be improved.
+    ops2: op_set := t2.ops
+    for op: operator in op_set$elements(t1.ops) do
+	if ~operator$is_renamed_variable(op) cand ~op_set$exists(ops2, op) then
+	    signal no_match
+	    end
+	end
+
+    % Try to embed composite "t1" at top level in composite "t2"
+    op: operator := t1.root_or_quant
+    if op = t2.root_or_quant then
+       ot: op_theory := op_system$lookup_theory_quickly(osys, op)
+       return(ot.embed(t1, t2, osys)) except when no_match: end
+       end except when wrong_tag: fail("embed: variable in term.") end
+
+    % Try to embed composite "t1" in the subterms of composite "t2"
+    matched: bool := false
+    i: int := 0
+    for arg: term in term_seq$elements(t2.subterms) do
+	i := i + 1
+	t2 := term$replace_arg(t2, i, embed(t1, arg, osys))
+	   except when no_match: continue end
+	matched := true
+	end
+    if ~matched then signal no_match end
+    return(flatten(t2, osys))
+
+    end embed
+
+
+% If "t1" is the same term as "t2", returns a term "t3" consisting of the
+% variable "embed_var()", so that "t2" is "t3[embed_var() gets t1]".  Otherwise
+% signals "no_match".
+
+embed_empty = proc (t1, t2: term, osys: op_system) returns (term) 
+		signals (no_match)
+    if term$equal(t1, t2) 
+       then return(embed_var_as_term())
+       else signal no_match
+       end
+    end embed_empty
+
+
+% Assumes that "t1" and "t2" have the same commutative root operator.  If "t1"
+% is the same term as "t2", or as "t2" with its arguments transposed, returns a
+% term "t3" consisting of the variable "embed_var()", so that "t2" is 
+% equivalent (modulo commutativity) to "t3[embed_var() gets t1]".  Otherwise 
+% signals "no_match".
+
+embed_c = proc (t1, t2: term, osys: op_system) returns (term) 
+    	    signals (no_match)
+    if term$equal(t1, t2) then return(embed_var_as_term()) end
+    t1 := term$flip_args(t1)
+    if term$equal(t1, t2) then return(embed_var_as_term()) end
+    signal no_match
+    end embed_c
+
+
+% Assumes that "t1" and "t2" have the same AC root operator.  If the arguments
+% of "t1" are a subset of those of "t2", returns a term "t3" in which "t1" does
+% not occur as a subterm such that "t2" is "t3[embed_var() gets t1]".  
+% Otherwise signals "no_match".
+
+embed_ac = proc (t1, t2: term, osys: op_system) returns (term)
+    	     signals (no_match)
+
+    args3: term_arr := term_seq$s2a(t2.args)
+    count: int := 0
+    while term_arr$size(args3) >= term_seq$size(t1.args) do
+	args3 := remove_term_seq(t1.args, args3)
+	count := count + 1
+	end except when not_removed: end
+
+    if count = 0 then signal no_match end
+    for i: int in int$from_to(1, count) do
+	term_arr$addh(args3, embed_var_as_term())
+	end
+    if term_arr$size(args3) = 1 then return(args3[1]) end
+    for i: int in int$from_to(1, term_arr$size(args3) - count) do
+	args3[i] := embed(t1, args3[i], osys) except when no_match: end
+	end
+    return(flatten(term$make_funct(t2.root, term_seq$a2s(args3)), osys))
+
+    end embed_ac
+
+
+% If the terms in "ts" occur in order in "ta", returns an array equal to "ta"
+% with the terms in "ts" removed.  Otherwise signals "none_removed".
+
+remove_term_seq = proc (ts: term_seq, ta: term_arr) returns (term_arr) 
+		    signals (not_removed)
+    to_match: int := term_seq$size(ts)
+    ta1: term_arr := term_arr$[]    % Unmatched terms from ta
+    next: int := 1
+    for t: term in term_seq$elements(ts) do
+	for i: int in int$from_to(next, term_arr$size(ta) + 1 - to_match) do
+	    if term$equal(t, ta[i])
+	       then to_match := to_match - 1
+		    next := i + 1
+		    exit matched_term
+	       else term_arr$addh(ta1, ta[i])
+	       end
+	    end except when matched_term: continue end
+	signal not_removed
+	end
+    for i: int in int$from_to(next, term_arr$size(ta)) do
+	term_arr$addh(ta1, ta[i])
+	end
+    return(ta1)
+    end remove_term_seq
+
+
+% Returns the variable used to replace embedded subterms.
+
+embed_var = proc () returns (variable)
+    own v: variable := variable$make_internal(0, bool_sort())
+    return(v)
+    end embed_var
+
+
+% Returns an atomic term containing the variable "embed_var()".
+
+embed_var_as_term = proc () returns (term)
+    own t: term := term$make_var(embed_var())
+    return(t)
+    end embed_var_as_term

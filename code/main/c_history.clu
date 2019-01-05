@@ -1,0 +1,54 @@
+#extend
+
+% Processes the "history" command by displaying the recent history of commands
+% executed by LP.  NOTE: Command identifiers are not displayed in order to make
+% the output replayable.
+
+c_history = proc (i: interactive) signals (error)
+    msg = "argument must be `all' or a positive integer"
+    hist: command_arr := i.io.history
+    start: int := command_arr$low(hist)
+    stop: int := command_arr$high(hist)
+    i.history_size := history_args(i.io)
+       except when default:
+	      when all: i.history_size := 0
+	      when error: aborted(i.p, msg)
+	      end resignal error
+    if i.history_size > 0 then
+       start := int$max(start, stop - i.history_size + 1)
+       end
+    iodev$putl(i.io, "")
+    for j: int in int$from_to(start, stop) do
+	if iodev$interrupt() then
+	   printer$error(i.p)
+	   printer$text(i.p, "\nCommand aborted: interrupt.\n")
+	   return
+	   end
+	cr: command_record := hist[j]
+	com: string := cr.command
+	while true do
+	    head, delim, tail: string := string_divide(com, "\n")
+	    iodev$putl(i.io, head)
+	    if string$empty(tail) then break end
+	    com := tail
+	    end
+	end
+    end c_history
+
+
+% Get the optional argument for the "history" command by reading the rest of
+% the current line of input.  Signals "default" if there is no more input on
+% the current line.  Signals "all" if the argument is "all".  Returns a
+% positive integer if that is the argument.  Otherwise signals error.
+    
+history_args = proc (io: iodev) returns (int) signals (default, all, error)
+    if ~iodev$pending_input(io) then signal default end
+    s: string := trim_both(iodev$getl(io))
+    if slower(s) = "all" then signal all end
+    n: int := int$parse(s)
+       except when overflow, bad_format: signal error end
+    if n < 1 then signal error end
+    return(n)
+    end history_args
+
+

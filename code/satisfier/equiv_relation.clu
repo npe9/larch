@@ -1,0 +1,195 @@
+#extend  
+
+% A "equiv_relation" is an undoable equivalence relation on a set of elements
+% of type "t".  Elements can be inserted into the equivalence relation, and
+% equivalence classes can be merged.  The functions "save" and "undo" obey the
+% axioms:
+%       undo(save(R)) = R
+%	undo(insert(R, x)) = undo(R)
+%       undo(merge(R, x, y)) = undo(R)
+% Elements that are designated as "special" are always the representatives of
+% their equivalence classes.  Hence it is impossible to merge two different
+% equivalence classes that contain special elements.
+
+
+equiv_relation = cluster [t: type] is 
+	new, insert, insert_special, merge, elements, eq_class, size, 
+	save, undo, _gcd
+	    where t has 
+		  equal, same_object: proctype (t, t) returns (bool),
+		  get_in_relation: proctype (t) returns (bool),
+		  set_in_relation: proctype (t, bool),
+		  get_next_in_class, get_class_rep: proctype (t) returns (t),
+		  set_next_in_class, set_class_rep: proctype (t, t),
+		  get_class_size: proctype (t) returns (int),
+		  set_class_size: proctype (t, int)
+
+    rep 	= record[elements: t_arr, undo: undo_stack]
+    t_arr	= array[t]
+    undo_stack 	= array[undo_info]		    
+    undo_info  	= oneof[old_rep: t, old_size: int]
+
+    % Abstraction function
+    % A(r) is the sequence "equiv_r_1, ..., equiv_r_n" of equivalence 
+    % relations, where
+    %  "domain(equiv_r_n) = elements(r.elements)"
+    %  "x" is equivalent to "y" in "equiv_r_n" iff "x.class_rep = y.class_rep"
+    %  "x" is special iff "x.class_size >= maxsize"
+    
+    % DOCUMENT: definition of equiv_r_i for i < n
+    
+    % Representation invariants:
+    %  r.elements contains no duplicates
+    
+
+    own maxsize: int := maxint()/2
+
+    % Returns a new, empty equivalence relation.
+    
+    new = proc () returns (cvt)
+	return(rep${elements: t_arr$[], undo: undo_stack$[]})
+	end new
+
+    
+    % Modifies: r
+    % Ensures:  if (exists y)(y \in r /\ similar(x, y))
+    %		then r' = r^ /\ result \in r^ /\ similar(x, result)
+    %		else r' = make_equiv(r^, x, x) /\ result = x
+    
+    insert = proc (r: cvt, x: t) returns (t)  
+	if x.in_relation then return(x) end
+	for y: t in t_arr$elements(r.elements) do
+	    if x = y then return(y) end
+	    end
+	x.in_relation := true
+	t_arr$addh(r.elements, x)
+	return(x)
+        end insert
+    
+    
+    % Requires: ~(x \in r)
+    % Ensures:  r' = make_equiv(r^, x, x) /\ special(x)
+
+    insert_special = proc (r: cvt, x: t)
+	x.in_relation := true
+	x.class_size := maxsize
+	t_arr$addh(r.elements, x)
+	end insert_special
+    
+    
+    % Requires: x \in r^ /\ y \in r^
+    % Modifies: r
+    % Ensures:  if special(x) /\ special(y)
+    %           then r' = r^ /\ signals(forbidden)
+    %		else r' = make_equiv(r^, x, y)
+
+    merge  = proc (r: cvt, x, y: t) signals (forbidden)
+	x := x.class_rep
+	y := y.class_rep
+	if x = y then return end
+	% Guarantee that "y.class_size >= x.class_size"
+	if x.class_size > y.class_size then x, y := y, x end
+	if x.class_size >= maxsize then signal forbidden end
+	% Merge equivalence classes, making "y" the representative
+	union(x, y) 
+	undo_stack$addh(r.undo, undo_info$make_old_rep(x))
+	end merge
+
+    
+    % Yields: each element in "r"
+    
+    elements = iter (r: cvt) yields (t)
+	for x: t in t_arr$elements(r.elements) do yield(x) end
+	end elements
+
+
+    % Requires: x \in r^
+    % Yields:   each element equivalent to "x" , but not "x" itself
+    
+    eq_class = iter (r: cvt, x: t) yields (t)
+	y: t := x.next_in_class
+	while ~t$same_object(x, y) do
+	    yield(y)
+	    y := y.next_in_class
+	    end
+        end eq_class
+    
+    
+    % Returns the number of elements in "r".
+    
+    size = proc (r: cvt) returns (int)
+	return(t_arr$size(r.elements))
+	end size
+    
+    
+    % Modifies: r
+    % Effects:  r' = save(r^)
+    
+    save = proc (r: cvt)
+	n: int := t_arr$size(r.elements)
+	undo_stack$addh(r.undo, undo_info$make_old_size(n))
+	end save
+    
+    
+    % Modifies: r
+    % Effects:  r' = undo(r^)
+    % Signals:  empty if undo is not defined
+    
+    undo = proc (r: cvt) signals (empty)
+	while true do
+	    tagcase undo_stack$remh(r.undo)
+	       tag old_rep  (u: t):   unmerge(u)
+	       tag old_size (n: int): t_arr$trim(r.elements, 1, n)
+				      break
+	       end
+	    end except when bounds: signal empty end
+	end undo
+    
+    
+    % Internal procedures
+
+    
+    % Merges the equivalence classes of "u" and "v", making "v" the
+    % representative of the class.
+    
+    union = proc (u, v: t)
+	reroot(u, v)
+	v.class_size := v.class_size + u.class_size
+	temp: t := u.next_in_class
+	u.next_in_class := v.next_in_class
+	v.next_in_class := temp
+	end union
+
+
+    % Makes "v" the representative of the equivalence class of "u".
+
+    reroot = proc (u, v: t)
+	done: t := u
+	while true do
+	    u.class_rep := v
+	    u := u.next_in_class
+	    if t$same_object(u, done) then return end
+	    end
+	end reroot
+
+
+    % Undoes the effects of "an earlier union(u, v)".
+    
+    unmerge = proc (u: t)
+	v: t := u.class_rep
+	v.class_size := v.class_size - u.class_size
+	temp: t := u.next_in_class
+	u.next_in_class := v.next_in_class
+	v.next_in_class := temp
+	reroot(u, u)
+	end unmerge
+
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where t in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end equiv_relation

@@ -1,0 +1,25 @@
+\doc{Proofs of conditionals}
+\ref{proof-of-conditional}
+\ref{if-method}
+
+Proofs of formulas involving the conditional operator \fq{if} can be carried
+out using a simplified proof by cases.  The commands
+\begin{verbatim}
+prove if t1 then t2 else t3 by if-method
+prove (if t1 then t2 else t3) = t4 by if-method
+\end{verbatim}
+direct LP to prove the conjectures by division into two cases, \fq{t1} and
+\fq{~t1}.  LP substitutes new \llink{constant}{constants} for the free 
+variables of \fq{t1} in all terms \fq{ti} to obtain terms \fq{ti'}.  In the
+first case, it assumes \fq{t1'} as an additional hypothesis and attempts to
+prove \fq{t2'} (or \fq{t2' = t4'}) as a subgoal.  In the second case, it
+assumes \fq{t1' = false} as an additional hypothesis and attempts to prove
+\fq{t3'} (or \fq{t3' = t4'}).  The names of the hypotheses have the form
+\s{simpleId}\fq{IfHyp.}\s{number}, where \s{simpleId} is the current value of
+the \setlink{name-prefix} setting.
+\p
+The command \fq{resume by if-method} directs LP to resume the proof of the
+current conjecture using this method.  It is applicable only when the current
+conjecture has been reduced to a formula of the form \fq{if t1 then t2 else t3}
+or of the form \fq{(if t1 then t2 else t3) = t4}, where \fq{t4} does not begin
+with \fq{if}.

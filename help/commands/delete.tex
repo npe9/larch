@@ -1,0 +1,22 @@
+\doc{The delete command}
+\ref{delete-command}
+
+The \def{delete command} discards facts from LP's logical system.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{delete-command} ::= \f{delete} \slink{../misc/names}{names}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+delete rewrite-rules
+delete myLemma, junk
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{delete} command deletes the named facts from the system.  It can be
+used to get rid of unhelpful facts (e.g., unorderable or unnecessary
+critical-pair equations) or facts that have served their purpose and are no
+longer needed.
+

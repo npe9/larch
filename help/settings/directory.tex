@@ -1,0 +1,26 @@
+\doc{The directory setting}
+\ref{directory-setting}
+
+The \def{directory setting} sets the working directory for LP.  
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-directory-command} ::= \f{set directory} \slink{../commands/execute}{file}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set directory ~/proofs
+\end{verbatim}
+
+\head{2}{Usage}
+
+The working directory for LP is the directory in which it creates files in
+response to the \dflink{../commands/freeze_thaw}{freeze}, 
+\dflink{log}{set log}, \dflink{script}{set script}, and \cflink{write} 
+commands.  A period (\fq{.}) in the setting of \dflink{lp-path}{lp-path} refers
+to this directory.
+\p
+The default working directory is the directory in which LP was invoked.
+The \fq{set directory} command changes the working directory in all proof
+contexts.

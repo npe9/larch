@@ -1,0 +1,48 @@
+\doc{The write command}
+\ref{write-command}
+\ref{writing}
+
+The \def{write command} creates a file containing commands that can be executed
+to recreate LP's current logical system.
+
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{write-command} ::= \f{write} \slink{execute}{file} [ \slink{../misc/names}{names} ]
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+write axioms
+write intSet int, set
+\end{verbatim}
+
+\head{2}{Usage} 
+
+The \fq{write} command creates a file named \s{file}\f{.lp} (unless \s{file}
+contains a period, in which case LP does not supply the suffix \f{.lp}) in LP's
+current working \setlink{directory}.  This file can be executed later with the
+\cflink{execute} command to recreate the named set of facts (or the whole
+system, if no names are specified).  In particular, LP writes
+\dlink{declare}{declarations} for all identifiers in the named set of facts
+followed by commands to \clink{register} ordering constraints for the facts and
+to \clink{assert} the facts.
+\p
+Unlike the \dflink{freeze_thaw}{freeze} command, the \fq{write} command does
+not save information about the state of uncompleted proofs.  But unlike thawing
+a frozen file, which replaces all of LP's logical system, executing a written
+file adds information to the current system.  Hence it can be used to combine
+axiomatizations.
+\p
+Rewrite rules written by the \fq{write} command are asserted as formulas.
+The numeric extensions in the \dlink{../misc/names}{names} assigned to facts
+may change when the \fq{.lp} file is executed; hence facts that are
+\dlink{../settings/immunity}{ancestor-immune} may behave differently when the
+system is recreated.
+
+
+\head{2}{See also}
+\begin{itemize}
+\item The \setlink{write-mode} setting
+\item The \cflink{display} command
+\end{itemize}

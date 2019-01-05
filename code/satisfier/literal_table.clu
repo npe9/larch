@@ -1,0 +1,193 @@
+#extend
+
+% A "literal_table" is an undoable equivalence relation over a set of literals 
+% such that
+% (a) the set of literals is closed under negation,
+% (b) "l1" is equivalent to "l2" iff "~l1" is equivalent to "~l2",
+% (c) the "save" and "undo" functions obey the axioms
+%       undo(save(L)) = L
+%	undo(add(L, l)) = undo(L)
+%       undo(assert(L, l)) = undo(L)
+ 
+% The "asserted" literals in a literal_table are those equivalent to "true".
+% The "known" literals are those equivalent to "true" or to "false".  All other
+% literals are "unknown".
+
+% A literal_table is "consistent" if "true" is not equivalent to "false".
+
+
+literal_table = cluster is 
+	new, add, assert, make_equivalent, is_asserted, asserted,
+	is_relevant, classes, get_num_unknown, size,
+	save, undo, print, equal,
+	_gcd
+
+    rep     = record[rel: lit_rel, truth, falsity: literal]
+    lit_rel = equiv_relation[literal]
+
+    % A(r) = A(r.rel)
+    % I(r): equiv(r.rel, l1, l2) <=> equiv(r.rel, ~l1, ~l2)
+
+    
+    % Returns new literal_table containing the literals "true" and "false".
+    
+    new = proc () returns (cvt)
+	lt: rep := rep${rel: lit_rel$[], 
+	                truth: literal$truth(),
+	                falsity: literal$truth().negation}
+	lit_rel$insert_special(lt.rel, lt.truth)
+	lit_rel$insert_special(lt.rel, lt.falsity)
+	return(lt)
+	end new
+   
+    
+    % Modifies: lt
+    % Ensures:  lt'.rel = make_equiv(make_equiv(lt^, l, l), ~l, ~l)
+    
+    add = proc (lt: cvt, l: literal) returns (literal)
+	l := lit_rel$insert(lt.rel, l)
+	lit_rel$insert(lt.rel, l.negation)
+	return(l)
+	end add
+
+    
+    % Modifies: lt
+    % Ensures:  if ~equiv(lt^.equiv, l, lt.falsity)
+    %		then lt'.equiv = make_equiv(make_equiv(lt^.equiv, l, lt.truth),
+    %					    ~l, lt.falsity)
+    %		else lt' = lt^ /\ signals(contradiction)
+    
+    assert = proc (lt: cvt, l: literal) signals (contradiction)
+	rel: lit_rel := lt.rel
+	begin
+	    lit_rel$merge(rel, lit_rel$insert(rel, l), lt.truth)
+	    lit_rel$merge(rel, lit_rel$insert(rel, l.negation), lt.falsity)
+	    end except when forbidden: signal contradiction end
+	end assert
+
+    
+    % Modifies: lt
+    % Ensures:  if ~equiv(lt^.equiv, l, ~l2)
+    %		then lt'.equiv = make_equiv(make_equiv(lt^.equiv, l1, l2),
+    %					    ~l1, ~l2)
+    %		else lt' = lt^ /\ signals(contradiction)
+    
+    make_equivalent = proc (lt: cvt, l1, l2: literal) signals (contradiction)
+	r: lit_rel := lt.rel
+	begin
+	    lit_rel$merge(r, lit_rel$insert(r, l1), lit_rel$insert(r, l2))
+	    lit_rel$merge(r, lit_rel$insert(r, l1.negation), 
+		          lit_rel$insert(r, l2.negation))
+	    end except when forbidden: signal contradiction end
+	end make_equivalent
+
+    
+    % Returns "true" if "l" is (similar to a literal) equivalent to "true" in
+    % "lt".
+    
+    is_asserted = proc (lt: cvt, l: literal) returns (bool)
+	if l.in_relation then return(l.class_rep = lt.truth) end
+	for l1: literal in lit_rel$eq_class(lt.rel, lt.truth) do
+	    if l1 = l then return(true) end
+	    end
+	return(false)
+	end is_asserted
+
+    
+    % Yields each "l" equivalent to "true" in "lt".
+    
+    asserted = iter (lt: cvt) yields (literal)
+	for l: literal in lit_rel$eq_class(lt.rel, lt.truth) do
+	    yield(l)
+	    end
+	end asserted
+
+    
+    % Yields the representative of each equivalence class in "lt", other than
+    % the classes of "true" and "false".
+    
+    classes = iter (lt: cvt) yields (literal)
+	for l: literal in lit_rel$elements(lt.rel) do
+	    if l = l.class_rep cand l ~= lt.truth cand l ~= lt.falsity then 
+		yield(l) 
+		end
+	    end
+	end classes
+
+    
+    % Returns the number of unknown literals in "lt".
+    
+    get_num_unknown = proc (lt: cvt) returns (int)
+	return(lit_rel$size(lt.rel) 
+	         - lt.truth.class_size - lt.falsity.class_size)
+	end get_num_unknown
+       
+    
+    % Returns the number of literals in "lt".
+    
+    size = proc (lt: cvt) returns (int)
+	return (lit_rel$size(lt.rel))
+	end size
+	    
+    
+    % Returns "true" if "l" is similar to a literal in "lt".
+    
+    is_relevant = proc (lt: cvt, l: literal) returns (bool)
+	if l.in_relation then return(true) end
+	for l1: literal in lit_rel$elements(lt.rel) do
+	    if l1 = l then return(true) end
+	    end
+	return(false)
+	end is_relevant
+
+    
+    % Modifies: lt
+    % Ensures:  lt' = save(lt^)
+    
+    save = proc (lt: cvt)
+	lit_rel$save(lt.rel)
+	end save
+
+    
+    % Modifies lt
+    % Ensures: lt' = undo(lt^)
+    
+    undo = proc (lt: cvt) signals (empty)
+	lit_rel$undo(lt.rel)
+	end undo
+
+    
+    % Prints "lt" on "pr".
+    
+    print = proc (pr: printer, lt: cvt, stab: symtab)
+	printer$text(pr, "Asserted literals:\n")
+	for l: literal in asserted(up(lt)) do
+	    literal$print(pr, l, stab)
+	    printer$newline(pr)
+	    end
+	end print
+    
+    
+    % Dumps "lt" on the standard output (for debugging).
+    
+    dump = proc (lt: cvt)
+	pr: printer := tracer$get_printer()
+	print(pr, up(lt), tracer$get_symtab())
+	printer$newline(pr)
+	end dump
+    
+    
+    % Returns "true" iff "lt1" and "lt2" are the same object.
+    
+    equal = proc (lt1, lt2: cvt) returns (bool)
+	return(lt1 = lt2)
+	end equal
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end literal_table

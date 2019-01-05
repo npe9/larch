@@ -1,0 +1,75 @@
+#extend
+
+theory_system = cluster is new, add, display, fetch, copy, _gcd, decode, encode
+
+    rep = mapping[sort, numeric_theory]
+    item = record[theory: numeric_theory, label: string]
+    item_list = list[item]
+    
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+    
+    add = proc (tsys: cvt, nt: numeric_theory)
+        rep$insert(tsys, nt.sort, nt)
+	   except when exists: end
+	end add
+    
+    display = proc (p: printer, tsys: cvt, ns: name_set, stab: symtab)
+		signals (interrupt)
+	max_indent = 12
+	items: item_list := item_list$[]
+	indent: int := 0
+	for so: sort, nt: numeric_theory in rep$elements(tsys) do
+	    if ~name_set$contains_name(ns, nt.name) then continue end
+	    label: string := name$unparse(nt.name) || ": "
+	    item_list$addh(items, item${theory: nt, label: label})
+	    len: int := string$size(label)
+	    if len <= max_indent then indent := int$max(indent, len) end
+	    end	except when none: fail("theory_system$display") end
+	if item_list$empty(items) then return end
+	printer$text(p, "\nNumeric theories:\n\n")
+	item_list$sort(items, name_lt)
+	for i: item in item_list$elements(items) do
+	    if front_end$interrupt() then signal interrupt end
+	    printer$text(p, "~{~2I")
+	    printer$puts(p, padr(i.label, indent))
+	    numeric_theory$print(p, i.theory, stab)
+	    printer$text(p, "~}\n")
+	    end
+	printer$newline(p)
+	end display
+    
+    
+    % (Internal procedure) Returns "true" if "i1.theory.name" collates before
+    % "i2.theory.name".
+
+    name_lt = proc (i1, i2: item) returns (bool)
+	return(name$lt(i1.theory.name, i2.theory.name))
+	   except when none: fail("theory_system$name_lt") end
+	end name_lt
+    
+    
+    fetch = proc (tsys: cvt, so: sort) returns (numeric_theory)
+	      signals (missing)
+	return(rep$image(tsys, so)) resignal missing
+	end fetch
+    
+    copy = proc (tsys: cvt) returns (cvt)
+	return(rep$copy(tsys))
+	end copy
+    
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+               signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+    
+    end theory_system

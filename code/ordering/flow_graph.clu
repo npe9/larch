@@ -1,0 +1,375 @@
+#extend
+
+% Computes the maximum flow between two points in a directed graph in which
+% each edge has a specified capacity.  Uses the Goldberg-Tarjan algorithm
+% [Journal ACM 35 (Oct 1988) p921-940].
+
+% Implementation transcribed from that by Joseph Cheriyan and Stefan Naeher in
+% LEDA3.1, Copyright (c) 1994 by Max-Planck-Institut fuer Informatik Im
+% Stadtwald, 6600 Saarbruecken, FRG.
+
+flow_graph = cluster is new, add_node, set_capacity, add_capacity, 
+			get_capacity, max_flow, print
+
+    maxint = 65535
+    
+    rep = record[nodes: node_arr,
+    	         edges: edge_matrix,	% adjacency matrix
+		 n_edges: int,
+		 n_nodes: int]
+		 
+    node = record[dist: int,    % lower bound on shortest distance to sink
+		  excess: int, 	% total incoming - outgoing preflow
+		  index: int]
+		  
+    edge = record[capacity: int,
+		  flow: int,
+		  source: node,
+		  target: node]
+		 
+    node_arr 	= array[node]
+    edge_arr 	= array[edge]
+    edge_matrix = array[edge_arr]
+
+    
+    % Returns a new flow_graph with "n" nodes and no edges.
+    
+    new = proc (n: int) returns (cvt)
+	the_nodes: node_arr := node_arr$predict(1, n)
+	for i: int in int$from_to(1, n) do 
+	    node_arr$addh(the_nodes, node${dist: 0, excess: 0, index: i})
+	    end
+	the_edges: edge_matrix := edge_matrix$predict(1, n)
+	for i: int in int$from_to(1, n) do
+	    row: edge_arr := edge_arr$predict(1, n)
+	    for j: int in int$from_to(1, n) do
+		edge_arr$addh(row, edge${capacity: 0, 
+		    			 flow: 0,
+		    			 source: the_nodes[i], 
+					 target: the_nodes[j]})
+		end
+	    edge_matrix$addh(the_edges, row)
+	    end
+	return(rep${nodes: the_nodes, edges: the_edges, n_edges: 0, 
+	            n_nodes: node_arr$size(the_nodes)})
+	end new
+
+    
+    % Adds a new node to "g".
+    
+    add_node = proc (g: cvt)
+	n: int := g.n_nodes + 1
+	node_arr$addh(g.nodes, node${dist: 0, excess: 0, index: n})
+	row: edge_arr := edge_arr$predict(1, n)
+	for i: int in int$from_to(1, g.n_nodes) do
+	    edge_arr$addh(row, edge${capacity: 0, 
+				     flow: 0,
+				     source: g.nodes[n],
+				     target: g.nodes[i]})
+	    edge_arr$addh(g.edges[i], edge${capacity: 0,
+					    flow: 0,
+					    source: g.nodes[i],
+					    target: g.nodes[n]})
+	    end
+	edge_arr$addh(row, edge${capacity: 0,
+				 flow: 0,
+				 source: g.nodes[n],
+				 target: g.nodes[n]})
+	edge_matrix$addh(g.edges, row)
+	g.n_nodes := n
+	end add_node
+    
+
+    % Modifies "g" by making "c" the capacity from "g.nodes[source_index]" to
+    % "g.nodes[target_index]".  Signals "negative_capacity" if "c" is negative.
+    % Signals "bounds" if "source_index" or "target_index" is not the index of
+    % a node in "g".  Does not modify "g" if a signal occurs.
+    
+    set_capacity = proc (g: cvt, source_index, target_index: int, c: int) 
+		     signals (bounds, negative_capacity)
+	if c < 0 then signal negative_capacity end
+	e: edge := g.edges[source_index][target_index]
+	   resignal bounds
+	if e.capacity > 0 then g.n_edges := g.n_edges - 1 end
+	if c > 0 then g.n_edges := g.n_edges - 1 end
+	e.capacity := c
+	end set_capacity
+    
+    
+    % Modifies the flow from "g.nodes[source_index]" to "g.nodes[target_index]"
+    % in "g" by adding "c".  Signals "negative_capacity" if the new capacity of
+    % the edge would be negative.  Signals "bounds" if "source_index" or
+    % "target_index" is not the index of a node in "g".  Does not modify "g" if
+    % a signal occurs.
+    
+    add_capacity = proc (g: cvt, source_index, target_index: int, c: int) 
+		     signals (bounds, negative_capacity)
+	if c = 0 then return end
+	e: edge := g.edges[source_index][target_index]
+	   resignal bounds
+	new_capacity: int := e.capacity + c
+	if new_capacity < 0 then signal negative_capacity end
+	if e.capacity = 0 then g.n_edges := g.n_edges + 1
+	 elseif new_capacity = 0 then g.n_edges := g.n_edges - 1
+	 end
+	e.capacity := new_capacity
+	end add_capacity
+
+    
+    % Returns the capacity of the edge from "g.nodes[source_index]" to
+    % "g.nodes[target_index]".  Signals "bounds" if "source_index" or
+    % "target_index" is not the index of a node in "g".
+    
+    get_capacity = proc (g: cvt, source_index, target_index: int) returns (int)
+		     signals (bounds)
+	return(g.edges[source_index][target_index].capacity)
+	   resignal bounds
+	end get_capacity
+
+
+    % (Internal) Yields the nodes in "g".
+    
+    nodes = iter (g: rep) yields (node)
+	for n: node in node_arr$elements(g.nodes) do yield(n) end
+	end nodes
+    
+    
+    % (Internal) Yields the edges in "g" with a nonzero capacity.
+    
+    edges = iter (g: rep) yields (edge)
+	for row: edge_arr in edge_matrix$elements(g.edges) do
+	    for e: edge in edge_arr$elements(row) do
+		if e.capacity ~= 0 then yield(e) end
+		end
+	    end
+	end edges
+    
+    
+    % (Internal) Yields the edges in "g" with source "n" and a nonzero
+    % capacity.  Requires: "n" is a node in "g".
+    
+    out_edges = iter (g: rep, n: node) yields (edge)
+	row: edge_arr := g.edges[n.index]
+	for e: edge in edge_arr$elements(row) do
+	    if e.capacity ~= 0 then yield(e) end
+	    end
+	end out_edges
+    
+    
+    % (Internal) Yields the edges in "g" with target "n" and a nonzero
+    % capacity.  Requires: "n" is a node in "g".
+    
+    in_edges = iter (g: rep, n: node) yields (edge)
+	j: int := n.index
+	for row: edge_arr in edge_matrix$elements(g.edges) do
+	    e: edge := row[j]
+	    if e.capacity ~= 0 then yield(e) end
+	    end
+	end in_edges
+
+
+    % Returns total flow from "g.nodes[source_index]" to "g.nodes[sink_index]".
+    % Signals "bounds" if "source_index" or "target_index" is not the index of
+    % a node in "g".
+
+    max_flow = proc (g: cvt, source_index, sink_index: int) returns (int) 
+		 signals (bounds)
+
+	source: node := g.nodes[source_index]
+	   resignal bounds
+	sink: node := g.nodes[sink_index]
+	   resignal bounds
+
+	for n: node in nodes(g) do
+	    n.dist := 0
+	    n.excess := 0
+	    end
+	source.dist := g.n_nodes
+	for e: edge in edges(g) do e.flow := 0 end
+
+
+	% heuristic: parameter for heuristic suggested by Goldberg to speed up
+	% algorithm.  Compute exact distance labels after every "heuristic"
+	% relabel steps.  Experiments indicate that sqrt(|E|) is a good choice
+	% (S.N.)
+
+	heuristic: int := 0
+	while heuristic * heuristic < g.n_edges do 
+	    heuristic := heuristic + 1 
+	    end
+	heuristic := heuristic - 1
+	limit_heur: int := heuristic
+	num_relabels: int := 0
+
+
+	% FIFO queue of vertices with positive preflows
+	U: node_arr := node_arr$[]
+
+	% Saturate all edges leaving "source".
+	
+	for e: edge in out_edges(g, source) do
+	    v: node := e.target
+	    if v.excess = 0 cand v ~= source then node_arr$addh(U, v) end
+	    e.flow := e.capacity
+	    v.excess := v.excess + e.capacity
+	    end
+
+	
+	while true do
+	    v: node := node_arr$reml(U)
+	    if v = sink then continue end
+	    dv: int := v.dist
+	    ev: int := v.excess
+
+	    % Push flow along each edge e = (v, w) in the residual graph with
+	    % v.dist = w.dist + 1.
+
+	    if dv < g.n_nodes then
+	       for e: edge in out_edges(g, v) do
+		   if ev <= 0 then break end
+		   w: node := e.target
+		   if dv = w.dist + 1 then
+		      delta: int := e.capacity - e.flow
+		      if delta > 0 then
+			 if ev < delta then delta := ev end
+			 if w.excess = 0 then node_arr$addh(U, w) end
+			 e.flow := e.flow + delta
+			 w.excess := w.excess + delta
+			 ev := ev - delta
+			 end
+		      end
+		   end
+	       end
+
+	    for e: edge in in_edges(g, v) do
+		if ev <= 0 then break end
+		w: node := e.source
+		if dv = w.dist + 1 then
+		   delta: int := e.flow
+		   if delta > 0 then
+		      if ev < delta then delta := ev end
+		      if w.excess = 0 cand w ~= source then 
+			 node_arr$addh(U, w)
+			 end
+		      e.flow := e.flow - delta
+		      w.excess := w.excess + delta
+		      ev := ev - delta
+		      end
+		   end
+
+		end
+
+	    v.excess := ev
+  
+	    if ev > 0 then
+
+	       % Relabel vertex v (i.e., update v.dist) because all
+	       % admissible edges in the residual graph have been saturated 
+
+	       num_relabels := num_relabels + 1
+  
+	       if heuristic > 0 cand num_relabels = limit_heur
+		  then % heuristic suggested by Goldberg to reduce number of
+		       % relabels: periodically compute exact dist labels by
+		       % two backward bfs one starting at sink and another
+		       % starting at source
+
+		       limit_heur := limit_heur + heuristic
+
+		       for x: node in nodes(g) do 
+			   x.dist := maxint 
+			   end
+
+		       gt_bfs(g, sink, 0, source)
+		       gt_bfs(g, source, g.n_nodes, source)
+		  else
+		       min_dist: int := maxint
+		       for e: edge in out_edges(g, v) do
+			   if e.capacity > e.flow cand v.dist < g.n_nodes then
+			      % pushes towards source that increase e.flow are 
+			      % not allowed
+			      min_dist := int$min(min_dist, e.target.dist)
+			      end
+			   end
+		       for e: edge in in_edges(g, v) do
+			   if e.flow > 0 then
+			      min_dist := int$min(min_dist, e.source.dist)
+			      end
+			   end
+		       if min_dist ~= maxint then min_dist := min_dist + 1 end
+		       v.dist := min_dist
+		  end
+
+	       begin
+		   for n: node in node_arr$elements(U) do
+		       if n = v then exit exists end
+		       end
+		   node_arr$addh(U, v)
+		   end except when exists: end
+     
+	       end
+
+	    end except when bounds: end
+   
+	return(sink.excess)
+  
+	end max_flow
+
+
+    % Displays the current flow in "g" on "s".
+    
+    print = proc (s: stream, g: cvt)
+	width = 4
+	stream$putspace(s, width)
+	for i: int in int$from_to(1, g.n_nodes) do
+	    stream$putright(s, int$unparse(i), width)
+	    end
+	stream$putl(s, "")
+	for i: int in edge_matrix$indexes(g.edges) do
+	    row: edge_arr := g.edges[i]
+	    stream$putright(s, int$unparse(i), width)
+	    for e: edge in edge_arr$elements(row) do
+		if e.flow > 0
+		   then stream$putright(s, int$unparse(e.flow), width)
+		   else stream$putspace(s, width)
+		   end
+		end
+	    stream$putl(s, "")
+	    end
+	stream$putl(s, "")
+	end print
+    
+
+    % (Internal) Performs backward bfs starting at vertex s_vert with distance
+    % label dist_s_vert.
+
+    gt_bfs = proc (g: rep, s_vert: node, dist_s_vert: int, s: node)
+	Q: node_arr := node_arr$[s_vert]
+	s_vert.dist := dist_s_vert
+
+	while true do
+	    x: node := node_arr$reml(Q)
+	    d: int := x.dist + 1
+	    for e: edge in out_edges(g, x) do
+		y: node := e.target
+		if e.flow > 0 cand y.dist = maxint then
+		   % use only edges with positive flow
+		   y.dist := d
+		   node_arr$addh(Q, y)
+		   if y = s then y.dist := g.n_nodes end
+		   end
+		end
+
+	    for e: edge in in_edges(g, x) do
+		y: node := e.source
+		if e.capacity > e.flow cand y.dist = maxint
+		     cand  s_vert ~= s then
+		   y.dist := d
+		   node_arr$addh(Q, y)
+		   if y = s then y.dist := g.n_nodes end
+		   end
+		end
+	    end except when bounds: end
+	end gt_bfs
+
+    end flow_graph

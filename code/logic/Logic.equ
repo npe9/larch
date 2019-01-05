@@ -1,0 +1,138 @@
+%%%%%%%%%%%%%%%%%%%%%  Equates for lp/code/logic  %%%%%%%%%%%%%%%%%%%%%
+
+% (see also Genlib.equ, Terms.equ)
+
+
+%%%%%%%%%%%%%%%%%%%%  Data types
+
+
+% Abstractions
+
+ai_settings 	= record[active: bool, immune: immunity]
+rewrite_rule 	= formula
+equation	= formula
+fact		= oneof[dr: deduction_rule, 
+                        eq: equation, 
+			ir: induction_rule,
+			ot: op_theory, 
+			rr: rewrite_rule]
+
+induction_info  = struct[depth: int,		 % depth of induction
+		         rule: induction_rule,   % generators for induction
+			 var: variable]          % variable to induction over
+% Inv: rule.sort = var.sort
+
+class_name	= string
+
+maybe_signature = maybe_obj[signature]
+maybe_sort	= maybe_obj[sort]
+op_spec		= struct[id: identifier, sig: maybe_signature]
+var_spec	= struct[id: identifier, sort: maybe_sort]
+
+fact_attribute = oneof[dr, eq, ir, ot, rr, all: null,
+		       activity: bool,
+		       immunity: immunity,
+		       c_o: op_spec,
+		       c_m: term,
+		       c_v: var_spec]
+
+
+% Arrays
+
+dr_arr		= array[deduction_rule]
+eq_arr 		= array[equation]
+fo_arr		= array[formula]
+ir_arr		= array[induction_rule]
+ot_arr		= array[op_theory]
+rr_arr 		= array[rewrite_rule]
+fact_arr	= array[fact]
+
+
+% Lists
+
+dr_prop_list	= linked_list[dr_prop]
+eq_prop_list 	= linked_list[eq_prop]
+ir_prop_list	= linked_list[ir_prop]
+ot_prop_list	= linked_list[ot_prop]
+rr_prop_list 	= linked_list[rr_prop]
+
+
+% Sequences
+
+dr_seq		= sequence[deduction_rule]
+eq_seq 		= sequence[equation]
+fo_seq		= sequence[formula]
+ir_seq		= sequence[induction_rule]
+ot_seq		= sequence[op_theory]
+rr_seq 		= sequence[rewrite_rule]
+
+
+% Type sets
+
+display_type = {t | t has print: proctype (printer, t, symtab),
+			  get_name: proctype (t) returns (name) signals (none)}
+
+
+%%%%%%%%%%%%%%%%%%%%  Propositions (i.e., axioms, conjectures, and theorems)
+
+dr_prop  	= proposition[deduction_rule]
+eq_prop 	= proposition[equation]
+ir_prop 	= proposition[induction_rule]
+ot_prop 	= proposition[op_theory]
+rr_prop 	= proposition[rewrite_rule]
+
+
+%%%%%%%%%%%%%%%%%%%  Rewriting
+
+% The "immunity" of a fact determines whether or not that fact is subject to
+% reduction and/or deduction.
+
+immunity	  = struct[name: string, level: int]
+immunity_off	  = immunity${name: "off", level: 1}
+immunity_anc	  = immunity${name: "ancestor", level: 2}
+immunity_on	  = immunity${name: "on", level: 3}
+immunity_settings = sequence[immunity]$[immunity_off, immunity_anc, 
+					immunity_on]
+
+
+% The "reduction_mode" determines whether terms are reduced before or after
+% their subterms.
+
+reduction_mode 	= struct[name: string, reduction: reduction]
+reduction	= oneof[inside_out, outside_in: null]
+inside_out_mode = reduction_mode${name: "inside-out",
+			          reduction: reduction$make_inside_out(nil)}
+outside_in_mode = reduction_mode${name: "outside-in",
+			          reduction: reduction$make_outside_in(nil)}
+reduction_modes = sequence[reduction_mode]$[inside_out_mode, outside_in_mode]
+
+initial_reduction_mode	= outside_in_mode
+
+
+% The "rewriting_limit" limits the number of times a term will be rewritten
+% during normalization when the rewriting system is not known to terminate.
+
+initial_rewriting_limit = 1000
+
+
+% For experimental purposes, some of the hardwired reductions can be turned off
+% by the command "set hardwired-usage <n>", where the binary representation of
+% "n" codes which of the following hardwired reductions are turned off.
+
+rewrite_implies_false = 1
+rewrite_iff_false = 2
+rewrite_if_to_bool = 3
+simplify_if = 4
+rewrite_if_out = 5		% Not used
+
+max_hardwired_usage = 31
+initial_hardwired_usage = 0
+
+
+%%%%%%%%%%%%%%%%%%%%  Tracing
+
+initial_trace_level 	= 1
+initial_stat_level 	= 2
+
+highest_trace_level	= 8
+highest_stat_level	= 3

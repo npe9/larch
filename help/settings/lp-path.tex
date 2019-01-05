@@ -1,0 +1,30 @@
+\doc{The lp-path setting}
+\ref{lp-path-setting}
+\ref{~lp}
+
+The \def{lp-path setting} specifies a list of directories for LP to search when
+looking for input from a file.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-lp-path-command} ::= \f{set lp-path} \slink{../symbols/symbols}{string}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set lp-path . ~/myAxioms ~lp
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{set lp-path} command specifies a search path for LP to use when looking
+for help, \fq{.lp}, or \fq{.lpfrz} files.  Its default value is 
+\qf{. ~lp/axioms}.  A period (\fq{.}) in the value of \fq{lp-path} refers to 
+LP's current working \setlink{directory}.  A tilde (\fq{~}) in the value of 
+\fq{lp-path} refers to the user's home directory.  An initial directory 
+\fq{~lp} refers to the directory in which LP's runtime support was installed;
+see the \dlink{../history/installation}{installation} instructions, the
+\dlink{../misc/command-line}{command-line options}, and the \cflink{version} 
+command for the location of this directory.
+
+

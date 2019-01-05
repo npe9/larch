@@ -1,0 +1,553 @@
+#extend
+
+% This file exports the procedures "match", "match_empty", "match_ac",
+% "match_c", "match_ac_to_vars", and "match_ac_vars".  All others should be 
+% considered as internal procedures.
+
+
+% Yields all matches of "pattern" to "target", that is, all substitutions
+% "sigma" such that "sigma[pattern] = target".  Signals "no_match" if there is
+% no match.  ASSUMES: "pattern" and "target" are flattened.
+
+match = iter (target, pattern: term, osys: op_system, stab: symtab)
+	  yields (substitution) signals (no_match)
+    for sigma: substitution 
+	  in general_match(target.renamed, pattern, osys, stab) do
+ 	% NOTE: We need to iterate over a copy of sigma in order to delete
+	% variables that map to themselves.
+	sigma2: substitution := substitution$copy(sigma)
+	for v: variable, t: term in substitution$elements(sigma) do
+	    sigma2[v] := t.unrenamed
+	    end
+	yield(sigma2)
+	end resignal no_match
+    end match
+
+
+% Yields all matches of "pattern" to "target", that is, all substitutions
+% "sigma" such that "sigma[pattern] = target".  Signals "no_match" if there is
+% no match.  ASSUMES:
+% (1) "target" and "pattern" are flattened;
+% (2) "target" contains no variables (e.g., as a result of "term$get_renamed");
+%     this guarantees that the range of "sigma" is disjoint from its domain.
+
+general_match = iter (target, pattern: term, osys: op_system, stab: symtab) 
+		  yields (substitution) signals (no_match)
+    if pattern.size > target.size cor target.sort ~= pattern.sort then 
+       signal no_match
+       end
+    if pattern.nvars = 0 then
+       if target = pattern
+	  then yield(substitution$[])
+	       return
+	  else signal no_match
+	  end
+       end
+    tagcase pattern
+       tag var:
+	   sigma: substitution := substitution$[]
+	   sigma[pattern.var] := target
+	   yield(sigma)
+       tag funct:
+           if pattern.root ~= target.root then signal no_match end
+	      except when wrong_tag: signal no_match end
+	   ot: op_theory := op_system$lookup_theory_quickly(osys, pattern.root)
+	   for sigma: substitution in ot.match(target, pattern, osys, stab) do 
+	       yield(sigma) 
+	       end resignal no_match
+       tag quant:
+           if pattern.quant.is_universal ~= target.quant.is_universal then
+	      signal no_match
+	      end except when wrong_tag: signal no_match end
+	   for sigma: substitution in match_quant(target, pattern, osys, stab) 
+	     do yield(sigma)
+		end resignal no_match
+       end
+    end general_match
+
+
+% Yields all matches of "pattern" to "target", that is, all substitutions
+% "sigma" such that "sigma[pattern] = target".  Signals "no_match" if there is
+% no match.  ASSUMES:
+% (1) "target" and "pattern" are flattened;
+% (2) "target" contains no variables (e.g., as a result of "term$get_renamed");
+%     this guarantees that the range of "sigma" is disjoint from its domain;
+% (3) "pattern.root" is a free operator, or has the empty operator theory.
+% (4) "pattern.root = target.root"
+
+match_empty = iter (target, pattern: term, osys: op_system, stab: symtab) 
+		yields (substitution) signals (no_match)
+    yielded: bool := false
+    for sigma: substitution
+	  in match_term_seq(target.args, pattern.args, osys, stab) do
+	yield(sigma)
+	yielded := true
+	end except when wrong_tag: end
+    if ~yielded then signal no_match end
+    end match_empty
+
+
+
+% Yields all matches of "pattern" to "target", that is, all substitutions
+% "sigma" such that "sigma[pattern] = target" modulo changes of bound
+% variables.  Signals "no_match" if there is no match.  ASSUMES:
+% (1) "target" and "pattern" are flattened;
+% (2) "target" contains no free variables (e.g., as a result of
+%     "term$get_renamed"); this guarantees that the range of "sigma" is
+%     disjoint from its domain;
+% (3) "pattern.root_or_quant" is a quantifier
+% (4) "pattern.quant.is_universal = target.quant.is_universal"
+
+% CONSIDER: This implementation finds substitutions that match the formulas
+% obtained by dropping the leading quantifiers, and then rules out those
+% substitutions that do not map the quantified variables onto each other.  
+% Another implementation would be to map all permutations of the quantified
+% variables onto each other and then see which of those substitutions can be
+% extended to match the formulas after the quantifiers have been dropped.  For
+% the case of a single quantifier, this is coded as follows:
+
+%    sigma: substitution := substitution$[]
+%    v: variable := pattern.quant.var
+%    sigma[v] := term0(pattern.quant.renamed_var)
+%    t1: term := substitution$apply(sigma, pattern.subform, stab)
+%    for sigma1: substitution in general_match(target.subform, t1, osys) do
+%        substitution$undefine(sigma1, v) % Remove bound variable 
+%	 yield(sigma1)
+%	 end resignal no_match
+
+match_quant = iter (target, pattern: term, osys: op_system, stab: symtab)
+		yields (substitution) signals (no_match)
+    sort_mset = multiset[sort]
+    tvars: var_set, sorts1: sort_mset, target1: term := 
+	drop_leading_quantifiers(target, false)
+    pvars: var_set, sorts2: sort_mset, pattern1: term := 
+	drop_leading_quantifiers(pattern, true)
+    if var_set$size(tvars) ~= var_set$size(pvars) then signal no_match end
+    if ~sort_mset$similar(sorts1, sorts2) then signal no_match end
+    % ENHANCE: If there is only one variable of a given sort, map that variable
+    % before matching the quantified subterm.
+    p1vars: var_set := pattern.fvars
+    for sigma: substitution in general_match(target1, pattern1, osys, stab) do
+	yield(qfr_sub(sigma, pvars, p1vars, tvars))
+	   except when impossible: end
+	end resignal no_match
+    end match_quant
+
+
+% Returns "{x1, ..., xn}, {x1.sort, ..., xn.sort}, t1" when the term "t" has
+% the form "Qx1...Qxn t1", where "Q" is a quantifier and "t1" does not begin
+% with "Q".  Replaces any constant substituted for free occurrences of each
+% "xi" in "t1" by "xi" if "pattern" is true.
+    
+drop_leading_quantifiers = proc (t: term, pattern: bool) 
+			     returns (var_set, sort_mset, term)
+    sort_mset = multiset[sort]
+    vars: var_set := var_set$[]
+    sorts: sort_mset := sort_mset$[]
+    q: quantifier := t.quant
+       except when wrong_tag: return(vars, sorts, t) end
+    is_univ: bool := q.is_universal
+    while true do
+	var_set$insert(vars, q.var)
+	   except when exists: end
+	sort_mset$insert(sorts, q.var.sort)
+	if pattern
+	   then t := t.subform_for_matching
+	   else t := t.subform
+	   end
+	q := t.quant
+	if q.is_universal ~= is_univ then break end
+	end except when wrong_tag: end
+    return(vars, sorts, t)
+    end drop_leading_quantifiers
+
+    
+% Returns "sigma" with its domain restricted to "p1vars" if "sigma" maps
+% "pvars" one-one onto "tvars" and, when "v" is in "p1vars", "sigma[v]" does
+% not contain a (renamed) variable in "tvars".  Signals "impossible" if these
+% conditions are not met.  Assumes the domain of "sigma" is "pvars + p1vars".
+    
+qfr_sub = proc (sigma: substitution, pvars, p1vars, tvars: var_set)
+	    returns (substitution) signals (impossible)
+    unmatched_tvars: var_set := var_set$copy1(tvars)
+    for v: variable in var_set$elements(pvars) do
+	v1: variable := operator$c2v(sigma[v].root)
+        var_set$delete(unmatched_tvars, v1)
+	substitution$undefine(sigma, v)
+	end except when wrong_tag, missing, not_renamed: signal impossible end
+    if ~var_set$empty(unmatched_tvars) then signal impossible end
+    for v: variable in var_set$elements(p1vars) do
+	v_image: term := sigma[v]
+	for v1: variable in var_set$elements(v_image.unrenamed.fvars) do
+	    if var_set$exists(tvars, v1) then signal impossible end
+	    end
+	end
+    return(sigma)
+    end qfr_sub
+
+
+% Yields all matches of "patterns" to "targets", where "targets" and "patterns"
+% are sequences of terms with the same length.  In other words, yields all
+% substitutions "sigma" such that for each "1 <= i <= term_seq$size(targets)",
+% "sigma[patterns[i]] = targets[i]".  ASSUMES:
+% (1) all terms in "targets" and "patterns" are flattened;
+% (2) "targets" contains no variables (e.g., as a result of "term$get_rename");
+%     this guarantees that the range of "sigma" is disjoint from its domain.
+
+match_term_seq = iter (targets, patterns: term_seq, osys: op_system, 
+		       stab: symtab) yields (substitution)
+    n_targets: int := term_seq$size(targets)
+    if n_targets = 0 then
+       yield(substitution$[])
+       return
+       end
+    targets_tail: term_seq
+    first_time: bool := true
+    for sigma: substitution 
+	  in general_match(targets[1], patterns[1], osys, stab) do
+	if first_time then % Optimization avoids computation before null loop
+	   targets_tail := term_seq$reml(targets)
+	   first_time := false
+	   end
+        % Corrected next line 12/19/86 by moving it inside loop
+	patterns_tail: term_arr := term_arr$predict(1, n_targets - 1)
+	for i: int in int$from_to(2, n_targets) do
+	    arg: term := substitution$apply(sigma, patterns[i], stab)
+	    % Corrected next line 11/25/86 by adding 'flatten'
+	    term_arr$addh(patterns_tail, flatten(arg, osys))
+	    end
+	patterns_ts: term_seq := term_seq$a2s(patterns_tail)
+	for sigma2: substitution 
+	      in match_term_seq(targets_tail, patterns_ts, osys, stab) do
+	    yield(sigma + sigma2)
+	    end
+	end except when no_match: end
+    end match_term_seq
+
+
+% Yields all matches of "pattern" to "target", that is, all substitutions
+% "sigma" such that "sigma[pattern] = target".  Signals "no_match" if there is
+% no match.  ASSUMES:
+% (1) "target" and "pattern" are flattened;
+% (2) "target" contains no variables (e.g., as a result of "term$get_renamed");
+%     this guarantees that the range of "sigma" is disjoint from its domain;
+% (3) "pattern.root" is the same as "target.root";
+% (4) "target.root" is commutative.
+
+match_c = iter (target, pattern: term, osys: op_system, stab: symtab) 
+	    yields (substitution) signals (no_match)
+    yielded: bool := false
+    for sigma: substitution 
+	  in match_term_seq(target.args, pattern.args, osys, stab) do
+	yield(sigma)
+	yielded := true
+	end
+    args_c: term_seq := term_seq$[target.args[2], target.args[1]]
+    for sigma: substitution 
+	  in match_term_seq(args_c, pattern.args, osys, stab) do
+	yield(sigma)
+	yielded := true
+	end
+    if ~yielded then signal no_match end
+    end match_c
+
+
+% Yields all matches of "pattern" to "target", that is, all substitutions
+% "sigma" such that "sigma[pattern] = target".  Signals "no_match" if there is
+% no match.  ASSUMES:
+% (1) "target" and "pattern" are flattened;
+% (2) "target" contains no variables (e.g., as a result of "term$get_renamed");
+%     this guarantees that the range of "sigma" is disjoint from its domain;
+% (3) "pattern.root" is the same as "target.root";
+% (4) "target.root" is AC.
+
+match_ac = iter (target, pattern: term, osys: op_system, stab: symtab) 
+	     yields (substitution) signals (no_match)
+    yielded: bool := false
+    root: operator := target.root
+    % Perform a quick check that the number of targets is at least the number
+    % of patterns, and that at least one pattern is a variable if the number
+    % of targets does not equal the number of patterns.
+    nt: int := term_seq$size(target.args)
+    np: int := term_seq$size(pattern.args)
+    if nt ~= np then
+       if nt < np then signal no_match end
+       for t: term in term_seq$elements(pattern.args) do
+	   if term$is_var(t) then exit possible end
+	   end
+       signal no_match
+       end except when possible: end
+    for sigma: substitution, more_targets, more_patterns: term_seq
+	  in match_ac_to_vars(target.args, pattern.args, root, osys, stab) do
+	for sigma2: substitution, nomore_targets: term_seq
+	      in match_ac_vars[true](more_targets, more_patterns, root)
+	  do yielded := true
+	     yield(sigma + sigma2)
+	     end except when no_match: end
+	end except when no_match: end
+    if ~yielded then signal no_match end
+    end match_ac
+
+
+% Assumes 
+% (1) "patterns" is the argument sequence of a flattened term headed by the
+%     AC operator "ac_op";
+% (2) "targets" is a sequence of variable-free terms.
+% Yields triples 
+%     (sigma: substitution, more_targets, more_patterns: term_seq)
+% such that
+% (1) "sigma" matches the nonvariable terms in "patterns", together with the
+%     variable terms in "patterns" not in "more_patterns", to a subset of the
+%     terms in "targets";
+% (2) "more_targets" contains the unmatched terms in "targets";
+% (3) "more_patterns" contains the variable terms "t" in "patterns" such that
+%     "sigma[t.var] = t".
+% Signals "no_match" if there is no match.
+
+match_ac_to_vars = iter (targets, patterns: term_seq, ac_op: operator, 
+			 osys: op_system, stab: symtab)
+		     yields (substitution, term_seq, term_seq)
+		     signals (no_match)
+    yielded: bool := false
+    
+    % First find a maximal initial segment of "patterns" containing terms
+    % headed by the same operator or quantifier.
+
+    head_is_op: bool := true
+    head_is_quant: bool := false
+    head_is_univ: bool
+    head_op: operator := patterns[1].root
+       except when wrong_tag: 
+	           head_is_op := false
+		   head_is_quant := true
+		   head_is_univ := patterns[1].quant.is_universal
+		      except when wrong_tag: % rest of "patterns" are variables
+				  yield(substitution$[], targets, patterns)
+				  return
+			     end
+	      end
+    n_head_patterns: int := 1
+    while (head_is_op cand patterns[n_head_patterns+1].root = head_op) cor
+	  (head_is_quant cand 
+	   patterns[n_head_patterns+1].quant.is_universal = head_is_univ)
+      do n_head_patterns := n_head_patterns + 1
+	 end except when bounds, wrong_tag: end
+    
+    % Now separate "targets" into two sequences, "head_targets" containing
+    % terms headed by this operator or kind of quantifier, and "tail_targets"
+    % containing the remainder of "targets".  For a match to exist,
+    % "head_targets" must contain at least "n_head_patterns" terms.
+
+    head_targets_arr: term_arr
+    tail_targets_arr: term_arr
+    n_head_targets: int := 0
+    n_tail_targets: int := 0
+    for tt: term in term_seq$elements(targets) do
+	% NOTE: We cannot presume that the head targets occur at the beginning
+	% of "targets" (because those targets may be matched by variables
+	% among the "patterns").  So we must look later in the sequence.
+	% ENHANCE: If we can assume that the head targets occur together in
+	% "targets" (e.g., because "targets" is at worst a renaming of a
+	% flattened sequence of terms), we can stop the loop earlier.
+	if (head_is_op cand tt.root = head_op)
+	     cor (head_is_quant cand tt.quant.is_universal = head_is_univ) then
+	   if n_head_targets = 0
+	      then head_targets_arr := term_arr$[tt]
+		   tail_targets_arr := term_seq$s2a(targets)
+		   term_arr$trim(tail_targets_arr, 1, n_tail_targets)
+	      else term_arr$addh(head_targets_arr, tt)
+	      end
+	   n_head_targets := n_head_targets + 1
+	   continue
+	   end
+	   except when wrong_tag: 
+		       if term$is_var(tt)
+			  then fail("match_ac_to_vars: unrenamed variable.")
+			  end
+		  end
+	if n_head_targets = 0 
+	   then n_tail_targets := n_tail_targets + 1
+	   else term_arr$addh(tail_targets_arr, tt)
+	   end
+	end
+    if n_head_patterns > n_head_targets then signal no_match end
+    head_targets: term_seq := term_seq$a2s(head_targets_arr)
+    tail_targets: term_seq := term_seq$a2s(tail_targets_arr)
+
+    head_patterns: term_seq := term_seq$subseq(patterns, 1, n_head_patterns)
+    tail_patterns: term_seq := 
+	term_seq$subseq(patterns, n_head_patterns+1, 
+			term_seq$size(patterns)-n_head_patterns)
+
+    % Now try matching "head_patterns" to permuted subsets of "head_targets" 
+    % and recursing to match "tail_patterns".
+
+    for terms, leftover: term_seq
+	  in permute_with_remainder[term](head_targets, n_head_patterns)
+      do for sigma: substitution
+	       in match_term_seq(terms, head_patterns, osys, stab) do
+	     for sigma2: substitution, more_targets, more_patterns: term_seq
+		   in match_ac_rest(sigma, leftover || tail_targets,
+				    tail_patterns, ac_op, osys, stab)
+	       do yield(sigma2, more_targets, more_patterns)
+		  yielded := true
+		  end
+	     end
+	 end
+    if ~yielded then signal no_match end
+    end match_ac_to_vars
+
+
+% A subsidiary operation of "match_ac_to_vars".  Assumes 
+% (1) "patterns" is the argument sequence of a flattened term headed by the
+%     AC operator "ac_op";
+% (2) "targets" is a sequence of variable-free terms.
+% Yields triples 
+%     (sigma1: substitution, more_targets, more_patterns: term_seq)
+% such that
+% (1) "sigma1" extends "sigma" and matches the nonvariable terms in 
+%     "sigma[patterns]", together with the variable terms in "sigma[patterns]" 
+%     not in "more_patterns", to a subset of the terms in "targets";
+% (2) "more_targets" contains the unmatched terms in "targets";
+% (3) "more_patterns" contains the variable terms "t" in "sigma[patterns]" such
+%      that "sigma[t.var] = t".
+
+match_ac_rest = iter (sigma: substitution, targets, patterns: term_seq,
+		      ac_op: operator, osys: op_system, stab: symtab)
+		  yields (substitution, term_seq, term_seq)
+    own empty_ts: term_seq := term_seq$[]
+    n_patterns: int := term_seq$size(patterns)
+    if n_patterns = 0 then
+       yield(sigma, targets, empty_ts)
+       return
+       end
+    pattern_arr: term_arr := term_arr$predict(1, n_patterns)
+    % ENHANCE: Optimize loop for common case in which array doesn't grow.
+    for t: term in term_seq$elements(patterns) do
+	new: term := flatten(substitution$apply(sigma, t, stab), osys)
+	if new.root = ac_op then
+	   for tt: term in term_seq$elements(new.args) do
+	       term_arr$addh(pattern_arr, tt)
+	       end
+	   continue
+	   end except when wrong_tag: end
+	term_arr$addh(pattern_arr, new)
+	end
+    quicksort[term](pattern_arr, 1, term_arr$size(pattern_arr), term$lt)
+    new_patterns: term_seq := term_seq$a2s(pattern_arr)
+
+    for sigma2: substitution, more_targets, more_patterns: term_seq
+	  in match_ac_to_vars(targets, new_patterns, ac_op, osys, stab) do
+	yield(sigma + sigma2, more_targets, more_patterns)
+	end except when no_match: end
+    end match_ac_rest
+
+
+% Assumes "targets" is a sequence of nonvariable terms.  Yields all
+% substitutions that, when applied to "patterns", make the resulting term
+% sequence, when viewed as a multiset, a multi-subset of the multiset of terms
+% corresponding to "targets".  If the parameter "to_all" is true, then the two
+% multisets must be equal; if it is false, this subset inclusion can be proper.
+% Also yields the terms in "targets" not matched by the substitution (if any).
+
+match_ac_vars = iter [to_all: bool] (targets, patterns: term_seq, 
+				     ac_op: operator)
+		  yields (substitution, term_seq) signals (no_match)
+    term_comb = combinator[term]
+
+    own empty_ts: term_seq := term_seq$[]
+    if term_seq$size(patterns) > term_seq$size(targets) then 
+       signal no_match
+       end
+    if term_seq$empty(patterns) then
+       if ~term_seq$empty(targets) cand to_all then signal no_match end
+       yield(substitution$[], targets)
+       return
+       end
+
+    first_pattern: term := patterns[1]
+    n_targets: int := term_seq$size(targets)
+    tagcase first_pattern
+       tag funct, quant:
+	   for i: int in term_seq$indexes(targets) do
+	       if first_pattern = targets[i] then	
+		  other_targets: term_seq :=
+		      term_seq$subseq(targets, 1, i-1)
+			|| term_seq$subseq(targets, i+1, n_targets-i)
+		  for sigma2: substitution, unused_targets: term_seq
+			in match_ac_vars[to_all]
+			       (other_targets, term_seq$reml(patterns), ac_op) 
+		    do yield(sigma2, unused_targets)
+		       end resignal no_match
+		  return
+		  end
+	       end
+	   signal no_match
+
+       tag var:
+           v: variable := first_pattern.var
+	   n_patterns: int := term_seq$size(patterns)
+	   max_size: int := n_targets - n_patterns + 1
+	   min_size: int := 1
+	   if n_patterns = 1 cand to_all then min_size := max_size end
+	   tc: term_comb := term_comb$cons(targets)
+	      except when too_many_combinations:
+			  tracer$big_ac(ac_op, term_seq$size(targets))
+			  signal no_match
+		     end
+	   for i: int in int$from_to(min_size, max_size) do
+	       for args, other_targets: term_seq
+		     in term_comb$one_size_combs_with_remainder(tc, i) do
+		   sigma: substitution := substitution$[]
+		   if i = 1
+		      then sigma[v] := args[1]
+		      else sigma[v] := term$make_funct(ac_op, args)
+		      end
+		  
+		   % ENHANCE: optimize by allocating pattern_arr only if there
+		   % is a j such that patterns[j].var = v; otherwise
+		   % pattern_arr is just term_arr$reml(term_seq$s2a(patterns)),
+		   % except that we don't need the array, just the sequence
+
+		   pattern_arr: term_arr := term_arr$predict(1, n_patterns)
+		   for j: int in int$from_to(2, n_patterns) do
+		       if patterns[j].var = v then
+			  for tt2: term in term_seq$elements(args) do
+			      term_arr$addh(pattern_arr, tt2)
+			      end
+			  continue
+			  end except when wrong_tag: end
+		       term_arr$addh(pattern_arr, patterns[j])
+		       end
+
+		   for sigma2: substitution, unused_targets: term_seq
+			 in match_ac_vars[to_all](other_targets,
+						  term_seq$a2s(pattern_arr),
+						  ac_op) do
+		       yield(sigma + sigma2, unused_targets)
+		       end except when no_match: continue end
+		   end
+	       end
+       end
+    end match_ac_vars
+
+
+% Returns "true" if "pattern" matches some subterm of "target".  Assumes 
+% "pattern" and "target" are flattened.
+
+% ENHANCE: If pattern is variable free, use "embed" in(stead of) general_match.
+
+matches_subterm = proc (target, pattern: term, osys: op_system)
+		    returns (bool)
+    own stab: symtab := symtab$blank()
+    if pattern.size > target.size then return(false) end
+    for sigma: substitution 
+	  in general_match(target.renamed, pattern, osys, stab) do
+	return(true)
+	end except when no_match: end
+    for t: term in term_seq$elements(target.subterms) do
+	if matches_subterm(t, pattern, osys) then return(true) end
+	end except when wrong_tag: end
+    return(false)
+    end matches_subterm
+	    

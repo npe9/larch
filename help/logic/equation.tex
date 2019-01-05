@@ -1,0 +1,25 @@
+\doc{Equations}
+\ref{equations}
+
+An \def{equation} is a formula that consists of a pair of terms separated by an
+\dlink{equality}{equality} operator.  
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{equation} ::= \slink{term}{term} (\f{=} | \f{<=>}) \slink{term}{term}
+\end{verbatim}
+
+Restriction: The two \s{term}s in an equation must have the same sort.  This
+sort must be \f{Bool} if the equality operator is \f{<=>}.
+
+\head{2}{Examples}
+\begin{verbatim}
+x + 0 = x
+x <= y <=> x < y \/ x = y
+x | y <=> \E z (y = x*z)
+\end{verbatim}
+
+\head{2}{Usage}
+LP treats equations in the same manner as it treats formulas.  Indeed, any
+formula is logically equivalent to an equation: \fq{F} is logically equivalent
+to \fq{F <=> true}.

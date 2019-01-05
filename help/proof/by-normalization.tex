@@ -1,0 +1,26 @@
+\doc{Proofs by normalization}
+\ref{proof-by-normalization}
+
+LP uses active \llink{rewrite-rule}{rewrite rules} to
+\olink{normalization}{normalize}  conjectures.  If a conjecture normalizes to 
+\fq{true}, it is a theorem.  Otherwise, the normalized conjecture becomes the 
+current subgoal to be proved.  For example, LP succeeds in proving the
+conjecture
+\begin{verbatim}
+{e} \subseteq insert(e, s)
+\end{verbatim}
+from the axioms
+\begin{verbatim}
+{e} = insert(e, {})
+e \in insert(e1, x) <=> e = e1 \/ e \in s
+{} \subseteq s
+insert(e, x) \subseteq y <=> e \in y /\ x \subseteq y
+\end{verbatim}
+by using them to reduce it to \fq{true}.  But the conjecture \fq{x \subseteq x}
+is irreducible, and LP treats it as a subgoal to be proved by some other proof
+method.
+\p
+Passive rewrite rules can be applied explicitly to a conjecture by the
+\cflink{normalize} and \cflink{rewrite} commands.  These commands can be used
+to control when definitions are expanded, or when nonsimplifying rewrite rules
+(such as distributivity) are applied.

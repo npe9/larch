@@ -1,0 +1,118 @@
+\doc{The set command}
+\ref{set-command}
+\ref{setting-name}
+\ref{setting-value}
+\ref{settings}
+
+The \def{set command} controls various aspects of LP's behavior. 
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-command}  ::= \f{set} [ \s{setting-name} [ \s{setting-value} ] ]
+\sd{setting-name} ::= \f{\setlink{activity}} | \f{\setlink{automatic-ordering}} | \f{\setlink{automatic-registry}} 
+                      | \f{\setlink{box-checking}} | \f{\setlink{completion-mode}} | \f{\setlink{directory}} 
+                      | \f{\setlink{display-mode}} | \f{\setlink{hardwired-usage}} | \f{\setlink{immunity}} 
+                      | \f{\dlink{../settings/log}{log-file}} | \f{\setlink{lp-path}} | \f{\setlink{name-prefix}} | \f{\setlink{ordering-method}}
+                      | \f{\setlink{page-mode}} | \f{\setlink{prompt}} | \f{\setlink{proof-methods}} 
+                      | \f{\setlink{reduction-strategy}} | \f{\setlink{rewriting-limit}} | \f{\dlink{../settings/script}{script-file}}
+                      | \f{\setlink{statistics-level}} | \f{\setlink{trace-level}} | \f{\setlink{write-mode}}
+\sd{setting-value} ::= \slink{../symbols/symbols}{string}
+\end{verbatim}
+
+Note: The \fq{setting-name} can be \dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+set
+set proof-methods
+set script session
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{set} command with no arguments prints the current values of all
+settings.  The \fq{set} command with a \s{setting-name} and no
+\s{setting-value} displays the current value of the setting and then requests
+a new value; responding with a carriage return leaves the value of the setting
+unchanged.   The \fq{set} command with both a \s{setting-name} and a
+\s{setting-value} sets the value of one of the following settings.
+\p
+Settings marked with \f{(L)} are local to the current proof context.  If such a
+setting is changed, for example, during the proof of one case in a proof by
+cases it reverts to its previous value upon termination of that case in the
+proof.  Settings marked with \f{G} are global and remain in effect until
+changed by the user.  All settings have default values, which can be restored
+by the \cflink{unset} command.
+\begin{description}
+\dt \f{(L) \setlink{activity} ( on | off )}
+\dd 
+New assertions are active if \fq{on} (the default).
+\dt \f{(L) \setlink{automatic-ordering} ( on | off )}
+\dd 
+Formulas are oriented automatically into rewrite rules if \fq{on} (the
+default).
+\dt \f{(L) \setlink{automatic-registry} ( on | off )}
+\dd 
+The registry is extended automatically during ordering if \fq{on} (the
+default).
+\dt \f{(G) \setlink{box-checking} ( on | off )}
+\dd 
+Markings (\f{<>}, \f{[]}) for proof steps are checked in command files if
+\fq{on} (the default).
+\dt \f{(L) \setlink{completion-mode} ( big | expert | standard )}
+\dd 
+Controls the action of the \fq{complete} command (default \f{standard}).
+\dt \f{(G) \setlink{directory} \s{file}}
+\dd 
+Output files are created in this directory (default \qf{.}).
+\dt \f{(L) \setlink{display-mode} ( qualified | unqualified | unambiguous )}
+\dd 
+Controls the qualification of identifiers and terms by the \fq{display} command
+(default \fq{unambiguous}).
+\dt \f{(L) \setlink{hardwired-usage} \s{number}}
+\dd
+Turns off some hardwired rules.
+\dt \f{(L) \setlink{immunity} ( on | off | ancestor )}
+\dd
+Controls the immunity of new assertions (default \fq{off}).
+\dt \f{(G) \dlink{../settings/log}{log-file} \s{file}}
+\dd
+Creates file \s{file}\f{.lplog} for log of session (default none).
+\dt \f{(G) \setlink{lp-path} \s{string}}
+\dd
+Defines search path for help, \f{.lp}, \f{.lpfrz} files (default \fq{. ~/lp}).
+\dt \f{(L) \setlink{name-prefix} \s{simpleId}}
+\dd
+Defines prefix for names of assertions, conjectures (default \fq{user}).
+\dt \f{(L) \setlink{ordering-method} \s{ordering}}
+\dd
+Defines method for orienting formulas into rewrite rules (default \fq{noeq-dsmpos}).
+\dt \f{(G) \setlink{page-mode} ( on | off )}
+\dd
+Output is paged if \fq{on} (default \fq{off}).
+\dt \f{(G) \setlink{prompt} \s{string}}
+\dd
+Defines LP's command prompt (default \f{`LP! '}).
+\dt \f{(L) \setlink{proof-methods} \s{default-proof-method}+[,]}
+\dd
+Defines list of default proof methods  for conjectured formulas (default
+\fq{normalization}).
+\dt \f{(L) \setlink{reduction-strategy} ( inside-out | outside-in )}
+\dd
+Controls application of rewrite rules to terms (default \fq{outside-in}).
+\dt \f{(L) \setlink{rewriting-limit} \s{number}}
+\dd
+Bounds number of steps in possibly infinite rewrites (default 1000).
+\dt \f{(G) \dlink{../settings/script}{script-file} \s{file}}
+\dd
+Creates file \s{file}\f{.lpscr} for record of input (default none).
+\dt \f{(G) \setlink{statistics-level} \s{number}}
+\dd
+Controls the kinds of statistics kept by LP (default 2).
+\dt \f{(G) \setlink{trace-level} \s{number}}
+\dd
+Controls the amount of detailed output produced by LP (default 1).
+\dt \f{(L) \setlink{write-mode} ( qualified | unqualified | unambiguous )}
+\dd 
+Controls the qualification of identifiers and terms by the \fq{write} command
+(default \fq{qualified}).
+\end{description}

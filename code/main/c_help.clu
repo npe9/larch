@@ -1,0 +1,672 @@
+#extend
+
+hct = command_table[string]
+
+% Processes the "help" command by providing detailed information about LP.  If
+% there is input following the command, uses that as the topic for which help
+% is desired; otherwise, prompts the user to supply a topic.  If the subject is
+% "?", prints a list of the topics for which help is available and prompts
+% again.  If the topic entered by the user is a prefix of exactly one of the
+% choices, prints help for that topic and returns; otherwise prints an error
+% message and prompts again.  An empty string in response to a prompt exits
+% this procedure.
+
+c_help = proc (i: interactive) signals (error)
+    msg = "Enter the topic on which you would like help, `?' for the choices,"
+	    || "or `LP' for a general introduction."
+    index: hct := get_help_index(i)
+       except when none: signal error end
+    iodev$qprintl(i.io, msg)
+    fname: string := hct$choose_if_in(index, "Subject: ", i.io)
+       except when no_match (s: string):
+		   printer$error(i.p)
+		   printer$text(i.p, "\nNo help available for `" || s)
+		   printer$text(i.p, "'.\n")
+		   signal error
+	      when no_response, end_of_file: 
+	           check_end_of_line(i.io)
+		   return
+	      when ambiguous: signal error
+	      end resignal error
+    check_end_of_line(i.io)
+       resignal error
+    fname := home_directory$get_location() || "help/" || fname
+    hr: hreader := hreader$create(fname, stream$primary_output())
+       except when error (s: string):
+		   printer$error(i.p)
+		   printer$text(i.p, s)
+		   signal error
+	      end
+    iodev$putl(i.io, "")
+    hreader$print(hr)
+       except when error (s: string): iodev$putl(i.io, s) end
+    hreader$finish(hr)
+    end c_help
+
+
+
+% A "hreader" is an abstraction used to read and format a help message.
+
+hreader = cluster is create, print, finish
+
+    rep = record[source: stream,	% contains marked-up help message
+    	         hf: hformat,		% formats output
+		 final: token,		% token to end font environment
+    	         line: string,		% current line of "source"
+		 lineno: int,		% line number of "line"
+		 n: int,		% next character to read in "line"
+		 n0: int]		% start of last read token in "line"
+
+    alpha  = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    delims = " \t\n\\{}#"
+
+    token = oneof[close: null, 
+                  command: string, 
+                  eof, newline, none, open, sharp, space, tab: null,
+    		  word: string]
+
+    font = oneof[def: null, fixed: quotes, norm, var: null]
+
+    quotes = oneof[maybe, no, syntax, yes: null]
+    unquoted = quotes$make_no(nil)
+    quoted = quotes$make_yes(nil)
+    quotable = quotes$make_maybe(nil)
+    synquotes = quotes$make_syntax(nil)
+
+    desc_ind = 3
+    item_ind = 3
+    verb_ind = 2
+    quot_ind = 2
+		  
+    % Returns a "hreader" based on the file named "fname".
+    
+    create = proc (fname: string, out: stream) returns (cvt) 
+	       signals (error(string))
+        source: stream := stream$open(file_name$parse(fname), "read")
+	   except when not_possible (why: string):
+		       signal error("\nCan't read `" || fname || "': " || why 
+				      || ".\n")
+		  when bad_format:
+		       signal error("\nCan't read `" || fname || "'.\n")
+		  end
+	return(rep${source: source,
+		    hf: hformat$create(out),
+		    final: token$make_none(nil),
+		    line: "",
+		    lineno: 0,
+		    n: 1,
+		    n0: 0})
+	end create
+
+    
+    % Formats and prints the contents of "hr".
+
+    print = proc (hr: cvt) signals (error(string))
+	err: string := ""
+	scan(hr)
+	   except when end_font:
+		  when end_env (s: string): 
+		  when error (s: string): err := s
+		  end
+        if err ~= "" then
+	   signal error("Error on line " || int$unparse(hr.lineno) ||
+			" at character " || int$unparse(hr.n0) || ": " || err)
+	   end
+	end print
+    
+    
+    % Processes tokens in "hr" until one matches "hr.final" (causing an
+    % "end_font" signal), the end of an environment is reached (causing an
+    % "end_env" signal), or an "eof" occurs (causing a return).
+    
+    scan = proc (hr: rep) signals (error(string), end_font, end_env(string))
+	while true do
+	    tagcase get_token(hr)
+	       tag close:               if token$is_close(hr.final)
+		                           then signal end_font
+					   else hformat$add_char(hr.hf, '}')
+					   end
+	       tag command (w: string): do_command(hr, w)
+	       tag eof:                 break
+	       tag newline:		hformat$add_newline(hr.hf)
+	       tag none:		fail("hreader$scan")
+	       tag open:                hformat$add_char(hr.hf, '{')
+	       tag sharp:               if token$is_sharp(hr.final)
+		                           then signal end_font
+					   else hformat$add_char(hr.hf, '#')
+					   end
+	       tag space:		hformat$add_space(hr.hf)
+	       tag tab:			hformat$add_tab(hr.hf)
+	       tag word (w: string):    hformat$add_word(hr.hf, w)
+	       end resignal error, end_env
+	    end
+	end scan
+    
+    
+    % Flushes any output remaining in "hr.hf" and closes the input stream.
+    
+    finish = proc (hr: cvt)
+	hformat$finish(hr.hf)
+	stream$close(hr.source)
+	end finish
+
+    
+    % Returns the next token from "hr".
+    
+    get_token = proc (hr: rep) returns (token)
+    	if hr.n > string$size(hr.line) then
+	   hr.line := stream$getl(hr.source) || "\n"
+	   hr.lineno := hr.lineno + 1
+	   hr.n := 1
+	   end except when end_of_file: return(token$make_eof(nil)) end
+	hr.n0 := hr.n
+	hr.n := hr.n0 + 1
+	c: char := hr.line[hr.n0]
+	if c = '\\' then 
+	   if string$indexc(hr.line[hr.n], "%$") > 0
+	      then hr.n := hr.n + 1
+	      else while string$indexc(hr.line[hr.n], alpha) ~= 0 do
+		       hr.n := hr.n + 1
+		       end
+	      end except when bounds: end
+	   s: string := string$substr(hr.line, hr.n0, hr.n - hr.n0)
+	   return(token$make_command(s))
+	 elseif c = '{' then  return(token$make_open(nil))
+	 elseif c = '}' then  return(token$make_close(nil))
+	 elseif c = '#' then  return(token$make_sharp(nil))
+	 elseif c = ' ' then  return(token$make_space(nil))
+	 elseif c = '\t' then return(token$make_tab(nil))
+	 elseif c = '\n' then return(token$make_newline(nil))
+	 else while true do
+		  if string$indexc(hr.line[hr.n], delims) > 0 then break end
+		  hr.n := hr.n + 1
+		  end except when bounds: end
+	      s: string := string$substr(hr.line, hr.n0, hr.n - hr.n0)
+	      return(token$make_word(s))
+	 end
+	end get_token
+    
+    
+    % Advances past whitespace in the current line in "hr".
+    
+    trim_line = proc (hr: rep)
+	while string$indexc(hr.line[hr.n], " \t\n") > 0 do hr.n := hr.n + 1 end
+	   except when bounds: end
+	end trim_line
+    
+    
+    % Processes "cmd" if it is a recognizable command; otherwise formats it as
+    % a regular word of output.  Signals "end_env" at the end of an 
+    % environment.  Signals "error" if one is detected.
+    
+    do_command = proc (hr: rep, cmd: string)
+		   signals (error(string), end_env(string))
+	if cmd = "\\anchor" then      skip_arg(hr)
+	 elseif cmd = "\\begin" then  do_env(hr)
+	 elseif cmd = "\\br" then     hformat$break_line(hr.hf)
+	 elseif cmd = "\\cflink" then do_link(hr, 1, "../commands", quoted)
+	 elseif cmd = "\\clink" then  do_link(hr, 1, "../commands", unquoted)
+	 elseif cmd = "\\dd" then     hformat$break_line(hr.hf)
+				      hformat$indent(hr.hf, desc_ind)
+	 elseif cmd = "\\def" then    do_font(hr, font$make_def(nil))
+	 elseif cmd = "\\dflink" then do_link(hr, 2, "", quoted)
+	 elseif cmd = "\\dlink" then  do_link(hr, 2, "", unquoted)
+	 elseif cmd = "\\doc" then    do_font(hr, font$make_norm(nil))
+				      hformat$skip_line(hr.hf)
+	 elseif cmd = "\\dt" then     hformat$break_line(hr.hf)
+				      hformat$indent(hr.hf, -desc_ind)
+	 elseif cmd = "\\end" then    signal end_env(getarg(hr))
+	 elseif cmd = "\\f" then      do_font(hr, font$make_fixed(unquoted))
+	 elseif cmd = "\\fq" then     do_font(hr, font$make_fixed(quotable))
+	 elseif cmd = "\\ftp" then    do_link(hr, 1, "", unquoted)
+	 elseif cmd = "\\glink" then  do_link(hr, 2, "../glossary", unquoted)
+	 elseif cmd = "\\gt" then     hformat$add_char(hr.hf, '>')
+	 elseif cmd = "\\head" then   do_head(hr)
+	 elseif cmd = "\\item" then   hformat$break_line(hr.hf)
+				      hformat$temp_indent(hr.hf, -2)
+				      hformat$add_word(hr.hf, "*")
+	 elseif cmd = "\\llink" then  do_link(hr, 2, "../logic", unquoted)
+	 elseif cmd = "\\lt" then     hformat$add_char(hr.hf, '<')
+	 elseif cmd = "\\olink" then  do_link(hr, 2, "../operation", unquoted)
+	 elseif cmd = "\\p" then      hformat$skip_line(hr.hf)
+	 elseif cmd = "\\pflink" then do_link(hr, 2, "../proof", quoted)
+	 elseif cmd = "\\plink" then  do_link(hr, 2, "../proof", unquoted)
+	 elseif cmd = "\\qf" then     do_font(hr, font$make_fixed(quoted))
+	 elseif cmd = "\\ref" then    skip_arg(hr)
+	 elseif cmd = "\\s" then      do_font(hr, font$make_fixed(synquotes))
+	 elseif cmd = "\\sd" then     do_font(hr, font$make_fixed(synquotes))
+	 elseif cmd = "\\setlink" then do_link(hr, 1, "../setting", unquoted)
+	 elseif cmd = "\\slink" then   do_link(hr, 2, "", synquotes)
+	 elseif cmd = "\\v" then      do_font(hr, font$make_var(nil))
+	 elseif cmd = "\\$" then      hformat$add_char(hr.hf, '$')
+	 elseif cmd = "\\%" then      hformat$add_char(hr.hf, '%')
+	 else                         hformat$add_word(hr.hf, cmd)
+	 end resignal error
+	end do_command
+
+
+    % Processes tokens in a new environment in "hr".  Signals "error" if
+    % "hr" does not begin with "{ename}", where "ename" is a legal name for an
+    % environment, if that environment does not end properly, or if some other
+    % error is detected in the environment.
+    
+    do_env = proc (hr: rep) signals (error(string))
+	ename: string := getarg(hr)
+	   resignal error
+	saved_final: token := hr.final
+	saved_fill: bool := hr.hf.fill
+	ind: int
+	if ename = "description" then   ind := desc_ind
+	 elseif ename = "itemize" then  ind := item_ind
+	 elseif ename = "quote" then    ind := quot_ind
+	 elseif ename = "verbatim" then ind := verb_ind
+					hr.hf.fill := false
+					trim_line(hr)
+	 else signal error("unknown environment `" || ename || "'")
+	 end
+	hr.final := token$make_none(nil)
+	hformat$break_line(hr.hf)
+	if hr.hf.indent = 0 then hformat$skip_line(hr.hf) end
+	hformat$indent(hr.hf, ind)
+	begin
+	    scan(hr)
+	    signal error("missing `end{" || ename || "}")
+	    end resignal error
+	   except when end_font: fail("hreader$do_env")
+		  when end_env (s: string):
+		       if s ~= ename then
+			  signal error("mismatched `end{" || s || "}")
+			  end
+		  end
+	if ~token$is_none(hr.final) then
+	   signal error("missing end of font")
+	   end
+	hr.final := saved_final
+	hr.hf.fill := saved_fill
+	hformat$break_line(hr.hf)
+	hformat$indent(hr.hf, -ind)
+	if hr.hf.indent = 0 then hformat$skip_line(hr.hf) end
+	end do_env
+    
+    
+    % Scans "{word}" from "hr" and returns "word".  Signals "error" if "hr"
+    % does not begin with "word".
+
+    getarg = proc (hr: rep) returns (string) signals (error(string))
+	if ~token$is_open(get_token(hr)) then signal error("missing {") end
+	w: string := token$value_word(get_token(hr))
+	   except when wrong_tag: signal error("expecting word") end
+	if ~token$is_close(get_token(hr)) then signal error("missing }") end
+	return(w)
+	end getarg
+    
+
+    % Processes tokens in a new environment in "hr".  Signals "error" if
+    % "hr" does not begin with "{ename}", where "ename" is a legal name for an
+    % environment, if that environment does not end properly, or if some other
+    % error is detected in the environment.
+    
+    do_font = proc (hr: rep, f: font) signals (error(string))
+	saved_final: token := hr.final
+	tagcase get_token(hr)
+	   tag open:  hr.final := token$make_close(nil)
+	   tag sharp: hr.final := token$make_sharp(nil)
+	   others: signal error("expecting { or #")
+	   end
+	tagcase f
+	   tag def:                     hformat$add_char(hr.hf, '`')
+	   tag fixed (q: quotes):
+	       tagcase q
+		  tag maybe:            hformat$add_char(hr.hf, '"')
+		  tag no:
+		  tag syntax:           hformat$add_char(hr.hf, '<')
+		  tag yes:              hformat$add_char(hr.hf, '"')
+		  end
+	   tag norm:
+	   tag var:                     hformat$add_char(hr.hf, '"')
+	   end
+	begin
+	    scan(hr)
+	    signal error("missing end of font")
+	    end resignal error
+	   except when end_font:
+		  when end_env (s: string):
+		       signal error("missing end of font")
+		  end
+	hr.final := saved_final
+	tagcase f
+	   tag def:                     hformat$add_char(hr.hf, '\'')
+	   tag fixed (q: quotes):
+	       tagcase q
+		  tag maybe:            hformat$add_char(hr.hf, '"')
+		  tag no:
+		  tag syntax:           hformat$add_char(hr.hf, '>')
+		  tag yes:              hformat$add_char(hr.hf, '"')
+		  end
+	   tag norm:
+	   tag var:                     hformat$add_char(hr.hf, '"')
+	   end
+	end do_font
+    
+    
+    % Processes a "\head{n}{Title}" command.
+    
+    do_head = proc (hr: rep) signals (error(string))
+	skip_arg(hr)
+	   resignal error
+	hformat$reset_indent(hr.hf)
+	hformat$skip_line(hr.hf)
+	   resignal error
+	do_font(hr, font$make_norm(nil))
+	hformat$skip_line(hr.hf)
+	end do_head
+    
+
+    % Processes a hyperlink in "hr".  If the link has two arguments, ignores
+    % the first (which is a filename).  Prints the final argument, enclosing
+    % it in the appropriate quotes.  (NOTE:  This routine cheats by calling
+    % "do_font" with a "fixed" font.  There should really be a separate "link"
+    % font.)
+    
+    do_link = proc (hr: rep, n_args: int, path: string, q: quotes)
+		signals (error(string))
+	begin
+	    if n_args = 2 then skip_arg(hr) end
+	    do_font(hr, font$make_fixed(q))
+	    end resignal error
+	end do_link
+    
+    
+    % Skips the next "{...}" in "hr", where "..." can contain additional
+    % matching left and right braces.
+    
+    skip_arg = proc (hr: rep) signals (error(string))
+	if ~token$is_open(get_token(hr)) then signal error("missing {") end
+	count: int := 1
+	while true do
+	    tagcase get_token(hr)
+	       tag open:  count := count + 1
+	       tag close: count := count - 1
+			  if count = 0 then return end
+	       tag eof:   break
+	       others:
+	       end
+	    end
+	signal error("missing }")
+	end skip_arg
+    
+    end hreader
+
+
+% An "hformat" formats text (words and whitespace) for output.  It is able to
+% fill and indent lines of text.
+
+hformat = cluster is create, finish, add_word, add_char, add_space, add_tab, 
+    		     add_newline, break_line,skip_line, set_fill, get_fill,
+		     indent, temp_indent, reset_indent, get_indent
+
+    rep = record[dest: stream,		 % output stream
+		 fill: bool,		 % true if filling lines
+		 items: item_arr,	 % items to print on line
+		 last_blank: bool,	 % true if last line output was blank
+		 left_margin: int,	 % for current line
+		 len: int,		 % length of current line after margin
+		 next_left_margin: int,	 % for next line
+		 maxlen: int]	 	 % for all lines
+		 
+
+    item     = variant[space: int, word: string]
+    item_arr = array[item]
+		 
+    default_line_length = 79
+    uc = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	
+    
+    % Returns a new "hformat" with a right margin determined by "dest" and in
+    % "fill" mode.
+    
+    create = proc (dest: stream) returns (cvt)
+	m: int := dest.line_length - 1
+	   except when no_limit: m := default_line_length end
+	return(rep${items: item_arr$[],
+		    fill: true,
+		    last_blank: true,
+		    left_margin: 0,
+		    len: 0,
+		    next_left_margin: 0,
+		    maxlen: m,
+		    dest: dest})
+	end create
+
+    
+    % Flushes the rest of the output from "hf".
+    
+    finish = proc (hf: cvt)
+	break_line(up(hf))
+	end finish
+   
+
+    % Adds "w" to "hf".
+    
+    add_word = proc (hf: cvt, w: string)
+	begin
+	    w1: string := item$value_word(item_arr$top(hf.items))
+	    item_arr$remh(hf.items)
+	    hf.len := hf.len - string$size(w1)
+	    w := w1 || w
+	    end except when bounds, wrong_tag: end
+	if hf.fill cand hf.len > 0 
+	     cand hf.left_margin + hf.len + string$size(w) > hf.maxlen then
+	   break_line(up(hf))
+	   end
+        item_arr$addh(hf.items, item$make_word(w))
+	hf.len := hf.len + string$size(w)
+	end add_word
+    
+    
+    % Adds "c" to "hf".
+    
+    add_char = proc (hf: cvt, c: char)
+	add_word(up(hf), string$c2s(c))
+	end add_char
+    
+    
+    % Adds a space to "hf" if "fill" is off or if the current line ends with a
+    % word.
+   
+    add_space = proc (hf: cvt)
+	last: item := item_arr$top(hf.items)
+	   except when bounds: 
+		       if ~hf.fill then 
+			  item_arr$addh(hf.items, item$make_space(1))
+			  hf.len := 1
+			  end
+		       return
+		  end
+	tagcase last
+	   tag space (n: int):
+	       if ~hf.fill then 
+		  item$change_space(last, n + 1)
+		  hf.len := hf.len + 1
+		  end
+	   tag word (s: string):
+	       n_spaces: int := 1
+	       n: int := string$size(s)
+	       if hf.fill cand s[n] = '.' cand string$indexc(s[n-1], uc) = 0
+		  then n_spaces := 2
+		  end except when bounds: end
+	       item_arr$addh(hf.items, item$make_space(n_spaces))
+	       hf.len := hf.len + n_spaces
+	   end
+	end add_space
+   
+    
+    % Adds a tab to "hf" if "fill" if off; otherwise adds a space.
+   
+    add_tab = proc (hf: cvt)
+	if hf.fill
+	   then add_space(up(hf))
+	   else n: int := int$mod(hf.left_margin + hf.len, 8)
+		for i: int in int$from_to(n, 8) do add_space(up(hf)) end
+	   end
+	end add_tab
+   
+    
+    % Adds a newline to "hf" by forcing a line break if "fill" is off and by
+    % replacing it with a space if "fill" is on.
+
+    add_newline = proc (hf: cvt)
+	if hf.fill
+	   then add_space(up(hf))
+	   else output_line(hf)
+	   end
+	end add_newline
+
+    
+    % Outputs the current line in "hf" if it is nonempty.
+
+    break_line = proc (hf: cvt)
+	if hf.len > 0 then output_line(hf) end
+	end break_line
+   
+    
+    % Outputs the current line in "hf" if it is nonempty, followed by a blank
+    % line.  Does not print two blank lines in a row.
+    
+    skip_line = proc (hf: cvt)
+	break_line(up(hf))
+	if ~hf.last_blank then output_line(hf) end
+	end skip_line
+   
+    
+    % Sets "fill" mode on or off.
+
+    set_fill = proc (hf: cvt, b: bool)
+	hf.fill := b
+	end set_fill
+    
+    
+    % Returns "true" if "fill" mode is on.
+    
+    get_fill = proc (hf: cvt) returns (bool)
+	return(hf.fill)
+	end get_fill
+    
+    
+    % Adjusts the indentation for the current and subsequent lines of output.
+
+    indent = proc (hf: cvt, n: int)
+	hf.left_margin := int$max(hf.left_margin + n, 0)
+	hf.next_left_margin := hf.left_margin
+	end indent
+
+    
+    % Adjusts the indentation for the current line of output.
+
+    temp_indent = proc (hf: cvt, n: int)
+	hf.left_margin := int$max(hf.left_margin + n, 0)
+	end temp_indent
+    
+    
+    % Resets the indentation of "hf" to 0.
+    
+    reset_indent = proc (hf: cvt)
+	hf.left_margin := 0
+	hf.next_left_margin := 0
+    	end reset_indent
+    
+    
+    % Returns the indentation of "hf".
+    
+    get_indent = proc (hf: cvt) returns (int)
+	return(hf.left_margin)
+	end get_indent
+    
+
+    % Outputs the current line in "hf".
+    
+    output_line = proc (hf: rep)
+	hf.last_blank := true
+	if hf.len > 0 then stream$putspace(hf.dest, hf.left_margin) end
+	while item$is_space(item_arr$top(hf.items)) do 
+	    item_arr$remh(hf.items)
+	    end except when bounds: end
+	for it: item in item_arr$elements(hf.items) do
+	    tagcase it
+	       tag space (n: int):   stream$putspace(hf.dest, n)
+	       tag word (s: string): stream$puts(hf.dest, s)
+				     hf.last_blank := false
+	       end
+	    end
+	stream$putl(hf.dest, "")
+	item_arr$trim(hf.items, 1, 0)
+	hf.len := 0
+	hf.left_margin := hf.next_left_margin
+	end output_line
+   
+    end hformat
+
+
+% Returns a command table mapping topics to file names.  This procedure
+% relies on the existence of a file named "help/Topics" in LP's home directory.
+% That file should contain a sequence of lines like
+%    Foverview.tex
+%    Toverview
+%    Tlp
+%    Fcommands/commands.tex
+%    Tcommands
+%    ...
+% giving the names of files in the "help" directory (and its subdirectories)
+% together with the topics explained in those files.  No topic should occur
+% more than once in the list.  The first topic listed for each file will be
+% the one displayed in the list of all topics produced in response to the
+% command "help ?".
+
+get_help_index = proc (i: interactive) returns (hct) signals (none)
+
+    help_item = struct[name, choice: string]
+    hi_arr = array[help_item]
+    hi_seq = sequence[help_item]
+
+    own initialized: bool := false
+    own help_ct: hct := hct${help: hct$help, delims: ", \t", 
+    			     label: "topic", as: hi_seq$[]}
+
+    if initialized then return(help_ct) end
+    dir: string := home_directory$get_location()
+    fn: file_name := file_name$parse(dir || "help/Topics")
+    str: stream := stream$open(fn, "read")
+       except when not_possible (why: string):
+		   printer$error(i.p)
+		   printer$text(i.p, "\nCan't read `" || file_name$unparse(fn))
+		   printer$text(i.p, "': " || why || ".  Install LP's runtime")
+		   printer$text(i.p, " support in `" || dir || "' or invoke")
+		   printer$text(i.p, " LP with `lp -d <dir>', where <dir>")
+		   printer$text(i.p, " contains this runtime support.\n")
+		   signal none
+	      end
+    help_arr: hi_arr := hi_arr$[]
+    fname: string := ""
+    while true do
+	line: string := stream$getl(str)
+	if line[1] = 'F' then fname := string$rest(line, 2)
+	 elseif line[1] = 'T' then
+	   topic: string := slower(string$rest(line, 2))
+	   hi_arr$addh(help_arr, help_item${name: topic, choice: fname})
+	 end except when bounds: end % Ignore blank lines
+	end except when end_of_file: end
+    stream$close(str)
+    help_ct := hct${help: hct$help, delims: ", \t", label: "topic",
+		    as: hi_seq$a2s(help_arr)}
+       except when duplicate_names(hc: hct, s: string):
+	           help_ct := hc
+		   printer$error(i.p)
+		   printer$text(i.p, "\nWarning: the help index `")
+		   printer$text(i.p, file_name$unparse(fn))
+		   printer$text(i.p, "'contains duplicate entries for `")
+		   printer$puts(i.p, s)
+		   printer$text(i.p, "'.  Reinstall this file.\n")
+	      end
+    initialized := true
+    return(help_ct)
+    end get_help_index

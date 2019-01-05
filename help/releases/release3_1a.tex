@@ -1,0 +1,86 @@
+\doc{Release 3.1a}
+\ref{release3_1a}
+
+The following bugs in Version 3.1 have been fixed in Version 3.1a.
+\begin{description}
+\dt 95-001
+\dd 
+The command \fq{register top a b} only registered \fq{a} at the top of the
+registry.  LP no longer ignores \fq{b}.
+\dt 95-002
+\dd 
+When LP discovered an inconsistency during an attempt to prove the subgoal
+justifying a proof by cases, it did not propagate the inconsistency to the
+parent context.  LP now propagates the inconsistency.  This action is sound,
+because the subgoal did not introduce any additional hypotheses.
+\dt 95-003
+\dd 
+When using the rewrite rule \fq{n <= m -> \E k (n + k = m)} to reduce the term
+\fq{n <= k}, LP unsoundly renamed the bound variable \fq{k} to \fq{n}.  It now
+renames it to \fq{n1}.
+\dt 95-004
+\dd 
+LP generated an unhandled exception when trying to simplify an
+\fq{if__then__else__} containing a quantifier.
+\dt 95-005 (Partially fixed)
+\dd 
+LP interpreted commands like \fq{assert commutative(plus)} and 
+\fq{assert ac(plus)} as syntactically incorrect assertions of operator 
+theories, rather than as assertions of formulas.  This problem has been
+corrected, but assertions like \fq{assert ac +} remain ambiguous.  LP resolves
+such ambiguities by parsing them as operator theories, rather than as formulas
+consisting of a constant followed by a postfix operator.  Users who want the
+latter interpretation can type \fq{assert (ac+)}.  They should also use the
+default \fq{set write-mode qualified} setting to ensure that the \fq{write}
+command supplies the required parentheses when printing such assertions.
+\dt 95-006 (Partially fixed)
+\dd 
+LP had difficulty orienting some equations like \fq{a+a+b = c+d+d}, which
+contain operators with multiset status applied to repeated subterms, into
+terminating rewrite rules.  LP now correctly orients such equations, but it
+does so in some cases by making non-minimal extensions to the registry.
+\dt 95-007
+\dd 
+When the subgoal for a proof by specialization contained an \fq{ac} operator,
+LP was not able to prove the subgoal even though the \fq{show normal-form}
+command showed that it reduced to \fq{true}.
+\dt 95-008
+\dd 
+LP failed to apply the rewrite rule \fq{P(x, x) -> true} to the term
+\fq{P(\E i A(i), \E j A(j))}.
+\dt 95-009
+\dd 
+LP did not print the correct subgoal levels in response to \fq{display proof}.
+\dt 95-010
+\dd 
+LP did not treat the default proof methods as local to the current proof
+context.
+\dt 95-011
+\dd 
+LP required the user to qualify an overloaded variable \fq{v} in the command
+\fq{instantiate v by c in *}, even when the sort of \fq{v} could be determined
+from that of \fq{c}.
+\dt 95-012
+\dd 
+LP could not prove a deduction rule that contained an \f{ac} operator in its
+conclusion even though its logical system contained a rewrite rule equivalent
+to that deduction rule.
+\dt 95-013 (Partially fixed)
+\dd 
+LP generated an unhandled overflow when using the polynomial ordering to orient
+a long formula into a rewrite rule.  LP behaves more gracefully now, but at the
+expense of orienting the formula.
+\end{description}
+
+In addition, the following improvements have been made in Version 3.1a.
+
+\begin{itemize}
+\item
+A variant, \fq{freeze-current}, of the \dlink{../commands/freeze_thaw}{freeze}
+command freezes only the current proof attempt.  This variant makes it faster
+to use \f{freeze} and \f{thaw} to try different strategies for the current
+proof attempt.  It also consumes less disk space.
+\item
+The tracer now shows the accumulated CPU time at trace level 3 or higher
+whenever it discovers that more than 15 seconds of CPU time have elapsed.
+\end{itemize}

@@ -1,0 +1,59 @@
+#extend
+
+% This cluster parses and unparses external representations for formulas using
+% the following syntax:
+
+%	formula ::= term
+
+% The nonterminal "term" is defined by the "pterm" cluster.  When used as a
+% formula, a term must be boolean-valued.
+
+
+pformula = cluster is print, read
+    
+    rep = null
+    
+
+    % Prettyprints "f" on "p".  NOTE: When "f" is a conditional equation or a
+    % rewrite rule, the printed representation cannot be reparsed by the "read"
+    % operation.  To produce a representation that can be reparsed, it is
+    % necessary to print "formula$r2e(f)".
+    
+    print = proc (p: printer, f: formula, stab: symtab)
+	cond: bool := f.is_conditional
+	if cond then
+	   printer$text(p, "~{~{")
+	   printed: bool := false
+	   for c: term in formula$conditions(f) do
+	       if printed then printer$text(p, ",~1A") end
+	       unpterm$print_with_known_sort(p, c, stab)
+	       printed := true
+	       end
+	   printer$text(p, "~}~1A:: ")
+	   end
+	if f.is_rr 
+	   then unpterm$print2(p, f.left, "->", f.right, stab)
+	   else unpterm$print(p, f.formula, stab)
+	   end
+	if cond then printer$text(p, "~}") end
+	end print
+    
+
+    % Reads and returns a formula from the head of "scan".  Writes a message
+    % to "scan", and signals "error", if the head of "scan" does not contain a
+    % valid formula constructed from identifiers in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (formula) signals (error)
+	loc: locator := scan.nextToken.loc
+	pt: pterm := pterm$read_overloadings(scan, stab)
+	   resignal error
+	if ~sort_set$exists(pt.sorts, bool_sort()) then
+	   scanner$error_at(scan, loc, "formula must be a boolean-valued term")
+	   signal error
+	   end
+        return(formula$create(pterm$disambiguate(pt, bool_sort(), scan)))
+	   resignal error
+	end read
+
+
+    end pformula

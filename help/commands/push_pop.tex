@@ -1,0 +1,28 @@
+\doc{The push-settings and pop-settings commands}
+\ref{push-settings-command}
+\ref{pop-settings-command}
+
+The \def{push-settings} and \def{pop-settings commands} save and restore the
+values of the settings that control LP's operation.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{push-settings-command} ::= \f{push-settings}
+\sd{pop-settings-command}  ::= \f{pop-settings}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+push-settings
+pop-settings
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{push-settings} command saves the current values of all
+\dlink{set}{local settings} by pushing them on a stack.  The \fq{pop-settings} 
+command restores the values of these settings by popping them off the stack.
+\p
+The \cflink{write} command places the \fq{push-settings} and \fq{pop-settings}
+commands in \fq{.lp} files so that named axioms can be loaded from these files
+without affecting the current \setlink{name-prefix}, \setlink{activity}, and
+\setlink{immunity} settings.

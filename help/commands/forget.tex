@@ -1,0 +1,30 @@
+\doc{The forget command}
+\ref{forget-command}
+\ref{forgetting}
+
+The \def{forget command} causes LP to discard certain information about which
+computations LP has already performed.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{forget-command} ::= \f{forget} [ \f{pairs} ]
+\end{verbatim}
+
+Note: The argument of the \fq{forget} command can be
+\dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+forget
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{forget} command causes LP to discard all information about which
+critical pairs have already been computed in the current proof context.  It
+also prevents LP from accumulating further such information in the current
+proof context, and in all subsequently created subcontexts, until the next
+\cflink{complete} command is given.  
+\p
+The \fq{forget} command can save significant space when there are many rewrite
+rules.  It is useful when we are interested proving conjectures without
+appealing to the \cflink{critical-pairs} or \cflink{complete} commands.

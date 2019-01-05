@@ -1,0 +1,74 @@
+#extend
+
+% Processes the "instantiate" command.  Gets input of the form
+% 
+%    <variable> by <term> (`,' <variable> by <term>)* in <class-expression>
+%
+% from the user, prompting the user if necessary for the instantiation and
+% again for the <class-expression>.  If parsing is unsuccessful, prints an
+% error message and returns.  Otherwise, applies the substitution to the named
+% equations, rewrite rules, and deduction rules, normalizes the results unless
+% they are immune, and adds them to the system if different.  Does not use a
+% rewrite rule when normalizing its instantiation.
+
+% ENHANCE: check the result for inconsistency, deduction rules?
+
+c_instantiate = proc (i: interactive) signals (error)
+    scan: scanner := scanner$from_string("", i.p)
+    sigma: substitution, ce: class_expression := 
+	instantiate_args(scan, i.symtab)
+       except when none: return
+	      when error: aborted(i.p, "error in `instantiate' command")
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    ns: name_set := class_expression$full_eval(ce, i.sys, i.symtab.classes)
+       except when undefined (cn: class_name):
+		   aborted(i.p, "Undefined class name: "|| cn)
+	      end resignal error
+    tracer$remember_size(i.sys)
+    system$instantiate(i.sys, sigma, ns, i.symtab)
+       except when none: aborted(i.p, "nothing to instantiate") end
+       resignal error
+    prover$make_inferences(i, stabilize_task_mode)
+       except when interrupt, proved: end
+    end c_instantiate
+
+
+% Gets arguments for the "instantiate" command using the multiline input
+% convention.  Signals "none" if there is no input.  Prints an error message
+% and signals "bad_sub" or "bad_names" if there is an error.  Otherwise returns
+% a substitution together with a list of names for objects to which the
+% substitution should be applied.  Syntax: <variable> by <term> (`,' <variable>
+% by <term>)* in <class-expression>
+    
+instantiate_args = proc (scan: scanner, stab: symtab)
+		     returns (substitution, class_expression)
+		     signals (none, error)
+    query$get_more(scan, "the instantiation", instantiate_syntax)
+       resignal none
+    sigma: substitution := psubstitution$read(scan, stab, "by")
+       resignal error
+    % NOTE: We define "syn" instead of using name_syntax (from Query.equ) to
+    % work around a limitation on the size of variable names that appeared in
+    % June, 1995, in OSF1 cc and that manifested itself with a message about
+    % there being insufficient memory to compile the .c file produced by the
+    % pclu compiler.
+    syn: string := name_syntax1 || "\n" 
+    syn := syn || name_syntax2 || "\n" 
+    syn := syn || name_syntax3
+    if token$is_eof(scan.nextToken)
+       then query$get_more(scan, "names of objects to instantiate", syn)
+       else scanner$expecting_id(scan, "in")
+       end resignal error, none
+    if token$is_eof(scan.nextToken) then
+       query$get_more(scan, "names of objects to instantiate", syn)
+       end resignal none
+    ce: class_expression := class_expression$read(scan, stab)
+       resignal error
+       except when empty: scanner$error(scan, "expecting a name")
+			  signal error
+	      end
+    check_end_of_scan(scan)
+       resignal error
+    return(sigma, ce)
+    end instantiate_args

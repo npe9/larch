@@ -1,0 +1,48 @@
+\doc{Command arguments}
+\ref{arguments}
+\ref{command-arguments}
+
+Many commands take one or more arguments.  If you know how to use a command,
+you can type its arguments on the same line as the command.  If you don't, LP
+will prompt you for the arguments.  For example, you can type an entire command
+\begin{verbatim}
+set display-mode
+\end{verbatim}
+in response to LP's command prompt, or you can type an
+\dlink{abbreviation}{abbreviation} of the command without any arguments and
+await a further prompt:
+\begin{verbatim}
+LP1: set display
+
+The current display-mode is `unambiguous'.
+
+New display-mode:
+\end{verbatim}
+In response to this prompt, you can type
+\begin{itemize}
+\item the missing argument, for example, \fq{=>, normalization}
+\item a carriage return, which aborts execution of the command
+\item a question mark, which provides help such as
+\begin{verbatim}
+Legal display modes:
+  qualified    unambiguous  unqualified
+\end{verbatim}
+\end{itemize}
+\p
+Commands that require a possibly lengthy argument allow you to enter it on more
+than one line.  To do this, don't type the argument on the command line;
+instead, type it on the following lines, terminating your input with a line
+consisting of two periods (\f{..}).  For example,
+\begin{verbatim}
+LP1: declare sort Nat
+
+LP2: declare operators
+Please enter operator declarations, terminated with a `..' line, or `?' for
+help:
+0: -> Nat
+s: Nat -> Nat
+..
+\end{verbatim}
+If you need help in the middle of typing a lengthy argument, type a question
+mark on a line by itself.
+

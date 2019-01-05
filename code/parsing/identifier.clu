@@ -1,0 +1,891 @@
+#extend
+
+% Identifiers provide external representations for variables and operators.
+% Some identifiers have two representations: one for use in terms, and another
+% for use in declarations or other contexts that require an unambiguous way to
+% distinguish, e.g., a prefix operator from a postfix operator.
+
+% Identifiers fall into the following classes:
+% (a) Simple identifiers: x, x1, 23, f, pre
+%     These are used for variables, constants, and operators that take
+%     parenthesized list of arguments.
+% (b) Infix identifiers: 	__ + __, __ - __, __ * __	+, - *
+% (c) Postfix identifiers:	__ +, __ -, __ *		+, -, *
+% (d) Prefix identifiers:	+ __, - __, * __		+, -, *
+% (e) Mixfix identifiers:	__[__], {}
+% (f) Conditional identifier:	if __ then __ else __
+
+% Operators are parsed using the following symbols and priorities:
+
+%	Identifier	Standard	Alternate	Parsing
+%			Symbol		Symbol		Priority
+%	----------	--------	---------	--------
+%	ifOp		if		if		9
+%	iffOp		<=>		\iff		8
+%	impliesOp	=>		\implies	7
+%	andOp		/\		\and		6
+%	orOp		\/		\or		6
+%	eqOp		=		\eq		5
+%	neqOp		~=		\neq		5
+%	notOp		~		\not		4
+%	user somefix					4
+%	user mixfix					3
+%	selectOp	.		\select		2
+%	user simpleId					1
+
+identifier = cluster is
+	allOp, allSym, andOp, andSym, eqOp, eqSym, existsOp, existsSym,
+    	falseOp, falseSym, iffOp, iffSym, ifOp, ifSym, impliesOp, impliesSym, 
+	neqOp, neqSym, notOp, notSym, orOp, orSym, selectOp, selectSym,
+	trueOp, trueSym,
+	same_fix,
+	is_ifOp, is_infix, is_internal_variable, is_logicalOp, is_mixfix, 
+	is_postfix, is_prefix, is_selectOp, is_simple,
+	get_after, get_arity, get_before, get_close, get_is_big, 
+	get_left_assoc, get_open, get_priority, get_simple_to_postfix, get_sym,
+	make_infix, make_mixfix, make_postfix, make_prefix, make_simple,
+	make_somefix, 
+	make_constant, make_internal_constant, 
+	make_internal_variable, make_variable_alias, 
+	mark, print, id2s, unmark,
+	lt, le, gt, ge, hash_val, copy, equal, similar, same_sym, _gcd,
+	decode, encode
+			
+    rep = record[kind: idKind, 
+                 left_assoc: bool,
+		 overloadable: bool,
+                 priority: int,
+		 sym: string,		% for use in terms
+		 symMarked: string,	% for use in declarations
+		 symStandard: string]	% standard symMarked
+
+    idKind = oneof[ifOp, infixOp: null, mixfixOp: mixfixOp, 
+    		   postfixOp, prefixOp, simpleId, unknownfixOp: null]
+		       
+    mixfixOp = struct[before: bool,
+		      open: string,	% openSym
+		      places: int,
+		      close: string,	% closeSym
+		      after: bool]
+
+    internal_prefix = "??"    % Used for variables created during unification
+    alias_prefix    = "?"     % Used for variables renaming during unification
+    constant_prefix = "?c"    % Used for variables renamed as constants
+
+    own the_allSym:	string := "\\A"
+    own the_andSym:	string := "/\\"
+    own the_eqSym:	string := "="
+    own the_existsSym:	string := "\\E"
+    own the_falseSym:	string := "false"
+    own the_iffSym:	string := "<=>"
+    own the_ifSym:	string := "if"
+    own the_impliesSym:	string := "=>"
+    own the_neqSym:	string := "~="
+    own the_notSym:	string := "~"
+    own the_orSym:	string := "\\/"
+    own the_selectSym:  string := "."
+    own the_trueSym:	string := "true"
+    own the_marker:	string := "__"
+   
+
+
+    % Returns a pseudo-identifier representing the universal quantifier.
+
+    allOp = proc () returns (cvt)
+	own the_allOp: rep := rep${kind: idKind$make_simpleId(nil),
+				   left_assoc: false,
+				   overloadable: false,
+				   priority: 1,
+				   sym: the_allSym,
+				   symMarked: the_allSym,
+				   symStandard: the_allSym}
+    
+	return(the_allOp)
+	end allOp
+    
+    
+    % Returns the string representation for the universal quantifier.
+    
+    allSym = proc () returns (string)
+	return(the_allSym)
+	end allSym
+    
+
+    % Returns the identifier for the boolean conjunction operator.
+
+    andOp = proc () returns (cvt)
+	own the_andOp: rep := rep${kind: idKind$make_infixOp(nil),
+				   left_assoc: true,
+				   overloadable: false,
+				   priority: 6,
+				   sym: the_andSym,
+				   symMarked: mark_infix(the_andSym),
+				   symStandard: mark_infix(the_andSym)}
+	return(the_andOp)
+	end andOp
+    
+
+    % Returns the string representing the boolean conjunction operator.
+
+    andSym = proc () returns (string)
+	return(the_andSym)
+	end andSym
+    
+
+    % Returns the identifier for the equality operator.
+
+    eqOp = proc () returns (cvt)
+	own the_eqOp: rep := rep${kind: idKind$make_infixOp(nil),
+				  left_assoc: false,
+				  overloadable: false,
+				  priority: 5,
+				  sym: the_eqSym,
+				  symMarked: mark_infix(the_eqSym),
+				  symStandard: mark_infix(the_eqSym)}
+	return(the_eqOp)
+	end eqOp
+    
+
+    % Returns the string representing the equality operator.
+
+    eqSym = proc () returns (string)
+	return(the_eqSym)
+	end eqSym
+    
+
+    % Returns a pseudo-identifier representing the existential quantifier.
+
+    existsOp = proc () returns (cvt)
+	own the_existsOp: rep := rep${kind: idKind$make_simpleId(nil),
+				      left_assoc: false,
+				      overloadable: false,
+				      priority: 1,
+				      sym: the_existsSym,
+				      symMarked: the_existsSym,
+				      symStandard: the_existsSym}
+	return(the_existsOp)
+	end existsOp
+
+
+    % Returns the string representation for the existential quantifier.
+    
+    existsSym = proc () returns (string)
+	return(the_existsSym)
+	end existsSym
+    
+
+    % Returns the identifier for the boolean falsity operator.
+
+    falseOp = proc () returns (cvt)
+	own the_falseOp: rep := rep${kind: idKind$make_simpleId(nil),
+				     left_assoc: false,
+				     overloadable: false,
+				     priority: 1,
+				     sym: the_falseSym,
+				     symMarked: the_falseSym,
+				     symStandard: the_falseSym}
+	return(the_falseOp)
+	end falseOp
+    
+
+    % Returns the string representing the boolean falsity operator.
+
+    falseSym = proc () returns (string)
+	return(the_falseSym)
+	end falseSym
+    
+
+    % Returns the identifier for the boolean biconditional operator.
+
+    iffOp = proc () returns (cvt)
+	own the_iffOp: rep := rep${kind: idKind$make_infixOp(nil),
+				   left_assoc: true,
+				   overloadable: false,
+				   priority: 8,
+				   sym: the_iffSym,
+				   symMarked: mark_infix(the_iffSym),
+				   symStandard: mark_infix(the_iffSym)}
+	return(the_iffOp)
+	end iffOp
+    
+
+    % Returns the string representing the boolean biconditional operator.
+
+    iffSym = proc () returns (string)
+	return(the_iffSym)
+	end iffSym
+    
+
+    % Returns the identifier for the if-then-else operator.
+
+    ifOp = proc () returns (cvt)
+	own the_ifOp: rep := rep${kind: idKind$make_ifOp(nil),
+				  left_assoc: true,
+				  overloadable: false,
+				  priority: 9,
+				  sym: the_ifSym,
+				  symMarked: "if__then__else",
+				  symStandard: "if__then__else"}
+	return(the_ifOp)
+	end ifOp
+    
+    
+    % Returns the string representation for the first word of the if-then-else
+    % operator.
+
+    ifSym = proc () returns (string)
+	return(the_ifSym)
+	end ifSym
+    
+
+    % Returns the identifier for the boolean conditional operator.
+
+    impliesOp = proc () returns (cvt)
+	own the_impliesOp: rep := rep${kind: idKind$make_infixOp(nil),
+				       left_assoc: false,
+				       overloadable: false,
+				       priority: 7,
+				       sym: the_impliesSym,
+				       symMarked: mark_infix(the_impliesSym),
+				       symStandard: mark_infix(the_impliesSym)}
+	return(the_impliesOp)
+	end impliesOp
+    
+
+    % Returns the string representing the boolean conditional operator.
+
+    impliesSym = proc () returns (string)
+	return(the_impliesSym)
+	end impliesSym
+    
+
+    % Returns the identifier for the inequality operator.
+
+    neqOp = proc () returns (cvt)
+	own the_neqOp: rep := rep${kind: idKind$make_infixOp(nil),
+				   left_assoc: false,
+				   overloadable: false,
+				   priority: 5,
+				   sym: the_neqSym,
+				   symMarked: mark_infix(the_neqSym),
+				   symStandard: mark_infix(the_neqSym)}
+	return(the_neqOp)
+	end neqOp
+    
+
+    % Returns the string representing the inequality operator.
+
+    neqSym = proc () returns (string)
+	return(the_neqSym)
+	end neqSym
+    
+
+    % Returns the identifier for the boolean negation operator.
+
+    notOp = proc () returns (cvt)
+	own the_notOp: rep := rep${kind: idKind$make_prefixOp(nil), 
+				   left_assoc: false,
+				   overloadable: true,
+				   priority: 4,
+				   sym: the_notSym,
+				   symMarked: mark_prefix(the_notSym),
+				   symStandard: mark_prefix(the_notSym)}
+	return(the_notOp)
+	end notOp
+    
+
+    % Returns the string representing the boolean negation operator.
+
+    notSym = proc () returns (string)
+	return(the_notSym)
+	end notSym
+    
+
+    % Returns the identifier for the boolean disjunction operator.
+
+    orOp = proc () returns (cvt)
+	own the_orOp: rep := rep${kind: idKind$make_infixOp(nil),
+				  left_assoc: true,
+				  overloadable: false,
+				  priority: 6,
+				  sym: the_orSym,
+				  symMarked: mark_infix(the_orSym),
+				  symStandard: mark_infix(the_orSym)}
+	return(the_orOp)
+	end orOp
+    
+
+    % Returns the string representing the boolean disjunction operator.
+
+    orSym = proc () returns (string)
+	return(the_orSym)
+	end orSym
+    
+
+    % Returns the identifier for the record selection operator.
+    
+    selectOp = proc () returns (cvt)
+	own the_selectOp: rep := rep${kind: idKind$make_infixOp(nil),
+				      left_assoc: true,
+				      overloadable: true,
+				      priority: 2,
+				      sym: the_selectSym,
+				      symMarked: mark_infix(the_selectSym),
+				      symStandard: mark_infix(the_selectSym)}
+	return(the_selectOp)
+	end selectOp
+    
+
+    % Returns the string representing the record selection operator.
+    
+    selectSym = proc () returns (string)
+	return(the_selectSym)
+	end selectSym
+    
+			       
+    % Returns the identifier for the boolean truth operator.
+
+    trueOp = proc () returns (cvt)
+	own the_trueOp: rep := rep${kind: idKind$make_simpleId(nil),
+				    left_assoc: false,
+				    overloadable: false,
+				    priority: 1,
+				    sym: the_trueSym,
+				    symMarked: the_trueSym,
+				    symStandard: the_trueSym}
+	return(the_trueOp)
+	end trueOp
+    
+
+    % Returns the string representing the boolean falsity operator.
+
+    trueSym = proc () returns (string)
+	return(the_trueSym)
+	end trueSym
+    
+
+    % Returns "true" if "id1" and "id2" are both postfix, prefix, or infix.
+    
+    same_fix = proc (id1, id2: cvt) returns (bool)
+	tagcase id1.kind
+	    tag postfixOp: return(idKind$is_postfixOp(id2.kind))
+	    tag prefixOp:  return(idKind$is_prefixOp(id2.kind))
+	    tag infixOp:   return(idKind$is_infixOp(id2.kind))
+	    others:        return(false)
+	    end
+	end same_fix
+    
+
+    % Returns true iff "id" represents the conditional operator.
+    
+    is_ifOp = proc (id: cvt) returns (bool)
+	return(idKind$is_ifOp(id.kind))
+	end is_ifOp
+    
+    
+    % Returns true iff "id" represents an infix operator.
+    
+    is_infix = proc (id: cvt) returns (bool)
+	return(idKind$is_infixOp(id.kind))
+	end is_infix
+    
+    
+    % Returns true iff "id" represents an internal variable (created during
+    % unification).
+
+    is_internal_variable = proc (id: cvt) returns (bool)
+	return(idKind$is_simpleId(id.kind)
+		 cand string$indexs(internal_prefix, id.sym) = 1)
+	end is_internal_variable
+
+    
+    % Returns true iff "id" represents a binary logical operator, i.e., one of
+    % the operators of boolean conjunction, disjunction, conditional, or
+    % biconditional.
+    
+    is_logicalOp = proc (id: cvt) returns (bool)
+	s: string := id.sym
+	return(s = the_andSym cor s = the_orSym cor s = the_impliesSym cor
+	       s = the_iffSym)
+	end is_logicalOp
+    
+
+    % Returns true iff "id" represents an mixfix operator.
+    
+    is_mixfix = proc (id: cvt) returns (bool)
+	return(idKind$is_mixfixOp(id.kind))
+	end is_mixfix
+    
+    
+    % Returns true iff "id" represents a postfix operator.
+    
+    is_postfix = proc (id: cvt) returns (bool)
+	return(idKind$is_postfixOp(id.kind))
+	end is_postfix
+    
+    
+    % Returns true iff "id" represents a prefix operator.
+    
+    is_prefix = proc (id: cvt) returns (bool)
+	return(idKind$is_prefixOp(id.kind))
+	end is_prefix
+    
+    
+    % Returns true iff "id" represents a record selection operator.
+    
+    is_selectOp = proc (id: cvt) returns (bool)
+	return(idKind$is_postfixOp(id.kind) cand
+	       string$indexs(the_selectSym, id.sym) = 1)
+	end is_selectOp
+    
+    
+    % Returns true iff "id" is a simple identifier, i.e., one that represents
+    % a sort, a variable, or a functional operator.
+
+    is_simple = proc (id: cvt) returns (bool)
+	return(idKind$is_simpleId(id.kind))
+	end is_simple
+    
+
+    % Returns an identifier for the infix operator represented by the string
+    % "s".  Assumes: "s" is a simpleOp.
+    
+    make_infix = proc (s: string) returns (cvt)
+	s1: string := mark_infix(s)
+	return(rep${kind: idKind$make_infixOp(nil),
+		    left_assoc: true,
+		    overloadable: true,
+		    priority: 4,
+		    sym: s,
+		    symMarked: s1,
+		    symStandard: s1})
+	end make_infix
+    
+
+    % Returns "s" with marker symbols both before and after.
+    
+    mark_infix = proc (s: string) returns (string)
+	% ENHANCE: Insert spaces to separate tokens when using alternate symbol
+	return(the_marker || s || the_marker)
+	end mark_infix
+    
+
+    % Returns an identifier for a mixfix operator.  Assumes: "open" is an
+    % openSym and "close" is a closeSym.
+    
+    make_mixfix = proc (before: bool, open: string, places: int,
+			close: string, after: bool) returns (cvt)
+	m: mixfixOp := mixfixOp${before: before, open: open, places: places,
+				 close: close, after: after}
+	s1: string := m.open || int$unparse(m.places) || m.close
+	if m.before then s1 := "__" || s1 end
+	if m.after then s1 := s1 || "__" end
+	return(rep${kind: idKind$make_mixfixOp(m),
+		    left_assoc: false,
+		    overloadable: true,
+		    priority: 3,
+		    sym: s1,
+		    symMarked: s1,
+		    symStandard: s1})
+	end make_mixfix
+    
+    
+    % Returns an identifier for the postfix operator represented by the string
+    % "s".  Assumes: "s" is a simpleOp.
+    
+    make_postfix = proc (s: string) returns (cvt)
+	s1: string := mark_postfix(s)
+	return(rep${kind: idKind$make_postfixOp(nil),
+		    left_assoc: true,
+		    overloadable: true,
+		    priority: 4,
+		    sym: s,
+		    symMarked: s1,
+		    symStandard: s1})
+	end make_postfix
+    
+
+    % Returns "s" with an initial marker symbol.
+    
+    mark_postfix = proc (s: string) returns (string)
+	% ENHANCE: Insert spaces to separate tokens when using alternate symbol
+	return(the_marker || s)
+	end mark_postfix
+    
+
+    % Returns an identifier for the prefix operator represented by the string
+    % "s".  Assumes: "s" is a simpleOp.
+    
+    make_prefix = proc (s: string) returns (cvt)
+	s1: string := mark_prefix(s)
+	return(rep${kind: idKind$make_prefixOp(nil),
+		    left_assoc: true,
+		    overloadable: true,
+		    priority: 4,
+		    sym: s,
+		    symMarked: s1,
+		    symStandard: s1})
+	end make_prefix
+    
+    
+    % Returns "s" with a trailing marker symbol.
+    
+    mark_prefix = proc (s: string) returns (string)
+	% ENHANCE: Insert spaces to separate tokens when using alternate symbol
+	return(s || the_marker)
+	end mark_prefix
+
+
+    % Returns a simple identifier represented by the string "s".  Assumes: "s"
+    % is a simpleId.
+    
+    make_simple = proc (s: string) returns (cvt)
+	return(rep${kind: idKind$make_simpleId(nil),
+		    left_assoc: false,
+		    overloadable: true,
+		    priority: 1,
+		    sym: s,
+		    symMarked: s,
+		    symStandard: s})
+	end make_simple
+    
+
+    % Returns an identifier for an infix, prefix, or postfix operator
+    % represented by the string "s".  Assumes: "s" is a simpleOp.  
+    
+    make_somefix = proc (before: bool, s: string, after: bool) 
+		     returns (identifier)
+	if before
+	   then if after
+		   then return(make_infix(s))
+		   else return(make_postfix(s))
+		   end
+	   else if after
+		   then return(make_prefix(s))
+		   else return(make_unknownfix(s))
+		   end
+	   end
+	end make_somefix
+
+    
+    % Returns an identifier that will represent an infix, prefix, or postfix
+    % operator once it is looked up in a symbol table.
+
+    make_unknownfix = proc (s: string) returns (cvt)
+	return(rep${kind: idKind$make_unknownfixOp(nil),
+		    left_assoc: true,
+		    overloadable: true,
+		    priority: 4,
+		    sym: s,
+		    symMarked: s,
+		    symStandard: s})
+	end make_unknownfix
+    
+
+    % Returns an identifier obtained from the simple identifier "id" by
+    % appending the letter 'c' and, if "n > 0", the representation of "n".
+    % Used to create user-visible names for constants obtained by fixing the
+    % values of variables.
+    
+    make_constant = proc (id: cvt, n: int) returns (identifier)
+	if ~idKind$is_simpleId(id.kind) then
+	   fail("identifier$make_constant")
+	   end
+	s: string := id.sym || "c"
+	if n > 0 then s := s || int$unparse(n) end
+	return(make_simple(s))
+	end make_constant
+    
+    
+    % Returns an internal identifier (i.e., a simple identifier that cannot be
+    % parsed as a simpleId) for a constant related to "id".  Used to rename
+    % variables in the target for matching.
+
+    make_internal_constant = proc (id: cvt) returns (identifier)
+	if ~idKind$is_simpleId(id.kind) then
+	   fail("identifier$make_internal_constant")
+	   end
+	return(make_simple(constant_prefix || id.sym))
+	end make_internal_constant
+    
+    
+    % Returns the "n"th internal identifier (i.e., a simple identifier that
+    % cannot be parsed as a simpleId).  Used to name variables generated during
+    % unification.
+    
+    make_internal_variable = proc (n: int) returns (identifier)
+	return(make_simple(internal_prefix || int$unparse(n)))
+	end make_internal_variable
+    
+    
+    % Returns an internal identifier (i.e., a simple identifier that cannot be
+    % parsed as a simpleId) for a variable related to "id".  Used to rename
+    % variables during unification.
+
+    make_variable_alias = proc (id: cvt) returns (identifier)
+	if ~idKind$is_simpleId(id.kind) then
+	   fail("identifier$make_variable_alias")
+	   end
+	return(make_simple(alias_prefix || id.sym))
+	end make_variable_alias
+    
+    
+    % Returns true if the prettyprinter should treat "id" as a long symbol.
+    
+    get_is_big = proc (id: cvt) returns (bool)
+	return(string$size(id.sym) > 6)
+	end get_is_big
+    
+
+    % Returns true if "id" represents a left-associative operator.
+    
+    get_left_assoc = proc (id: cvt) returns (bool)
+	return(id.left_assoc)
+	end get_left_assoc
+    
+    
+    % Returns the parsing precedence of "id".
+    
+    get_priority = proc (id: cvt) returns (int)
+	return(id.priority)
+	end get_priority
+    
+    
+    % Returns the postfix operator obtained by converting a simpleId into
+    % a record selection operator.
+
+    get_simple_to_postfix = proc (id: cvt) returns (cvt) signals (not_simpleId)
+	if ~idKind$is_simpleId(id.kind) then signal not_simpleId end
+	s: string := the_selectSym
+	if string$size(s) > 1 then s := s || " " end
+	s := s || id.sym
+	s1: string := mark_postfix(s)
+	return(rep${kind: idKind$make_postfixOp(nil),
+		    left_assoc: true,
+		    overloadable: true,
+		    priority: 2,
+		    sym: s,
+		    symMarked: s1,
+		    symStandard: s1})	
+	% FIX: when alternate symbols are used, distinguish the_selectSym from
+	% the_standardSelectSym
+	end get_simple_to_postfix
+    
+    
+    % Returns the string used to represent "id" when printing a term or a
+    % variable.  Signals "impossible" if "id" is a mixfix operator or the ifOp.
+    
+    get_sym = proc (id: cvt) returns (string) signals (impossible)
+	tagcase id.kind
+	   tag ifOp, mixfixOp: signal impossible
+	   others: return(id.sym)
+	   end
+	end get_sym
+    
+    
+    % Returns true if the mixfix identifier "id" has a trailing marker.
+    % Signals "wrong_tag" if "id" is not mixfix.
+    
+    get_after = proc (id: cvt) returns (bool) signals (wrong_tag)
+	return(idKind$value_mixfixOp(id.kind).after)
+	   resignal wrong_tag
+	end get_after
+    
+    
+    % Returns the arity of the operator with identifier "id".  Signals 
+    % "unknown" if "id" can represent one or more of an infix, postfix, or
+    % prefix operator, or if "id" can be used as a function identifier.
+
+    get_arity = proc (id: cvt) returns (int) signals (unknown)
+	n: int
+	tagcase id.kind
+	   tag ifOp:	     n := 3
+	   tag infixOp:	     n := 2
+	   tag mixfixOp:     m: mixfixOp:= idKind$value_mixfixOp(id.kind)
+	   		     n := m.places
+	   		     if m.before then n := n + 1 end
+			     if m.after then n := n + 1 end
+	   tag postfixOp:    n := 1
+	   tag prefixOp:     n := 1
+	   tag simpleId:     signal unknown
+	   tag unknownfixOp: signal unknown
+	   end
+        return(n)
+	end get_arity
+    
+    
+    % Returns true if the mixfix identifier "id" has a leading marker.
+    % Signals "wrong_tag" if "id" is not mixfix.
+    
+    get_before = proc (id: cvt) returns (bool) signals (wrong_tag)
+	return(idKind$value_mixfixOp(id.kind).before)
+	   resignal wrong_tag
+	end get_before
+    
+    
+    % Returns the closeSym for the mixfix identifier "id".  Signals "wrong_tag"
+    % if "id" is not mixfix.
+    
+    get_close = proc (id: cvt) returns (string) signals (wrong_tag)
+	return(idKind$value_mixfixOp(id.kind).close)
+	   resignal wrong_tag
+	end get_close
+    
+    
+    % Returns the openSym for the mixfix identifier "id".  Signals "wrong_tag"
+    % if "id" is not mixfix.
+    
+    get_open = proc (id: cvt) returns (string) signals (wrong_tag)
+	return(idKind$value_mixfixOp(id.kind).open)
+	   resignal wrong_tag
+	end get_open
+
+    
+
+    % Converts "id" into an identifier suitable for an operator of arity "n" by
+    % inserting markers if "id" is an unknownfix operator.  Signals
+    % "wrong_arity" if "id" cannot be an identifier for an operator of arity
+    % "n".  Signals "ambiguous if "n = 1" and "id" can be either a prefix or a
+    % postfix operator.
+
+    mark = proc (id: cvt, n: int) returns (cvt) 
+	     signals (wrong_arity, ambiguous)
+	if up(id).arity ~= n then signal wrong_arity end
+	   except when unknown: end
+	if idKind$is_unknownfixOp(id.kind) then
+	   if n = 1 then signal ambiguous end
+	   if n = 2 then id := down(make_infix(id.sym)) end
+	   end
+        return(id)
+	end mark
+    
+    
+    % Prettyprints "id" on "p".
+    
+    print = proc (p: printer, id: cvt)
+	tagcase id.kind
+	   tag ifOp:		printer$text(p, "if__then__else__")
+	   tag infixOp: 	printer$text(p, "__")
+	   			printer$text(p, id.sym)
+				printer$text(p, "__")
+	   tag mixfixOp:	m: mixfixOp := idKind$value_mixfixOp(id.kind)
+	   			printer$text(p, "~{")
+				if m.before then printer$text(p, "__") end
+	   			printer$text(p, m.open)
+				printer$text(p, "~{")
+				printed: bool := false
+				for i: int in int$from_to(1, m.places) do
+				    if printed then printer$text(p, ",~F") end
+				    printed := true
+				    printer$text(p, "__")
+				    end
+				printer$text(p, "~}")
+				printer$text(p, m.close)
+				if m.after then printer$text(p, "__") end
+				printer$text(p, "~}")
+	   tag postfixOp: 	printer$text(p, "__")
+	   			printer$text(p, id.sym)
+	   tag prefixOp:	printer$text(p, id.sym)
+				printer$text(p, "__")
+	   tag simpleId:	printer$text(p, id.sym)
+	   tag unknownfixOp:	printer$text(p, id.sym)
+	   end
+	end print
+    
+    
+    % Returns an internal string representation for "id".
+
+    % FIX: Make the internal representation for hardwired identifiers
+    % independent of their external representation.
+    
+    id2s = proc (id: cvt) returns (string)
+	return(id.symStandard)
+	end id2s
+
+
+    % Returns an unmarked version of "id" suitable for printing when there
+    % is no ambiguity about how to reinsert markers.  Signals "impossible"
+    % if the markers in "id" cannot be implicit.
+
+    unmark = proc (id: cvt) returns (identifier) signals (impossible)
+	tagcase id.kind
+	   tag infixOp:
+	   tag postfixOp:
+	   tag prefixOp:
+	   others: signal impossible
+	   end
+	return(make_unknownfix(id.sym))
+	end unmark
+    
+    
+
+
+    lt = proc (id1, id2: cvt) returns (bool)
+	return(id1.symStandard < id2.symStandard)
+	end lt
+    
+    le = proc (id1, id2: cvt) returns (bool)
+	return(id1.symStandard <= id2.symStandard)
+	end le
+    
+    gt = proc (id1, id2: cvt) returns (bool)
+	return(id1.symStandard > id2.symStandard)
+	end gt
+    
+    ge = proc (id1, id2: cvt) returns (bool)
+	return(id1.symStandard >= id2.symStandard)
+	end ge
+    
+    
+    % NOTE: This procedure hashes "id" using "id.sym", which does not contain
+    % any markers, so that the symbol table cluster will find "__-__", "-__",
+    % and "__-" as possible overloadings of "-".
+    
+    % FIX: should this hash id.symStandardUnmarked?
+    
+    hash_val = proc (id: cvt, n: int) returns (int)
+	return(hash(id.sym, n))
+	end hash_val
+    
+    copy = proc (id: cvt) returns (cvt)
+	return(rep$copy(id))
+	end copy
+    
+    equal = proc (id1, id2: cvt) returns (bool)
+	return(id1.symStandard = id2.symStandard)
+	end equal
+    
+
+    similar = proc (id1, id2: cvt) returns (bool)
+	if idKind$is_unknownfixOp(id1.kind) 
+	     cor idKind$is_unknownfixOp(id2.kind)
+	   then return(id1.sym = id2.sym)
+	   else return(id1.symStandard = id2.symStandard)
+	   end
+	end similar
+    
+    
+    same_sym = proc (id1, id2: cvt) returns (bool)
+	return(id1.sym = id2.sym)
+	end same_sym
+
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    
+    end identifier
+

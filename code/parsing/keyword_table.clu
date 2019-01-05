@@ -1,0 +1,221 @@
+#extend
+
+% A "keyword_table" is an abstraction for selecting one of a set of
+% (possibly hyphenated) keywords based on componentwise prefix matching.
+
+keyword_table = cluster is new, cons, add_synonym, choose, scan_and_choose, 
+                           unparse_keywords, copy
+
+    % REPRESENTATION INVARIANT:  For any rep "r":
+    % 1.  For any string "n", there is at most one string "k" such that
+    %     "action${name: n, keyword: k}" is in "r.acts"
+    % 2.  For any strings "n" and "k", if "action${name: n, keyword: k}" is in 
+    %     "r.acts" then "action${name: k, keyword: k}" is also in "r.acts".
+    % 3.  "r.unparse" is a string consisting of the names of the keywords in
+    %     "r.acts", separated by commas
+    % That is, every name is associated with a unique keyword and every
+    % keyword is a name for itself.
+
+    rep     = record[acts: actions, unparse: string]
+    actions = array[action]
+    action  = struct[name: string, 	% keyword or synonym
+                     keyword: string]   % string to select
+    
+		    
+    % Returns a new, empty "keyword_table". 
+
+    new = proc () returns (cvt) 
+	return(rep${acts: actions$[], unparse: ""})
+        end new
+
+    
+    % Returns a new "keyword_table" with each string in "a" as its own unique
+    % synonym.  This operation is provided so that a sequence-like constructor
+    % can be used to build a list.  This facility is provided by the "#extend"
+    % mode of the CLU compiler.
+
+    cons = proc (a: string_seq) returns (cvt) 
+	acts: actions := actions$predict(1, string_seq$size(a))
+	unp: string := ""
+        for s: string in string_seq$elements(a) do
+            actions$addh(acts, action${name: s, keyword: s})
+	    if ~string$empty(unp) then unp := unp || ", " end
+	    unp := unp || "`" || s || "'"
+            end
+	return(rep${acts: acts, unparse: unp})
+        end cons
+
+    
+    % Augments "kt" by adding "name" as a synonym for "keyword".
+    % Signals "duplicate_meaning" if "name" is already a synonym for some
+    % keyword other than "keyword" (including "name" itself).  Signals
+    % "unknown_keyword" if "keyword" is not already present in "ct".
+
+    add_synonym = proc (kt: cvt, name, keyword: string)
+		    signals (duplicate_meanings(string), unknown_keyword)
+        unk: bool := true
+        for act: action in actions$elements(kt.acts) do
+	    if act.name = name then
+	       if act.keyword = keyword 
+		  then return
+		  else signal duplicate_meanings(act.keyword)
+		  end
+               end
+	    if act.keyword = keyword then unk := false end
+            end
+	if unk then signal unknown_keyword end
+	actions$addh(kt.acts, action${name: name, keyword: keyword})
+	end add_synonym
+    
+    
+    % Returns the unique string "keyword" such that "keyword" or one of its
+    % synonyms is a best match for "s" among all ".name" components of actions
+    % in "kt".  The best possible match is an exact match.  Other matches occur
+    % when each hyphen-separated component of "s" is a prefix of the
+    % corresponding component of the candidate ".name" field being tested.  The
+    % quality of a prefix match is given by the number of components in the
+    % candidate ".name", with smaller numbers being better.  Signals "no_match"
+    % if there is no match.  Signals "ambiguous" if there are multiple best
+    % matches that are not all associated with the same ".keyword".
+    
+    choose = proc (kt: cvt, s: string) returns (string)
+	       signals (ambiguous(string_arr), no_match)
+	matches: actions := actions$[]
+	for a: action in actions$elements(kt.acts) do
+	    if s = a.name then return(a.keyword)
+             elseif components_match(s, a.name) then actions$addh(matches, a)
+	     end
+	    end
+	if actions$size(matches) = 0 then signal no_match end
+	small_h: int := string_count_char(matches[1].name, '-')
+	count: int := 1
+	for i: int in int$from_to(2, actions$size(matches)) do
+	    a: action := matches[i]
+	    h: int := string_count_char(a.name, '-')
+	    if h < small_h then
+	       matches[1] := a
+	       count := 1
+	       small_h := h
+	     elseif h = small_h then
+	       count := count + 1
+	       matches[count] := a
+	     end
+	    end
+        keyword: string := matches[1].keyword
+	if count > 1 then
+	   for a: action in actions$elements(matches) do
+	       if a.keyword ~= keyword then
+		  names: string_arr := string_arr$predict(1, count)
+		  for i: int in int$from_to(1, count) do
+		      string_arr$addh(names, matches[i].name)
+		      end
+		  signal ambiguous(names)
+		  end
+	       end
+	   end
+	return(keyword)
+	end choose
+
+
+    % (Internal procedure) Returns "true" if each hyphen-separated component of
+    % "s1" is a prefix of the corresponding component of "s2".
+
+    components_match = proc (s1, s2: string) returns (bool)
+	while true do
+	    p1: int := string$indexc('-', s1)
+	    if p1 = 0 then return(is_initial_substring(s1, s2)) end
+	    p2: int := string$indexc('-', s2)
+	    if p2 = 0 cor ~is_initial_substring(string$substr(s1, 1, p1-1),
+						string$substr(s2, 1, p2-1))
+	       then return(false) end
+	    s1 := string$rest(s1, p1+1)
+	    s2 := string$rest(s2, p2+1)
+	    end
+	end components_match
+
+
+    % Reads a hyphen-separated keyword from the head of "scan" and returns the
+    % unique string "key" such that "key" or one of its synonyms is a best
+    % match for the keyword.  Writes an error message to the error pipe in 
+    % "scan", and signals "error", if "key" is ambiguous.  Signals "none", and
+    % does not remove any tokens from "scan", if "scan" does not begin with a
+    % recognizable keyword or if "scan" begins with a root name in "stab".
+    
+    scan_and_choose = proc (kt: cvt, scan: scanner, stab: symtab) 
+	                returns (string) signals (error, none)
+        % Accumulate hyphen-separated name
+	tok: token := scan.nextToken
+	if tok.text = "-" cor token$is_eof(tok) then signal none end
+	name: string := tok.text
+	toks: token_arr := token_arr$[]
+	while true do
+	    token_arr$addh(toks, tok)
+	    scanner$get(scan)
+	    if tok.text[string$size(tok.text)] ~= '-' then
+	       tok := scan.nextToken
+	       if tok.text ~= "-" then break end
+	       name := name || "-"
+	       token_arr$addh(toks, tok)
+	       scanner$get(scan)
+	       end
+	    tok := scan.nextToken
+	    if tok.text = "-" cor token$is_eof(tok) then 
+	       scanner$error(scan, "missing keyword component after `-'")
+	       push_tokens(scan, toks)
+	       signal error
+	       end
+	    name := name || tok.text
+	    end 
+	if token_arr$size(toks) = 1
+	     cand (symtab$is_root_name(stab, name)
+		     cor string$indexc(scan.nextToken.text[1], ".*") > 0) then
+	   push_tokens(scan, toks)
+	   signal none
+	   end except when bounds: end
+	% Look up name in keyword table
+	return(choose(up(kt), name))
+	   except when ambiguous (matches: string_arr): 
+	               loc: locator := toks[1].loc
+		       p: printer := scan.printer
+	               scanner$error_at1(scan, loc, "ambiguous keyword: `")
+		       printer$puts(p, name)
+		       printer$text(p, "' matches ")
+		       n: int := string_arr$high(matches)
+		       for i: int in int$from_to(1, n) do
+			   if 1 < i then
+			      if 2 < n then printer$puts(p, ",") end
+			      printer$text(p, " ")
+			      if i = n then printer$text(p, "and ") end
+			      end
+			   printer$puts(p, "`" || matches[i] || "'")
+			   end
+		       scanner$error_at2(scan, loc)
+		       push_tokens(scan, toks)
+		       signal error
+		  when no_match: 
+		       push_tokens(scan, toks)
+		       signal none
+		  end
+	end scan_and_choose
+    
+    
+    push_tokens = proc (scan: scanner, toks: token_arr)
+	while true do
+	    scanner$push(scan, token_arr$remh(toks))
+	    end except when bounds: end
+	end push_tokens
+
+
+    unparse_keywords = proc (kt: cvt) returns (string)
+	return(kt.unparse)
+	end unparse_keywords
+
+
+    
+    % Returns a copy of "kt".
+    
+    copy = proc (kt: cvt) returns (cvt)
+	return(rep$copy1(kt))
+	end copy
+
+    end keyword_table

@@ -1,0 +1,93 @@
+%  Procedures on integers.
+
+% Finds the greatest common divisor of "i1" and "i2".
+
+gcd = proc (i1, i2: int) returns (int) signals (negative, zero_divide)
+    if i1 < 0 cor i2 < 0 then signal negative end
+    if i1 < i2 then i1, i2 := i2, i1 end
+    if i2 = 0 then signal zero_divide end
+    while i2 ~= 0 do i1, i2 := i2, i1 // i2 end
+    return(i1)
+    end gcd
+
+
+% Finds the least common multiple of "i1" and "i2".
+
+lcm = proc (i1, i2: int) returns (int) signals (negative)
+    return(i1 * i2 / gcd(i1, i2)) 
+       except when negative: signal negative
+	      when zero_divide: return (0)
+	      end
+    end lcm
+
+
+% Returns the minimum value in "si".
+
+minimum = proc (si: int_seq) returns (int) signals (empty)
+    min: int := int_seq$bottom(si) 
+       except when bounds: signal empty end
+    for i: int in int_seq$elements(si) do
+	if i < min then min := i end
+	end
+    return(min)
+    end minimum
+
+
+% Returns the maximum value in "si".
+
+maximum = proc (si: int_seq) returns (int) signals (empty)
+    max: int := int_seq$bottom(si)
+       except when bounds: signal empty end
+    for i:int in int_seq$elements(si) do
+	if i > max then max := i end
+	end
+    return(max)
+    end maximum
+
+
+% Sets a[i], a[i+1], ... to zero.
+
+zero_sub_arr = proc (a: int_arr, i: int) signals (bounds)
+    for index: int in int$from_to(i, int_arr$high(a)) do
+	a[index] := 0
+	end 
+       resignal bounds
+    end zero_sub_arr
+
+
+mult_sa = proc(x: int_seq, y: int_arr) returns (int) signals (bounds)
+    if int_arr$low(y) ~= 1 cor int_seq$size(x) ~= int_arr$size(y)
+       then signal bounds
+       end
+    result: int := 0
+    for i: int in int_seq$indexes(x) do
+	result := result + x[i] * y[i]
+	end	
+    return(result)
+    end mult_sa
+
+
+lexi_arr = iter (max: int_arr) yields (int_arr) signals (negative, empty)
+    if int_arr$empty(max) then signal empty end
+    high: int := int_arr$high(max) 
+    low: int := int_arr$low(max)
+    result: int_arr := int_arr$fill(low, high, 0)
+    for i: int in int$from_to(low, high) do
+	if max[i] < 0 then signal negative end
+	end
+    yield(result)
+    while true do
+	for i: int in int$from_to_by(high, low, -1) do
+	    if result[i] < max[i]
+	       then
+		    result[i] := result[i] + 1
+		    zero_sub_arr(result, i + 1) except when bounds: end
+		    yield(result)
+		    break
+	       end
+	    if i = low cand int_arr$similar(result, max)	% if i = 1 
+	       then return                              % for efficiency
+	       end
+	    end
+	end
+    end lexi_arr

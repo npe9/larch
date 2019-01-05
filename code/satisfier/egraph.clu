@@ -1,0 +1,1342 @@
+#extend
+
+% There are problems with add_term.  Sometimes, after some merges and undoes,
+% add_term will not find a term that is already there, but will add a new one.
+
+% Recommended changes: commands like save_state, which push something on the
+% undo stack, should appear separately.  The way it's done now we cannot undo
+% several equations and follow the strategy.  Perhaps we should have two
+% different null obj in undo_stack -- one for undoing one eq, another for
+% undoing many.  I also suggest renaming roll back into undo_equation, which it
+% really is: it undoes the equation and all merges caused by it.  We also
+% should have save and restore functions to undo until some specific point.
+
+% Suggestions about add_equation: add equation between e-nodes does not make
+% sense, since we don't want to expose enodes.
+
+
+
+% An "egraph" is a directed graph used for computing the congruence closure of
+% an equivalence relation over terms.  The algorithms in this cluster are based
+% on those described by Greg Nelson in "Techniques for Program Verification,"
+% Xerox Palo Alto Research Center Report CSL-81-10, June 1981.
+
+
+% Data types shared by "egraph", "enode"
+
+enode_pr 	= record[first, second: enode]
+label_type      = oneof[dummy: string, op: operator, term: term, none: null]
+no_label	= label_type$make_none(nil)
+getproc 	= proctype (enode) returns (enode) signals (wrong_tag)
+setproc		= proctype (enode, enode) signals (wrong_tag)
+
+
+egraph = cluster is new, add_term, add_equation,
+                    add_implication, reduced, get_canonical,
+		    equiv, make_special, print, roll_back, save, undo,
+		    forbid_merge, _gcd
+		    
+    enode_pr_queue  	= array[enode_pr]
+    undo_info        	= oneof[add: add_info, 			% NEW
+				map: term,			% NEW
+                                merge: enode, 
+    			        push: int]
+    add_info            = record[smcar, smcdr: maybe_enode, node: enode]  % NEW
+    maybe_enode         = maybe_obj[enode]
+    undo_stack      	= array[undo_info]
+    enode_hash_tbl  	= str_hash_table[enode]
+    pair_hash_tbl   	= hash_table[enode_pr, enode]
+    enode_arr           = array[enode]				% NEW
+    enode_q             = enode_arr				% NEW
+    table_size 		= 100
+    huge 		= 1000000000
+	
+    rep = record[enil: 			enode,
+                 f_node:        	enode,			% NEW
+		 t_node:        	enode,			% NEW
+    		 leaf_tbl: 		enode_hash_tbl,
+		 nonleaf_tbl: 		pair_hash_tbl,
+		 undostack: 		undo_stack,
+		 term_nodes:    	enode_arr,		% NEW
+		 reduced_up_to_date: 	bool,			% NEW
+		 sg: 			subterm_graph,		% NEW
+		 uid: 			int]%id for dummy nodes	% NEW
+
+
+    own no_enode: maybe_enode := maybe_enode$none()				% NEW
+    own no_node: enode := enode$none()				% NEW
+
+    
+    % Returns a new "egraph" with no vertices.
+
+    new = proc () returns (cvt)
+	enode$reset()						% NEW ??
+	g: rep := rep${enil: enode${ecar: no_node, ecdr: no_node, 
+				    label: no_label},
+		       f_node: no_node,				% NEW
+		       t_node: no_node,				% NEW
+		       leaf_tbl: enode_hash_tbl$predict(table_size),
+		       nonleaf_tbl: pair_hash_tbl$predict(table_size),
+		       undostack: undo_stack$[],
+		       term_nodes: enode_arr$[],		% NEW
+		       reduced_up_to_date: false,		% NEW
+		       sg: subterm_graph$[],			% NEW
+		       uid: 0}					% NEW
+        for l: literal in add_term(up(g), term_true()) do end 	% NEW
+	   except when node (nd: enode): g.t_node := nd end	% NEW
+	for l: literal in add_term(up(g), term_false()) do end 	% NEW
+	   except when node (nd: enode): g.f_node := nd end	% NEW
+	make_special(up(g), g.t_node)				% NEW
+	make_special(up(g), g.f_node)				% NEW
+	return(g)
+	end new
+
+ 
+    % Adds vertices for "t" and its subterms to "g" if they are not already
+    % there.  Yields literals equating an existing vertex in "g" to "t" or one
+    % of its subterms.  Then signals "node" with the vertex corresponding to
+    % "t".  ASSUMES: "t" contains no variables or quantifiers.
+  
+    add_term = iter (g: cvt, t: term) yields (literal) signals (node(enode))
+	signal node(t.enode)
+	   except when none: end
+	num_children: int := term_seq$size(t.args)
+	   except when wrong_tag: fail("egraph$add_term") end
+	op_node: enode, new_leaf: bool := add_leaf(g, t.root)
+	if num_children = 0 then
+	   t.enode := op_node 
+	   undo_stack$addh(g.undostack, undo_info$make_map(t))
+	   if new_leaf then
+	      enode_arr$addh(g.term_nodes, op_node)
+	      g.reduced_up_to_date := false
+	      end
+	   signal node(op_node)
+	   end
+
+	% Cycle through children, from right to left.  The rightmost enode is
+	% initialized to enil.  The left_nodes will represent the child
+	% vertices, the right_nodes the edges pointing to them.
+	
+	right_node: enode := g.enil
+	for child: int in int$from_to_by(num_children, 1, -1) do
+	    left_node: enode
+	    b: bool
+	    for l: literal in add_term(up(g), t.args[child]) do yield(l) end
+	       except when node (nd: enode): left_node := nd end
+	    right_node, b := parent(g, left_node, right_node, no_label)
+	    end
+	
+	node: enode, is_new: bool :=
+	    parent(g, op_node, right_node, label_type$make_term(t))
+	t.enode := node				 
+	undo_stack$addh(g.undostack, undo_info$make_map(t)) 
+        if is_new 
+	   then enode_arr$addh(g.term_nodes, node)
+		g.reduced_up_to_date := false
+	   else t1: term := label_type$value_term(node.label)
+		if t ~= t1 then
+		   % This can yield redundant equalities, for example, when 
+		   % other "t'" equal to "t" but not to "t1" are added to "g".
+		   yield(literal$make_equality(t, t1))
+		   end
+	   end
+	signal node(node)
+	% The following code causes LP to run out of memory on the counter
+	% example.  Perhaps add_implication interacts poorly with undo.
+        if is_op_if(t.root) then
+	   test_node: enode := right_node.ecar
+	   then_node: enode := right_node.ecdr.ecar
+	   else_node: enode := right_node.ecdr.ecdr.ecar
+	   egraph$add_implication(up(g), test_node, g.t_node, then_node, node)
+	   egraph$add_implication(up(g), test_node, g.f_node, else_node, node)
+	 elseif is_op_equals(t.root) then
+	   node1: enode := right_node.ecar
+	   node2: enode := right_node.ecdr.ecar
+	   egraph$add_implication(up(g), node1, node2, node, g.t_node)
+	   egraph$add_implication(up(g), node, g.t_node, node1, node2)
+	 end
+	signal node(node)
+	end add_term
+    
+    
+    % (Internal procedure) Returns the leaf containing "op" in "g", adding it
+    % if not already there.  Returns "true" along with the leaf if it is new,
+    % and "false" otherwise.
+    
+    add_leaf = proc (g: rep, op: operator) returns (enode, bool)
+	s: string := operator$op2s(op)
+	return(enode_hash_tbl$image(g.leaf_tbl, s), false)
+	   except when missing: end
+	node: enode := 
+	    enode${ecar: no_node, ecdr: no_node, label: label_type$make_op(op)}
+        inf: add_info := 
+	    add_info${smcar: no_enode, smcdr: no_enode, node: node}
+        undo_stack$addh(g.undostack, undo_info$make_add(inf))	
+	enode_hash_tbl$insert(g.leaf_tbl, s, node)
+	return(node, true)
+	end add_leaf
+
+    
+    % (Internal procedure) Returns the node in "g" with children equivalent to
+    % "lnode" and "rnode", adding it if not already there.
+    
+    parent = proc (g: rep, lnode, rnode: enode, label: label_type) 
+	       returns (enode, bool)
+	lnode := lnode.root
+	rnode := rnode.root
+	lr_pair: enode_pr := enode_pr${first: lnode, second: rnode}
+	return(pair_hash_tbl$image(g.nonleaf_tbl, lr_pair, enode_hash,
+				   enode_equiv), false)
+	   except when missing: end
+	node: enode := enode${ecar: lnode, ecdr: rnode, label: label}
+	node.intable := lr_pair
+	pair_hash_tbl$insert(g.nonleaf_tbl, lr_pair, node, enode_hash,
+	    		     enode_equiv)
+        			 
+	% Now fix "node.samecar" and "node.samecdr" if there are other enodes 
+	% with the same ecar or ecdr.
+	smcar, smcdr: maybe_enode
+	if enode$is_none(lnode.pred)
+	   then % Create "lnode.pred"
+	        lnode.pred := node
+	        lnode.pred1 := node
+	        smcar := no_enode
+	   else % Insert node second in list of left children of lnode.pred
+		node.samecar := lnode.pred.samecar
+		node.samecar1 := lnode.pred.samecar1
+		lnode.pred.samecar := node
+		lnode.pred.samecar1 := node
+		smcar:= maybe_enode$make(lnode.pred)
+	   end
+	if enode$is_none(rnode.pred)
+	   then rnode.pred := node
+	        rnode.pred1 := node
+	      	smcdr := no_enode
+	   else node.samecdr := rnode.pred.samecdr
+	        node.samecdr1 := rnode.pred.samecdr1
+		rnode.pred.samecdr := node
+		rnode.pred.samecdr1 := node
+	        smcdr:= maybe_enode$make(rnode.pred)
+	   end
+        undo_stack$addh(g.undostack, 
+	                undo_info$make_add(add_info${smcar: smcar, 
+			                             smcdr: smcdr, 
+	                                             node: node}))
+	return(node, true)
+	end parent
+    
+    
+    % Yields literals "t1 = t2" such that the rewriting system consisting
+    % of the rules "t1 -> t2" is internormalized, complete, and equivalent to
+    % the set of all equalities in "g".
+    
+    reduced = iter (g: cvt) yields (literal) 
+	% Initialize the "count", "vertex", "norm" fields for all enodes
+	% representing terms in "g".
+	for nd: enode in enode_arr$elements(g.term_nodes) do
+	    nd.root.processed := false
+	    nd.count := 0
+	    nd.vertex := no_vertex
+	    nd.norm := nd
+	    end
+	% Initialize "g.sg".  For each constant node "nd" in "g", add a vertex
+	% to "g.sg" and put "nd" in Q, with numerals in front.  
+        Q: enode_q := enode_q$[]
+	g.sg := subterm_graph$[]
+	for str: string, nd: enode in enode_hash_tbl$elements(g.leaf_tbl) do
+	    begin
+		op: operator := label_type$value_op(nd.label)
+		if op.arity = 0 then
+		   nd.vertex := subterm_graph$add_vertex(g.sg, op, vert_seq$[])
+		   if operator$is_numeral(op)
+		      then enode_q$addl(Q, nd)
+		      else enode_q$addh(Q, nd)
+		      end
+		   end
+		end except when none, wrong_tag: end
+	    end
+	% Invariant: all enodes in Q have the vertex field set
+        while true do
+	    nd: enode := get(Q) % signals empty
+	    if nd.root.processed then continue end
+	    nd.root.processed := true
+	    for nd1: enode in eq_class(g, nd) do
+		nd1.norm := nd
+		subterm_graph$make_pair(g.sg, nd1.vertex, nd.vertex) 
+		   except when none: end
+	        for p: enode in parents(up(g), nd1) do
+		    p.count := p.count + 1
+		    if p.count = arity(p.label) then
+		       va: vert_arr := vert_arr$[]
+		       for ch: enode in children(g, p) do
+			   if ch.norm.vertex = 0 then
+			      fail("egraph$reduced: child.vert = 0") 
+			      end
+			   vert_arr$addh(va, ch.norm.vertex)
+			   end
+		       v: vertex := subterm_graph$add_vertex(g.sg, opt(p),
+							     vert_seq$a2s(va))
+		       p.vertex := v
+		       if p ~= p.norm then
+			  subterm_graph$make_pair(g.sg, v, p.norm.vertex)
+			  end
+		       add(Q, p)
+		       end
+		    end
+		end
+	    end except when empty: end
+	g.reduced_up_to_date := true
+	%clean up the norm field
+	for nd: enode in enode_arr$elements(g.term_nodes) do
+	    nd.vertex := nd.norm.vertex
+	    nd.norm := nd
+	    end
+	for v1, v2: vertex in subterm_graph$vertex_pairs(g.sg) do
+	    yield(literal$make_equality(subterm_graph$get_term(g.sg, v1),
+					subterm_graph$get_term(g.sg, v2)))
+	    end
+        end reduced
+    
+
+    % Returns a normal form of "t" with respect to the complete ground
+    % rewriting system associated with "g".
+    
+    get_canonical = proc (g: cvt, t: term) returns (term) signals (none)
+	if ~g.reduced_up_to_date then % Recompute reduced system
+	   for l: literal in reduced(up(g)) do end
+	   end	
+	found: bool := true
+	nd: enode := t.enode
+	   except when none: found := false end
+	if ~found then
+	   op: operator := t.root
+	   for nd1: enode in enode_arr$elements(g.term_nodes) do
+	       tagcase nd1.label
+		  tag term (t1: term):    if t1 = t then exit found(nd1) end
+		  tag op (op1: operator): if op = op1 then exit found(nd1) end
+		  tag dummy, none:
+		  end
+	       end
+	   signal none
+	   end except when found (nd1: enode): nd := nd1 end
+	return(subterm_graph$get_term(g.sg, nd.vertex))
+	   except when none: fail("egraph$get_canonical") end
+	end get_canonical
+    
+
+    %internal
+    opt = proc (nd: enode) returns (operator) signals (none)
+	tagcase nd.label
+	   tag op (op: operator): return(op)
+	   tag term (t: term):    return(t.root)
+	   tag none, dummy:       signal none
+	   end
+	end opt
+    
+    
+    % Yields all elements in the equivalence class of "nd" in "g", including
+    % "nd" itself.
+    
+    eq_class = iter (g: rep, nd: enode) yields (enode)
+	yield(nd)
+	nd1: enode := nd
+	while true do
+	    nd1 := nd1.eqclass
+	    if nd1 = nd then break end
+	    yield(nd1)
+	    end
+	end eq_class
+
+    
+    
+    %internal
+    %removes 1-st elements from the queue, and returns this element
+    %signals empty if norms is empty
+    get = proc (norms: enode_q) returns (enode) signals (empty)
+	return(enode_q$reml(norms)) except when bounds: signal empty
+					   end
+	end get
+    
+    %internal
+    %adds node to the end of the queue
+    add = proc (norms: enode_q, node: enode)
+	enode_q$addh(norms, node)
+	end add
+   
+    
+    %internal
+    arity = proc (label: label_type) returns (int) signals (none)
+	tagcase label
+	   tag op (op: operator): return(op.arity)
+	   tag term (t: term):    return(term_seq$size(t.args))
+	   tag dummy, none:       signal none
+	   end
+	end arity
+		
+        
+    %internal
+    children = iter (g: rep, nd: enode) yields (enode)
+	%requires: nd repr a term t in g
+	% yields nodes, representing children of t in g
+	% in left-to_right order
+	
+	node1: enode := nd
+	while true do
+	    node1 := node1.ecdr
+	    %if node1 = enil-- then stop
+	    if node1.ecar = no_node then break end
+	    yield(node1.ecar)
+	    end except when wrong_tag: end %nd was a constant
+	end children
+    
+    %internal
+    %Requires: nd represents a term t in g
+    %Yields all nodes that represent parents of t in the underlying
+    %       subterm structure of g
+     
+    parents = iter (g: cvt, nd: enode) yields (enode)
+	p: enode := nd.pred1 %since nd is term node, it's left child (ecar)
+	%%%%%%%%%%%%%%%%%%%%%%or has no preds.
+	for pi: enode in samecars1(p) do
+	    %pi is dummy node, representing part of parent_child link
+	    %the rest of the link is represented by right pointers (ecdr)
+	    for pj: enode in find_term_parents_of_dummy(g, pi) do
+		yield(pj)
+		end
+	    end
+	end parents
+    
+    %internal
+    %Requires: nd is dummy node, 
+    %Yields all enodes {en} such that en represents a term in g;
+    %       nd.ecar can be reached from en, by tracing ecdr pointers;
+    %       on the path en-->nd there is no node, representing a term.
+    
+    find_term_parents_of_dummy = iter (g: rep, nd: enode) yields (enode)
+	p: enode := nd.pred1
+	for pi: enode in samecdrs1(p) do
+	    if label_type$is_term(pi.label) then
+	       yield(pi)
+	       continue
+	       end
+	    for pj: enode in find_term_parents_of_dummy(g, pi) do
+		yield(pj)
+		end
+	    end
+	end find_term_parents_of_dummy
+       
+    % Yields all nodes with ecar equal to node.ecar, including node itself
+    
+    samecars1 = iter (node: enode) yields (enode)
+	node1: enode := node
+	if node ~= no_node then
+	   while true do
+	       yield(node1)
+	       node1 := node1.samecar1
+	       if node1 = node then break end
+	       end
+	   end
+	end samecars1
+    
+    % Yields all nodes with ecdr equal to node.ecdr, including node.
+    
+    samecdrs1 = iter (node: enode) yields (enode)
+	node1: enode := node
+	if node ~= no_node then
+	   while true do
+	       yield(node1)
+	       node1 := node1.samecdr1
+	       if node1 = node then break end
+	       end
+	   end
+	end samecdrs1
+  
+    
+    % (Internal procedure) Hash function and equivalence procedure for
+    % "pair_hash_tbl".
+    
+    enode_hash = proc (pair: enode_pr, range: int) returns (int)
+	return(hash_int(i_xor(pair.first.key, pair.second.key), range))
+	end enode_hash
+  
+    
+    enode_equiv = proc (pair_1, pair_2: enode_pr) returns (bool)
+	return(pair_1.first = pair_2.first cand pair_1.second = pair_2.second)
+	end enode_equiv
+
+    
+    %merges modes e1 and e2. yields all literals "t1 = t2" such that
+    %nodes labeled t1  and t2 should be merged to keep graph closed
+    %under term congruence. signals forbidden, if merge of e1 amd e2
+    %or some other merge coused by it is forbidden
+
+    add_equation = iter (g: cvt, e1, e2: enode) yields (literal)
+		     signals (forbidden)
+	merge_q: enode_pr_queue :=  enode_pr_queue$[]
+	pair: enode_pr := enode_pr${first: e1, second: e2}
+	while true do
+	    merge_nodes(g, pair, merge_q)
+	    pair := enode_pr_queue$reml(merge_q)
+	    label1: label_type := pair.first.label
+	    label2: label_type := pair.second.label
+	    
+	    if label_type$is_dummy(label1) cor label_type$is_none(label1) cor
+	       label_type$is_dummy(label2) cor label_type$is_none(label2) then
+	       continue
+	       end 
+	   
+	    %usually we are quaranteed that in eq class
+	    %either all nodes are representing terms or all are 
+	    %technical. If we are using implications, then it's no 
+	    %longer true
+	    t1, t2: term
+	    tagcase label1
+	       tag term (t: term): t1 := t
+	       tag op (root: operator):
+		   t1 := term$make_funct_without_checking(root, term_seq$[])
+	       tag dummy, none:
+	       end
+	    tagcase label2
+	       tag term (t: term): t2 := t
+	       tag op (root: operator):
+		   t2 := term$make_funct_without_checking(root, term_seq$[])
+	       tag dummy, none:
+	       end
+	    yield(literal$make_equality(t1, t2))
+	    end resignal forbidden
+	   except when bounds: end
+	end add_equation
+
+
+    % (Internal)
+    % Same effect as add_equation, but does not yield anything.
+    
+    add_equation_proc = proc (g: cvt, e1, e2: enode) signals (forbidden)
+	merge_q: enode_pr_queue :=
+	    enode_pr_queue$[enode_pr${first: e1, second: e2}]
+	while true do
+	    merge_nodes(g, enode_pr_queue$reml(merge_q), merge_q)
+	    end resignal forbidden
+	   except when bounds: end
+	end add_equation_proc
+    
+    
+  
+    % (Internal procedure) Merges the two equivalence classes specified by
+    % "nodes".  Signals "forbidden" if special nodes would become equivalent.
+    % Appends to "merge_q" further pairs of equivalence classes that should be
+    % merged.  (Cf. Nelson, p. 27)
+   
+    merge_nodes = proc (g: rep, nodes: enode_pr, merge_q: enode_pr_queue)
+		    signals (forbidden)
+	node1: enode := nodes.first.root
+	node2: enode := nodes.second.root
+	if node1 = node2 then %  nodes are already equivalent
+	   return
+	   end
+	g.reduced_up_to_date := false
+	if node1.size > node2.size then
+	   node1, node2 := node2, node1
+	   % guarantees "node2.size >= node1.size"
+	   end
+	if node1.size >= huge then signal forbidden end
+	union(node1, node2) % merge equivalence classes with "node2" as root
+	% FIX: Do we need to copy "node1"? Or are we guaranteed not to change
+	% it before the next undo?
+	undo_stack$addh(g.undostack, undo_info$make_merge(node1))
+	if enode$is_none(node1.pred) then
+	   return
+	   end
+	% Rehash predecessors of "node1".
+	link, other: getproc
+	relink: setproc
+	if node1.pred.ecdr.root = node2  % Nelson incorrectly says "node1"
+                                        
+	   then link, other := enode$get_samecdr, enode$get_ecar
+		relink      := enode$set_samecdr
+	   else link, other := enode$get_samecar, enode$get_ecdr
+		relink      := enode$set_samecar
+	   end
+
+	rehash_pred(g, node1, node2, other, link)   % Not done by Nelson
+	
+	% Check whether this merge will require other merges.
+	if enode$is_none(node2.pred) then
+	   node2.pred := node1.pred
+	   return
+	   end
+	mark_pred(node1.pred, other, link)
+	check_pred(node2.pred, merge_q, other, link)
+	unmark_pred(node1.pred, other, link)
+	temp: enode := link(node1.pred)
+	relink(node1.pred, link(node2.pred))
+	relink(node2.pred, temp)
+	end merge_nodes
+  
+
+    % (Internal procedure) Joins the congruence classes of "u" and "v", making
+    % "v" the root.
+
+    union = proc (u, v: enode)
+	reroot(u, v)
+	v.size := v.size + u.size
+	temp: enode := u.eqclass
+	u.eqclass := v.eqclass
+	v.eqclass := temp
+	end union
+
+  
+    % (Internal procedure) Changes the root of the equivalence class of "u" to
+    % "v".
+
+    reroot = proc (u, v: enode)
+	done: enode := u
+	while true do
+	    u.root := v
+	    u := u.eqclass
+	    if u = done then return end
+	    end
+	end reroot
+
+    
+    % (Internal procedure) Rehashes the entries in "g.nonleaf_tbl" that were
+    % found using "oldroot.key" so that they can be found using "newroot.key".
+    % ASSUMES: "enode_hash" is commutative wrt "enode_pr"
+    
+    rehash_pred = proc (g: rep, oldroot, newroot: enode, other, link: getproc)
+	done: enode := oldroot.pred
+	u: enode := done
+	while true do
+	    begin
+		x: enode_pr := u.intable
+		pair_hash_tbl$delete(g.nonleaf_tbl, x, enode_hash, enode_equiv)
+		   except when missing: fail("egraph$%rehash_pred") end
+		if other = enode$get_ecdr
+		   then x.first := newroot
+		   else x.second := newroot
+		   end
+		pair_hash_tbl$insert(g.nonleaf_tbl, x, u, enode_hash,
+				     enode_equiv)
+		end except when none:   % "u" was not in "g.intable"
+			   when exists: % "u" can be removed from "g.intable"
+				enode$reset_intable(u)
+			   end
+	    u := link(u)
+	    if u = done then return end
+	    end
+	end rehash_pred
+    
+    %What's the difference between rehash pred and unrehash pred?
+    % (Internal procedure) Undoes the effect of "rehash_pred".
+    
+    unrehash_pred = proc (g: rep, oldroot, newroot: enode,
+			  other, link: getproc)
+	done: enode := oldroot.pred
+	u: enode := done
+	while true do
+	    
+	    pair_hash_tbl$delete(g.nonleaf_tbl, u.intable, enode_hash,
+				 enode_equiv)
+	       except when none:
+		      when missing: fail("egraph$%unrehash_pred")
+		      end
+	    if other = enode$get_ecdr
+	       then u.intable := enode_pr${first: oldroot, second: other(u)}
+	       else u.intable := enode_pr${first: other(u), second: oldroot}
+	       end
+	    pair_hash_tbl$insert(g.nonleaf_tbl, u.intable, u, enode_hash,
+				 enode_equiv)
+	       except when exists: enode$reset_intable(u) end
+	    u := link(u)
+	    if u = done then return end
+	    end
+	end unrehash_pred
+    
+    
+    % (Internal procedure) Marks the roots of the "other" children of nodes
+    % linked to "u" with a backpointer to "u".
+    
+    mark_pred = proc (u: enode, other, link: getproc)
+	done: enode := u
+	while true do
+	    other(u).root.back := u                     % Nelson omits "root"
+	    u := link(u)
+	    if u = done then return end
+	    end
+	end mark_pred
+  
+  
+    % (Internal procedure) Appends additional entries to "merge_q" in case
+    % nodes linked to "u" have an "other" child with a backpointer.  E.g.,
+    % when making "a" equivalent to "b", "mark_pred(x, other, link)" sets 
+    % "c.back" to "x", and "check_pred(u, merge_q, other, link)" appends a
+    % task to make "x" equivalent to "u" to "merge_q".
+    %
+    %                 x    u
+    %                .  . / \
+    %              .     /  .\
+    %             a  ==  b    c 
+    
+
+    check_pred = proc (u: enode, merge_q: enode_pr_queue, other, link: getproc)
+	done: enode := u
+	while true do
+	    v: enode := other(u).root.back              % Nelson omits "root"
+	    if ~enode$is_none(v) then
+	       enode_pr_queue$addh(merge_q, enode_pr${first: u, second: v})
+	       end
+	    u := link(u)
+	    if u = done then return end
+	    end
+	end check_pred
+
+
+    % (Internal procedure)  Undoes the effects of "mark_pred".
+    
+    unmark_pred = proc (u: enode, other, link: getproc)
+	done: enode := u
+	while true do
+	    other(u).root.back := no_node               % Nelson omits "root"
+	    u := link(u)
+	    if u = done then return end
+	    end
+	end unmark_pred
+  
+
+
+    % Modifies "g" to forbid a subsequent merge of "node1" with "node2".
+    % Signals "impossible: if "node1" and "node2" are already merged.
+    
+    forbid_merge = proc (g: cvt, node1, node2: enode) signals (impossible)
+	if equiv(node1, node2) then signal impossible end
+	add_implication (up(g), node1, node2, g.t_node, g.f_node)
+	   except when forbidden: fail("forbid_merge") end
+	end forbid_merge
+    
+    
+    % Enhances "g" so that any equation between "a" and "b" induces an equation
+    % between "c" and "d".
+
+    add_implication = proc (g: cvt, a, b, c, d: enode) signals (forbidden)
+	g.uid := g.uid + 1
+	s: string := int$unparse(g.uid)
+	node: enode := enode${ecar: no_node, ecdr: no_node,
+			      label: label_type$make_dummy(s)}
+	enode_hash_tbl$insert(g.leaf_tbl, s, node)
+	undo_stack$addh(g.undostack, 
+	                undo_info$make_add(add_info${smcar: no_enode, 
+						     smcdr: no_enode,
+						     node: node}))
+	a1, b1: enode
+	bl: bool
+	a1, bl := parent(g, a, g.enil, label_type$make_dummy(s || "s1"))
+	a1, bl := parent(g, node, a1, label_type$make_dummy(s || "p1"))
+	b1, bl := parent(g, b, g.enil, label_type$make_dummy(s || "s2"))
+	b1, bl := parent(g, node, b1, label_type$make_dummy(s || "p2"))
+	begin
+	    add_equation_proc(up(g), a1, c)
+	    add_equation_proc(up(g), b1, d)
+	    end resignal forbidden
+	end add_implication
+   
+	
+    
+    % Returns true if "node1" and "node2" are equivalent, false otherwise.
+  
+    equiv = proc (node1, node2: enode) returns (bool)
+	return(node1.root = node2.root)
+	end equiv
+
+    
+    % Hack to distinguish "true" and "false" as special nodes that cannot be
+    % merged with each other.  NOTE: This cannot be undone.
+    
+    make_special = proc (g: cvt, e: enode)
+	begin
+	    op: operator := label_type$value_op(e.label)
+	    if op = op_true() cor op = op_false() then
+	       e.size := huge
+	       return
+	       end
+	    end except when wrong_tag: end
+	fail("egraph: make_special")
+	end make_special
+
+
+    % Undoes the last "add_equation".
+
+    roll_back = proc (g: cvt) signals (impossible)
+	while true do
+	    u: enode := undo_info$value_merge(undo_stack$remh(g.undostack))
+	    undomerge(g, u)
+	    end except when wrong_tag:
+		       when bounds: signal impossible
+		       end
+	end roll_back
+
+    
+    % Saves the state of "g" on a stack.
+    
+    save = proc (g: cvt)
+	n: int := enode_arr$size(g.term_nodes)
+	undo_stack$addh(g.undostack, undo_info$make_push(n))
+	end save
+    
+    
+    % Restores the state of "g" to that on top of the stack of saved states and
+    % pops the stack.  Restores "g" to its initial state if the stack is empty.
+    
+    undo = proc (g: cvt)
+	while true do
+	    tagcase undo_stack$remh(g.undostack)
+	       tag push (n: int):       enode_arr$trim(g.term_nodes, 1, n)
+					break
+	       tag merge (nd: enode):   undomerge(g, nd)
+	       tag add (inf: add_info): undo_add(g, inf)
+	       tag map (t: term):       term$reset_enode(t)
+	       end
+	    end except when bounds: end
+	end undo
+   
+    
+    % Undoes an addition to "g".
+    
+    undo_add = proc (g: rep, inf: add_info)
+	node: enode := inf.node
+	% Destroy all pointers to node
+	begin
+	    pred: enode := inf.smcar.value
+	    if pred.samecar ~= node cor pred.samecar1 ~= node then
+	       fail("egraph$undo_add")
+	       end
+	    pred.samecar := node.samecar
+	    pred.samecar1 := node.samecar1
+	    end except when wrong_tag: end
+	begin
+	    pred: enode := inf.smcdr.value
+	    if pred.samecdr ~= node cor pred.samecdr1 ~= node then
+	       fail("egraph$undo_add")
+	       end
+	    pred.samecdr := node.samecdr
+	    pred.samecdr1 := node.samecdr1
+	    end except when wrong_tag: end
+	if node.ecar.pred = node then
+	   if node.samecar ~= node then fail("egraph$undo_add: ecar.pred") end
+	   node.ecar.pred := no_node 
+	   end except when wrong_tag: end
+	if node.ecdr.pred = node then
+	   if node.samecdr ~= node then fail("egraph$undo_add: ecdr.pred") end
+	   node.ecdr.pred := no_node 
+	   end except when wrong_tag: end
+	if node.ecar.pred1 = node then
+	   if node.samecar ~= node then fail("egraph$undo_add: ecar.pred1") end
+	   node.ecar.pred1 := no_node 
+	   end except when wrong_tag: end
+	if node.ecdr.pred1 = node then
+	   if node.samecdr ~= node then fail("egraph$undo_add: ecdr.pred1") end
+	   node.ecdr.pred1 := no_node 
+	   end except when wrong_tag: end
+	%remove node from hash-table
+	pair_hash_tbl$delete(g.nonleaf_tbl, node.intable, enode_hash,
+			     enode_equiv)
+	   except when missing: fail("egraph$undo_add")
+		  when none: 
+		  end
+	begin
+	    op: operator := label_type$value_op(node.label)
+	    enode_hash_tbl$delete(g.leaf_tbl, operator$op2s(op))
+	    end except when wrong_tag: end
+	term$reset_enode(label_type$value_term(node.label))
+	   except when wrong_tag: end
+	end undo_add
+
+    
+    % (Internal procedure) Undoes the merge of "u" into the equivalence class
+    % of "u.root".
+
+    undomerge = proc (g: rep, u: enode)
+	g.reduced_up_to_date := false
+	v: enode := u.root
+	v.size := v.size - u.size
+	dummy: enode := u.eqclass
+	u.eqclass := v.eqclass
+	v.eqclass := dummy
+	reroot(u, u)
+	if enode$is_none(u.pred) then
+	   return
+	   end
+	if u.pred = v.pred then
+	   v.pred := no_node
+	   end
+	if u.pred.ecar.root = u
+	   then begin
+		    dummy := u.pred.samecar
+		    u.pred.samecar := v.pred.samecar
+		    v.pred.samecar := dummy
+		    end except when wrong_tag: end
+		% u is 1, v is 0  1  0  
+		unrehash_pred(g, u, v, enode$get_ecdr, enode$get_samecar)
+	   else begin
+		    dummy := u.pred.samecdr
+		    u.pred.samecdr := v.pred.samecdr
+		    v.pred.samecdr := dummy
+		    end except when wrong_tag: end
+		unrehash_pred(g, u, v, enode$get_ecar, enode$get_samecdr)
+	   end
+	end undomerge
+
+
+    dump = proc (g: egraph)
+	print(tracer$get_printer(), g, tracer$get_symtab())
+	end dump
+    
+    
+    % Prints "g" for examination during debugging.
+    % FIX: Do we need to find and print other nodes that are not equivalent
+    % to some node in one of the hash tables?
+    
+    print = proc (pr: printer, g: cvt, stab: symtab)
+	printer$text(pr, "enil")
+	enode$print(pr, g.enil, stab)
+	for s: string, e: enode in enode_hash_tbl$elements(g.leaf_tbl) do
+	    print_equiv_class(pr, e, stab)
+	    end
+	for p: enode_pr, e: enode in pair_hash_tbl$elements(g.nonleaf_tbl) do
+	    print_equiv_class(pr, e, stab)
+	    end
+	end print
+    
+    print_equiv_class = proc (pr: printer, e: enode, stab: symtab)
+	done: enode := e
+	if e = e.root
+	   then % Print equivalence class
+		while true do
+		    enode$print(pr, e, stab)
+		    e := e.eqclass
+		    if e = done then return end
+		    end
+	   else % Check that this node is in equivalence class of its root
+		e := e.root
+		while true do
+		    e := e.eqclass
+		    if e = done then return end
+		    if e = done.root then
+		       printer$text(pr, "ORPHAN")
+		       enode$print(pr, done, stab)
+		       return
+		       end
+		    end
+	   end
+	end print_equiv_class
+    
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end egraph
+
+
+
+%%%%% enode (cluster) %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+enode = cluster is reset, 					% NEW
+    		   none, create,
+  		   is_none, is_exists,
+    		   get_ecar,
+		   get_ecdr,
+		   get_root, set_root,
+		   get_pred, set_pred,
+		   get_pred1, set_pred1,			% NEW
+		   get_samecar, set_samecar,
+		   get_samecdr, set_samecdr,
+		   get_eqclass, set_eqclass,
+		   get_cclass, set_cclass,			% NEW
+		   get_back, set_back,
+		   get_intable, reset_intable, set_intable,
+		   get_label, 
+		   set_label,					% NEW
+		   get_key,
+		   get_size, set_size,
+		   get_samecar1, set_samecar1,			% NEW
+		   get_samecdr1, set_samecdr1,			% NEW
+		   get_norm, set_norm,				% NEW
+		   get_processed, set_processed,		% NEW
+		   get_vertex, set_vertex,			% NEW
+		   get_count, set_count,			% NEW
+		   print,
+		   equal, _gcd
+
+    rep = oneof[none: null, exists: info]
+  
+    info = record[back: 	enode, 		% temporary pointer
+                  ecar: 	enode,		% left child
+		  ecdr: 	enode, 		% right child
+		  eqclass: 	enode, 		% next equivalent enode
+		  cclass:       enode,          % pred in congruence class %NEW
+		  intable:	maybe_enode_pr,	% for nonleaf hash table
+		  key: 		int,		% random key for hashing
+    		  label: 	label_type, 	% name of leaf, term node
+                  pred: 	enode,		% parent
+		  pred1:        enode,          % parent before merges     %NEW
+		  root: 	enode, 		% root of equivalence class
+		  samecar: 	enode, 		% next enode with equiv ecar
+		  samecdr: 	enode,		% next enode with equiv ecdr
+		  samecar1:     enode,          % next node with same ecar %NEW
+		  samecdr1:     enode,          % next node with same ecdr %NEW
+		  norm:         enode,          % normal form of e 	   %NEW
+		  processed:    bool,           % fields for		   %NEW
+		  count:        int,            %       ground completeion %NEW
+		  vertex:       vertex,         % vertex in subterm graph  %NEW
+		  size: 	int, 		% if root, size of equiv class
+		  uid: 		int]		% identification for printing
+  
+    maybe_enode_pr = oneof[exists: enode_pr, none: null]
+
+    own uid: int := 0
+    
+    reset = proc () 
+	uid := 0
+	end reset
+    
+    none = proc () returns (cvt)
+	return(rep$make_none(nil))
+	end none
+  
+    create = proc (a: args) returns (cvt)
+	args 		= struct[ecar, ecdr: enode, label: label_type]
+    	rand_size 	= 1048576 %% 2**20
+	uid := uid + 1
+	inf: info := info${back: enode$none(),
+			   ecar: a.ecar,
+			   ecdr: a.ecdr,
+			   eqclass: enode$none(),
+			   cclass: enode$none(),
+			   key: random$next(rand_size),
+			   intable: maybe_enode_pr$make_none(nil),
+			   label: a.label,
+			   pred: enode$none(),
+			   pred1: enode$none(),
+	 		   root: enode$none(),
+			   samecar: enode$none(),
+			   samecdr: enode$none(),
+			   samecar1: enode$none(),
+			   samecdr1: enode$none(),
+			   norm: enode$none(),
+			   processed: false,
+			   count: 0,
+			   vertex: no_vertex,
+			   size: 1,
+			   uid: uid}
+	node: rep := rep$make_exists(inf)
+	inf.eqclass := up(node)
+	inf.cclass := up(node)
+	inf.root := up(node)
+	inf.samecar := up(node)
+	inf.samecdr := up(node)
+        inf.samecar1 := up(node)
+	inf.samecdr1 := up(node)
+	inf.norm := up(node)
+	return(node)
+	end create
+
+    is_none = proc (n: cvt) returns (bool)
+	return(rep$is_none(n))
+	end is_none
+    
+    is_exists = proc (n: cvt) returns (bool)
+	return(rep$is_exists(n))
+	end is_exists
+    
+    get_ecar = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).ecar)
+	   resignal wrong_tag
+	end get_ecar
+  
+    get_ecdr = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).ecdr)
+	   resignal wrong_tag
+	end get_ecdr
+  
+    get_root = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).root)
+	   resignal wrong_tag
+	end get_root
+  
+    set_root = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.root := node
+	end set_root
+  
+    get_pred = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).pred)
+	   resignal wrong_tag
+	end get_pred
+  
+    set_pred = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.pred := node
+	end set_pred
+
+    get_pred1 = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).pred1)
+	   resignal wrong_tag
+	end get_pred1
+  
+    set_pred1 = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.pred1 := node
+	end set_pred1
+  
+    get_samecar = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).samecar)
+	   resignal wrong_tag
+	end get_samecar
+  
+    set_samecar = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.samecar := node
+	end set_samecar
+   
+    get_samecar1 = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).samecar1)
+	   resignal wrong_tag
+	end get_samecar1
+  
+    set_samecar1 = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.samecar1 := node
+	end set_samecar1
+   
+    get_samecdr = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).samecdr)
+	   resignal wrong_tag
+	end get_samecdr
+  
+    set_samecdr = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.samecdr := node
+	end set_samecdr
+  
+    get_samecdr1 = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).samecdr1)
+	   resignal wrong_tag
+	end get_samecdr1
+  
+    set_samecdr1 = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.samecdr1 := node
+	end set_samecdr1
+    
+      
+    get_norm = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).norm)
+	   resignal wrong_tag
+	end get_norm
+  
+    set_norm = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.norm := node
+	end set_norm
+
+      
+    get_vertex = proc (n: cvt) returns (vertex) signals (wrong_tag)
+	return(rep$value_exists(n).vertex)
+	   resignal wrong_tag
+	end get_vertex
+  
+    set_vertex = proc (n: cvt, v: vertex) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.vertex := v
+	end set_vertex
+    
+      
+    get_processed = proc (n: cvt) returns (bool) signals (wrong_tag)
+	return(rep$value_exists(n).processed)
+	   resignal wrong_tag
+	end get_processed
+  
+    set_processed = proc (n: cvt, b: bool) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.processed := b
+	end set_processed
+    
+    get_count = proc (n: cvt) returns (int) signals (wrong_tag)
+	return(rep$value_exists(n).count)
+	   resignal wrong_tag
+	end get_count
+  
+    set_count = proc (n: cvt, i: int) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.count := i
+	end set_count
+
+    get_eqclass = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).eqclass)
+	   resignal wrong_tag
+	end get_eqclass
+  
+    set_eqclass = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.eqclass := node
+	end set_eqclass
+
+    get_cclass = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).cclass)
+	   resignal wrong_tag
+	end get_cclass
+  
+    set_cclass = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.cclass := node
+	end set_cclass
+  
+    get_back = proc (n: cvt) returns (enode) signals (wrong_tag)
+	return(rep$value_exists(n).back)
+	   resignal wrong_tag
+	end get_back
+  
+    set_back = proc (n: cvt, node: enode) signals (wrong_tag)
+	inf: info := rep$value_exists(n)
+	   resignal wrong_tag
+	inf.back := node
+	end set_back
+
+    get_label = proc (n: cvt) returns (label_type)
+	return(rep$value_exists(n).label)
+	   except when wrong_tag: return(no_label) end
+	end get_label
+
+    set_label = proc (n: cvt, l: label_type) 
+	rep$value_exists(n).label:= l except when wrong_tag: end
+	end set_label
+
+    get_intable = proc (n: cvt) returns (enode_pr) signals (none)
+	return(maybe_enode_pr$value_exists(rep$value_exists(n).intable))
+	   except when wrong_tag: signal none end
+	end get_intable
+  
+    reset_intable = proc (n: cvt) signals (wrong_tag)
+	rep$value_exists(n).intable := maybe_enode_pr$make_none(nil)
+	   resignal wrong_tag
+	end reset_intable
+    	
+    set_intable = proc (n: cvt, ep: enode_pr) signals (wrong_tag)
+	rep$value_exists(n).intable := maybe_enode_pr$make_exists(ep)
+	   resignal wrong_tag
+	end set_intable
+    
+    get_key = proc (n: cvt) returns (int) signals (wrong_tag)
+	return(rep$value_exists(n).key)
+	   resignal wrong_tag
+	end get_key
+
+    get_size = proc (n: cvt) returns (int) signals (wrong_tag)
+	return(rep$value_exists(n).size)
+	   resignal wrong_tag
+	end get_size
+  
+    set_size = proc (n: cvt, size: int) signals (wrong_tag)
+	rep$value_exists(n).size := size
+	   resignal wrong_tag
+	end set_size
+
+    dump = proc (e: enode)
+	print(tracer$get_printer(), e, tracer$get_symtab())
+	end dump
+
+    print = proc (p: printer, e: enode, stab: symtab)
+        if is_none(e) then return end
+        printer$text(p, "\nNode     ")	
+	print_uid(p, e)
+	if ~label_type$is_none(e.label) then
+	   printer$text(p, ": ")
+	   tagcase e.label
+	      tag dummy (s: string): printer$text(p, s)
+	      tag op (op: operator): operator$print(p, op, stab)
+	      tag term (t: term): term$print(p, t, stab)
+	      tag none:
+	      end
+	   end
+        if enode$is_exists(e.ecar) cor enode$is_exists(e.ecdr) then
+	   printer$text(p, "\ncar, cdr ")
+	   print_uid(p, e.ecar)
+	   printer$text(p, ", ")
+	   print_uid(p, e.ecdr)
+	   end
+	print_exist(p, e, "back     ", enode$get_back)
+	print_class(p, e, "eqclass  ", enode$get_eqclass)
+	begin
+	    lr: enode_pr := e.intable
+	    printer$text(p, "\nintable  ")
+	    print_uid(p, lr.first)
+	    printer$puts(p, ", ") 
+	    print_uid(p, lr.second)
+	    end except when none: end
+	print_exist(p, e, "pred     ", enode$get_pred)
+	if e.root ~= e then print_exist(p, e, "root     ", enode$get_root) end
+	print_class(p, e, "samecar  ", enode$get_samecar)
+	print_class(p, e, "samecdr  ", enode$get_samecdr)
+	if e.size > 1 then
+	   printer$text(p, "\nsize     ")
+	   printer$text(p, int$unparse(e.size))
+	   end
+	printer$text(p, "\n\n")
+	end print
+
+    print_uid = proc (p: printer, n: cvt)
+	printer$text(p, int$unparse(rep$value_exists(n).uid))
+	   except when wrong_tag: printer$text(p, "0") end
+	end print_uid
+   
+    print_class = proc (p: printer, e: enode, label: string, next: getproc)
+	if next(e) ~= e then
+	   printer$newline(p)
+	   printer$puts(p, label)
+	   printer$text(p, "~{")
+	   done: enode := e
+	   while true do
+	       e := next(e)
+	       print_uid(p, e)
+	       if e = done then break end
+	       printer$text(p, " ")
+	       end
+	   printer$text(p, "~}")
+	   end
+	end print_class
+
+    print_exist = proc (p: printer, e: enode, label: string, field: getproc)
+        if enode$is_exists(field(e)) then
+	   printer$newline(p)
+	   printer$puts(p, label)
+	   print_uid(p, field(e))
+	   end
+	end print_exist
+
+
+    equal = proc (n1, n2: cvt) returns (bool)
+	return(n1 = n2)
+	end equal
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end enode

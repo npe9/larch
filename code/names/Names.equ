@@ -1,0 +1,22 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%  Equates for lp/code/names  %%%%%%%%%%%%%%%%%%%%%%%%%
+
+% (see also Genlib.equ)
+
+
+%%%%%%%%%%%%%%%%%%%%  Data types
+
+name_arr	= array[name]
+name_seq	= sequence[name]
+names_set	= set[name]
+
+
+%%%%%%%%%%%%%%%%%%%%  Names
+
+initial_root_name = "user"
+
+
+% Special symbols for class-expressions
+
+conjunct_sym 	= "/"
+difference_sym 	= "~"
+disjunct_sym 	= ","

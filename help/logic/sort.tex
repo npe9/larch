@@ -1,0 +1,43 @@
+\doc{Sorts}
+\ref{sort}
+\ref{sorts}
+\ref{simple-sort}
+\ref{compound-sort}
+\ref{boolean}
+
+A \def{sort} is a symbol that represents a non-empty set of objects.  In LP,
+distinct sorts represent disjoint sets of objects.  Sorts can be \def{simple}
+or \def{compound}.  At present, LP accords no special treatment to compound
+sorts.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+
+\begin{verbatim}
+\sd{sort}          ::= \s{simple-sort} | \s{compound-sort}
+\sd{simple-sort}   ::= \slink{../symbols/symbols}{simpleId}
+\sd{compound-sort} ::= \slink{../symbols/symbols}{simpleId} \qf{[} \s{sort}+, \qf{]}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+Nat
+Set[Nat]
+Map[Set[A],A]
+\end{verbatim}
+
+\head{2}{Usage}
+LP automatically declares the sort \f{Bool} and treats it as representing a set
+containing two objects, \fq{true} and \fq{false}.  LP also automatically
+declares several \dlink{connective}{logical operators} for this sort.
+\p
+All sorts other than \f{Bool} must be declared in a
+\dflink{../commands/declare}{declare sorts} command.  Except for \fq{Bool} 
+and \fq{bool}, which denote the same sort, case is significant in sort
+identifiers.  Thus \fq{Nat} and \fq{nat} are different sorts.
+\p
+Since distinct sorts represent disjoint sets of objects, users who want to
+consider one ``sort'' (e.g., \f{Nat}) as a subset of another (e.g., \f{Int})
+must resort to one of two devices.  They can define the larger as a sort and
+the smaller by means of a unary predicate (e.g., \f{isNat:Int->Bool}).
+Alternatively, they can define both as sorts and introduce a mapping from one
+into the other (e.g., \f{asInt:Nat->Int}).

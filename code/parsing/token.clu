@@ -1,0 +1,518 @@
+#extend
+
+% A "token" is a unit of text scanned by a "scanner".  It consists of a textual
+% symbol plus a locator indicating where the symbol occurred.
+
+token = cluster is 
+	extract, get_loc, get_text,
+	is_allSym, is_badSym, is_closeSym, is_colon, is_comma, is_comment,
+	is_classSym, is_eof, is_existsSym, is_left_bracket, is_left_paren, 
+	is_mapSym, is_markerSym, is_openSym, is_right_bracket, is_right_paren, 
+	is_selectSym, is_semicolon, is_simpleId, is_simpleOp, is_whiteSpace, 
+	is_ifOp, is_nameId, is_quantifierSym, is_reserved_word, is_somefixOp, 
+	is_unreservedSimpleId, 
+	get_infixId, get_postfixId, get_prefixId,
+	_gcd
+
+    rep = struct[kind: symbol, loc: locator, text: string]
+
+    % The "class" of a character "c" constrains the type of token that can
+    % begin with "c".  
+
+    class = oneof[and, bad, comment, digit, escape, letter, marker, opChar, 
+                  singleChar, whitespace: null]
+    ac    = class$make_and(nil)			% starts "/\"
+    bc    = class$make_bad(nil)			% starts a badSym
+    cc    = class$make_comment(nil)		% starts a comment
+    dc    = class$make_digit(nil)		% starts a simpleId
+    ec    = class$make_escape(nil)		% the escape character "\"
+    lc	  = class$make_letter(nil)		% starts a simpleId
+    mc	  = class$make_marker(nil)		% starts marker
+    oc    = class$make_opChar(nil)		% starts an operator
+    sc    = class$make_singleChar(nil)		% single-character token
+    wc    = class$make_whitespace(nil)		% starts whitespace
+
+
+    % The map "symbols" defines which strings are recognized as special
+    % tokens.  All other tokens are either "badSyms", "comments", "eofs",
+    % "simpleIds", "simpleOps", or "whitespace".
+
+    kind_map = str_hash_table[symbol]		    
+
+    own symbols: kind_map := standard_kinds()
+    
+    
+    % For any character "c", "charClass[char$c2i(c) + 1]" is the class of "c".
+    % The following own (rather than equate) is crucial to pclu performance.
+
+    own charClass: sequence[class] := standard_classes()
+    
+    % (Internal procedure)  Returns the standard definition of "charClass".
+    
+    standard_classes = proc () returns (sequence[class])
+	return(
+	    sequence[class]$
+		[bc,	%   0 NUL		Control character
+		 bc,	%   1 CTRL-A SOH	"
+		 bc,	%   2 CTRL-B STX	"
+		 bc,	%   3 CTRL-C ETX	"
+		 bc,	%   4 CTRL-D EOT	"
+		 bc,	%   5 CTRL-E ENQ	"
+		 bc,	%   6 CTRL-F ACK	"
+		 bc,	%   7 CTRL-G BEL	"
+		 bc,	%   8 CTRL-H BS		"
+		 wc,	%   9 CTRL-I HT		Whitespace
+		 wc,	%  10 CTRL-J NL 	"
+		 bc,	%  11 CTRL-K VT		Control character	??
+		 wc,	%  12 CTRL-L NP		Whitespace
+		 wc,	%  13 CTRL-M CR 	"
+		 bc,	%  14 CTRL-N SO  	Control character
+		 bc,	%  15 CTRL-O SI 	"
+		 bc,	%  16 CTRL-P DLE	"
+		 bc,	%  17 CTRL-Q DC1	"
+		 bc,	%  18 CTRL-R DC2	"
+		 bc,	%  19 CTRL-S DC3	"
+		 bc,	%  20 CTRL-T DC4	"
+		 bc,	%  21 CTRL-U NAK	"
+		 bc,	%  22 CTRL-V SYN	"
+		 bc,	%  23 CTRL-W ETB	"
+		 bc,	%  24 CTRL-X CAN	"
+		 bc,	%  25 CTRL-Y EM		"
+		 bc,	%  26 CTRL-Z SUB 	"	
+		 bc,	%  27 CTRL-[ ESC	"
+		 bc,	%  28 CTRL-\ FS 	"
+		 bc,	%  29 CTRL-] GS 	"
+		 bc,	%  30 CTRL-^ RS 	"
+		 bc,	%  31 CTRL-_ US 	"
+		 wc,	%  32 SP		Whitespace
+		 oc,	%  33 !   		OpChar
+		 bc,	%  34 "			Reserved for future use	??
+		 oc,	%  35 #			OpChar
+		 oc,	%  36 $			OpChar
+		 cc,	%  37 %			Comment character
+		 oc,	%  38 &			OpChar
+		 lc,	%  39 '			IdChar			??
+		 sc,	%  40 (			SingleChar
+		 sc,	%  41 )			"
+		 oc,	%  42 *			OpChar
+		 oc,	%  43 +			"
+		 sc,	%  44 ,			SingleChar
+		 oc,	%  45 -			OpChar
+		 oc,	%  46 .			"
+		 ac,	%  47 /			Starts "/\"
+		 %	*  48-57		Digits 0, 1, ..., 9
+		 dc, dc, dc, dc, dc, 
+		 dc, dc, dc, dc, dc,
+		 sc,	%  58 :			SingleChar
+		 sc,	%  59 ;			"
+		 oc,	%  60 <			OpChar
+		 oc,	%  61 =			"
+		 oc,	%  62 >			"
+		 oc,	%  63 ?			"
+		 oc,	%  64 @			"
+		 %   	%  65-90		Uppercase letters A, ..., Z
+		 lc, lc, lc, lc, lc, lc, lc, 
+		 lc, lc, lc, lc, lc, lc, lc, 
+		 lc, lc, lc, lc, lc, lc, lc, 
+		 lc, lc, lc, lc, lc,
+		 sc,	%  91 [			SingleChar
+		 ec,	%  92 \			EscapeChar
+		 sc,	%  93 ]			SingleChar
+		 oc,	%  94 ^			OpChar
+		 mc,	%  95 _			Marker character
+		 bc,	%  96 `			Reserved for future use	??
+		 %	%  97-122		Lowercase letters a, ..., z
+		 lc, lc, lc, lc, lc, lc, lc, 
+		 lc, lc, lc, lc, lc, lc, lc, 
+		 lc, lc, lc, lc, lc, lc, lc, 
+		 lc, lc, lc, lc, lc,
+		 sc,	% 123 {			SingleChar
+		 oc,	% 124 |			OpChar
+		 sc,	% 125 }			SingleChar
+		 oc,	% 126 ~			OpChar
+		 bc,  	% 127 DEL		Control character
+		 % 	% 128-159
+		 bc, bc, bc, bc, bc, bc, bc, bc,
+		 bc, bc, bc, bc, bc, bc, bc, bc, 
+		 bc, bc, bc, bc, bc, bc, bc, bc, 
+		 bc, bc, bc, bc, bc, bc, bc, bc, 
+		 bc,	% 160 nonbreaking space
+		 bc, 	% 161 inverted exclamation mark
+		 bc,	% 162 center sign
+		 bc,	% 163 pound sterling sign
+		 bc,	% 164 general currency sign
+		 bc,	% 165 yen sign
+		 bc,	% 166 broken vertical bar
+		 bc,	% 167 section sign
+		 bc,	% 168 umlaut
+		 bc,	% 169 copyright sign
+		 bc,	% 170 feminine ordinal indicator
+		 bc,	% 171 left angle quotation mark
+		 bc,	% 172 not sign
+		 bc,	% 173 soft hyphen
+		 bc,	% 174 registered trademark sign
+		 bc,	% 175 spacing macron accent
+		 bc,	% 176 degree sign
+		 bc,	% 177 plus or minus sign
+		 bc,	% 178 superscript 2
+		 bc,	% 179 superscript 3
+		 bc,	% 180 spacing acute accent
+		 bc,	% 181 micro sign
+		 bc,	% 182 paragraph sign
+		 bc,	% 183 middle dot
+		 bc,	% 184 spacing cedilla
+		 bc,	% 185 superscript 1
+		 bc,	% 186 masculine ordinal indicator
+		 bc,	% 187 right angle quotation mark
+		 bc,	% 188 fraction 1/4
+		 bc,	% 189 fraction 1/2
+		 bc,	% 190 fraction 3/4
+		 bc,	% 191 inverted question mark
+		 %	% 192-214		Accented uppercase
+		 lc, lc, lc, lc, lc, lc, lc, lc,
+		 lc, lc, lc, lc, lc, lc, lc, lc,
+		 lc, lc, lc, lc, lc, lc, lc,
+		 bc,    % 215 multiplication sign
+		 %,	% 216-222		Accented uppercase
+		 lc, lc, lc, lc, lc, lc, lc,
+		 %	% 223-246		Accented lowercase
+		 lc, lc, lc, lc, lc, lc, lc, lc,
+		 lc, lc, lc, lc, lc, lc, lc, lc,
+		 lc, lc, lc, lc, lc, lc, lc, lc,
+		 bc,    % 247 integer divides		
+		 %	% 248-255		Accented lowercase
+		 lc, lc, lc, lc, lc, lc, lc, lc
+		 ])
+	end standard_classes
+		 
+    
+    % (Internal procedure) Returns the standard definition of "symbols".
+    % ENHANCE: implement other alternate symbols
+
+    standard_kinds = proc () returns (kind_map)
+	ins = kind_map$insert
+	tm: kind_map := kind_map$[]
+	ins(tm, identifier$allSym(),     symbol$make_allSym(nil))
+	ins(tm, identifier$andSym(),     symbol$make_andSym(nil))
+	ins(tm, "\\)",     		 symbol$make_closeSym(nil))
+	ins(tm, "\\>",     		 symbol$make_closeSym(nil))
+	ins(tm, "]",       		 symbol$make_closeSym(nil))
+	ins(tm, "}",       		 symbol$make_closeSym(nil))
+	ins(tm, ":",       		 symbol$make_colon(nil))
+	ins(tm, ",",       		 symbol$make_comma(nil))
+	ins(tm, identifier$eqSym(),      symbol$make_eqSym(nil))
+	ins(tm, identifier$existsSym(),  symbol$make_existsSym(nil))
+	ins(tm, identifier$iffSym(),     symbol$make_iffSym(nil))
+	ins(tm, identifier$impliesSym(), symbol$make_impliesSym(nil))
+	ins(tm, "(",       		 symbol$make_left_paren(nil))
+	ins(tm, "->",      		 symbol$make_mapSym(nil))
+	ins(tm, "__",      		 symbol$make_markerSym(nil))
+	ins(tm, identifier$neqSym(),     symbol$make_neqSym(nil))
+	ins(tm, "\\(",     		 symbol$make_openSym(nil))
+	ins(tm, "\\<",     		 symbol$make_openSym(nil))
+	ins(tm, "[",       		 symbol$make_openSym(nil))
+	ins(tm, "{",       		 symbol$make_openSym(nil))
+	ins(tm, identifier$orSym(),      symbol$make_orSym(nil))
+	ins(tm, ")",       		 symbol$make_right_paren(nil))
+	ins(tm, ".",       		 symbol$make_selectSym(nil))
+	ins(tm, ";",       		 symbol$make_semicolon(nil))
+	ins(tm, "_",	   		 symbol$make_badSym(nil))  % ??
+	ins(tm, "'",	   		 symbol$make_badSym(nil))  % ??
+	return(tm)
+	end standard_kinds
+
+
+    % Returns the token that begins with character "col" in "s", together with
+    % the index of the first character of the following token in "s".  Ensures
+    % "result.loc.line = line".
+
+    extract = proc (s: string, line, col: int) returns (cvt, int)
+	k: symbol
+	n: int
+	tagcase class_char(s[col])  % and, marker
+	   tag and, opChar:   k := symbol$make_simpleOp(nil)
+	   		      n := sizeof_simpleOp(s, col)
+	   tag bad:           k := symbol$make_badSym(nil)
+	                      n := sizeof_badSym(s, col)
+	   tag comment:	      k := symbol$make_comment(nil)
+	                      n := string$size(s) - col + 1
+	   tag digit, letter,
+	       marker:        k := symbol$make_simpleId(nil)
+	   		      n := sizeof_simpleId(s, col)
+           tag escape:	      k := symbol$make_simpleOp(nil)
+	                      n := sizeof_escape(s, col)
+	   tag singleChar:    k := symbol$make_simpleOp(nil)
+			      n := 1
+	   tag whitespace:    k := symbol$make_whitespace(nil)
+	                      n := sizeof_whitespace(s, col)
+	   end except when bounds: 
+	                   k := symbol$make_eof(nil)
+			   n := 0
+		      end
+	text: string := string$substr(s, col, n)
+	   except when bounds: text := "" end
+	k := kind_map$image(symbols, text)
+	   except when missing: end
+	return(rep${kind: k, 
+	            loc:  locator${line: line, column: col},
+		    text: text}, 
+	       col + n)
+	end extract
+    
+    % Returns the locator of "t".
+
+    get_loc = proc (t: cvt) returns (locator)
+	return(t.loc)
+	end get_loc
+   
+    
+    % Returns the string representation of "t".
+    
+    get_text = proc (t: cvt) returns (string)
+	return(t.text)
+	end get_text
+
+
+    is_allSym = proc (t: cvt) returns (bool)
+	return(symbol$is_allSym(t.kind))
+	end is_allSym
+		 
+    is_badSym = proc (t: cvt) returns (bool)
+	return(symbol$is_badSym(t.kind))
+	end is_badSym
+		 
+    is_closeSym = proc (t: cvt) returns (bool)
+	return(symbol$is_closeSym(t.kind))
+	end is_closeSym
+		 
+    is_colon = proc (t: cvt) returns (bool)
+	return(symbol$is_colon(t.kind))
+	end is_colon
+		 
+    is_comma = proc (t: cvt) returns (bool)
+	return(symbol$is_comma(t.kind))
+	end is_comma
+		 
+    is_comment = proc (t: cvt) returns (bool)
+	return(symbol$is_comment(t.kind))
+	end is_comment
+		 
+    is_classSym = proc (t: cvt) returns (bool)
+	return(t.text = "$")
+	end is_classSym
+		 
+    is_eof = proc (t: cvt) returns (bool)
+	return(symbol$is_eof(t.kind))
+	end is_eof
+		 
+    is_existsSym = proc (t: cvt) returns (bool)
+	return(symbol$is_existsSym(t.kind))
+	end is_existsSym
+		 
+    is_left_bracket = proc (t: cvt) returns (bool)
+	return(t.text = "[")
+	end is_left_bracket
+		 
+    is_left_paren = proc (t: cvt) returns (bool)
+	return(symbol$is_left_paren(t.kind))
+	end is_left_paren
+		 
+    is_mapSym = proc (t: cvt) returns (bool)
+	return(symbol$is_mapSym(t.kind))
+	end is_mapSym
+		 
+    is_markerSym = proc (t: cvt) returns (bool)
+	return(symbol$is_markerSym(t.kind))
+	end is_markerSym
+		 
+    is_openSym = proc (t: cvt) returns (bool)
+	return(symbol$is_openSym(t.kind))
+	end is_openSym
+		 
+    is_right_bracket = proc (t: cvt) returns (bool)
+	return(t.text = "]")
+	end is_right_bracket
+		 
+    is_right_paren = proc (t: cvt) returns (bool)
+	return(symbol$is_right_paren(t.kind))
+	end is_right_paren
+		 
+    is_selectSym = proc (t: cvt) returns (bool)
+	return(symbol$is_selectSym(t.kind))
+	end is_selectSym
+		 
+    is_semicolon = proc (t: cvt) returns (bool)
+	return(symbol$is_semicolon(t.kind))
+	end is_semicolon
+		 
+    is_simpleId = proc (t: cvt) returns (bool)
+	return(symbol$is_simpleId(t.kind))
+	end is_simpleId
+		 
+    is_simpleOp = proc (t: cvt) returns (bool)
+	return(symbol$is_simpleOp(t.kind))
+	end is_simpleOp
+
+    is_whitespace = proc (t: cvt) returns (bool)
+	return(symbol$is_whitespace(t.kind))
+	end is_whitespace
+    
+    is_ifOp = proc (t: token) returns (bool)
+	return(is_reserved_word(t, "if"))
+	end is_ifOp
+
+    is_nameId = proc (t: cvt) returns (bool)
+	own reservedIds: string_seq := string_seq$["to", "with"]
+	return(symbol$is_simpleId(t.kind) cand 
+	       ~in_seq[string](t.text, reservedIds))
+	end is_nameId
+		 
+    is_quantifierSym = proc (t: cvt) returns (bool)
+	tagcase t.kind
+	   tag allSym, existsSym: return(true)
+	   others: return(false)
+	   end
+	end is_quantifierSym
+    
+    is_reserved_word = proc (t: cvt, s: string) returns (bool)
+	return(slower(t.text) = s)
+	end is_reserved_word
+    
+    is_somefixOp = proc (t: cvt) returns (bool)
+	tagcase t.kind
+	   tag andSym, eqSym, iffSym, impliesSym,
+	       neqSym, orSym, selectSym, simpleOp: return(true)
+	   others:                                 return(false)
+	   end
+	end is_somefixOp
+    
+    is_unreservedSimpleId = proc (t: cvt) returns (bool)
+	own reservedIds: string_seq := 
+		string_seq$["by", "else", "if", "in", "then", "when", "yield"]
+	return(symbol$is_simpleId(t.kind) cand 
+	       ~in_seq[string](t.text, reservedIds))
+	end is_unreservedSimpleId
+		 
+    get_infixId = proc (t: cvt) returns (identifier) signals (not_infix)
+	tagcase t.kind
+	   tag andSym:         return(identifier$andOp())
+	   tag eqSym:          return(identifier$eqOp())
+	   tag iffSym:         return(identifier$iffOp())
+	   tag impliesSym:     return(identifier$impliesOp())
+	   tag neqSym:         return(identifier$neqOp())
+	   tag orSym:          return(identifier$orOp())
+	   tag selectSym:      return(identifier$selectOp())
+	   tag simpleOp:       return(identifier$make_infix(t.text))
+	   others:             signal not_infix
+	   end
+	end get_infixId
+    
+    
+    get_postfixId = proc (t: cvt) returns (identifier) signals (not_postfix)
+	if ~symbol$is_simpleOp(t.kind) then signal not_postfix end
+	return(identifier$make_postfix(t.text))
+	end get_postfixId
+    
+    
+    get_prefixId = proc (t: cvt) returns (identifier) signals (not_prefix)
+	if ~symbol$is_simpleOp(t.kind) then signal not_prefix end
+	return(identifier$make_prefix(t.text))
+	end get_prefixId
+
+
+    % (Internal procedure)  Returns the class to which "c" belongs.
+
+    class_char = proc (c: char) returns (class)
+	return(charClass[char$c2i(c) + 1])
+	   except when bounds: return(bc) end
+	end class_char
+
+
+    % (Internal procedure) Returns the number of characters of whitespace in
+    % "s" beginning with "s[n]".
+
+    sizeof_whitespace = proc (s: string, n: int) returns (int)
+	len: int := 0
+	while class$is_whitespace(class_char(s[n+len])) do len := len + 1 end
+	   except when bounds: end
+	return(len)
+	end sizeof_whitespace
+
+
+    % (Internal procedure)  Returns the number of characters in the "simpleId"
+    % or "markerSym" in "s" beginning with "s[n]".
+
+    sizeof_simpleId = proc (s: string, n: int) returns (int)
+	len: int := 0
+	markerStarted: bool := false
+	while true do
+	    c: class := class_char(s[n+len])
+	    if class$is_letter(c) cor class$is_digit(c) then 
+	       len := len + 1
+	       markerStarted := false
+	     elseif class$is_marker(c) then
+	       len := len + 1
+	       if markerStarted
+		  then if len > 2 then len := len - 2 end
+		       break
+		  else markerStarted := true
+		  end
+	     else break
+	     end
+	    end except when bounds: end
+	return(len)
+	end sizeof_simpleId
+
+
+    % (Internal procedure)  Returns the number of characters in the "badSym"
+    % in "s" beginning with "s[n]".
+
+    sizeof_badSym = proc (s: string, n: int) returns (int)
+	len: int := 0
+	while class$is_bad(class_char(s[n+len])) do len := len + 1 end
+	   except when bounds: end
+	return(len)
+	end sizeof_badSym
+
+
+    % (Internal procedure)  Returns the number of characters in the "simpleOp"
+    % in "s" beginning with "s[n]".
+
+    sizeof_simpleOp = proc (s: string, n: int) returns (int)
+	% Handle "/\" as a special case.
+	c1: class := class_char(s[n])
+	   except when bounds: return(0) end
+	c2: class := class_char(s[n+1])
+	   except when bounds: return(1) end
+        if class$is_and(c1) cand class$is_escape(c2) then return(2) end
+	len: int := 0
+	while class$is_opChar(c1) cor class$is_and(c1) do 
+	    len := len + 1
+	    c1 := class_char(s[n+len])
+	    end except when bounds: end
+	return(len)
+	end sizeof_simpleOp
+
+
+    % (Internal procedure) Returns the number of characters in the "simpleOp"
+    % in "s" beginning with "s[n]", which is assumed to be an escape character.
+    
+    sizeof_escape = proc (s: string, n: int) returns (int)
+	tagcase class_char(s[n+1])
+	   tag bad, whitespace:
+	       return(1)
+	   tag digit, letter:
+	       return(1 + sizeof_simpleId(s, n+1))
+	   tag and, comment, escape, marker, opChar, singleChar:
+	       return(2)
+	   end except when bounds: return(1) end
+	end sizeof_escape
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end token

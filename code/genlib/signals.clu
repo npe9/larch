@@ -1,0 +1,26 @@
+% The implementations of the modules in this file are Unix-specific.
+
+% The procedures "OS_init_sigusrN" and "OS_check_sigusrN" allow a program to
+% determine whether a front-end process has sent a special signal.  The CLU
+% procedures "_signal$set" and "_signal$get" cause CLU to count and return the
+% number of occurrences of a specified signal; see /usr/clu/lib/_signal.spc.
+
+
+SIGUSR1 = 30
+SIGUSR2 = 31
+
+OS_init_sigusr1 = proc ()
+    _signal$set(SIGUSR1, false)
+    end OS_init_sigusr1
+
+OS_check_sigusr1 = proc () returns (bool)
+    return(_signal$get(SIGUSR1) > 0)
+    end OS_check_sigusr1
+
+OS_init_sigusr2 = proc ()
+    _signal$set(SIGUSR2, false)
+    end OS_init_sigusr2
+
+OS_check_sigusr2 = proc () returns (bool)
+    return(_signal$get(SIGUSR2) > 0)
+    end OS_check_sigusr2

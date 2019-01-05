@@ -1,0 +1,38 @@
+\doc{Sample proof: declarations}
+\ref{sample-declarations}
+
+The first three commands in \dflink{set1.lp}{set1.lp} declare symbols for use
+in axiomatizing the properties of sets of elements.
+
+\begin{verbatim}
+declare sorts E, S
+declare variables e, e1, e2: E, x, y, z: S
+declare operators
+  {}:                   -> S
+  {__}:            E    -> S
+  insert:          E, S -> S
+  __ \union __:    S, S -> S
+  __ \in __:       E, S -> Bool
+  __ \subseteq __: S, S -> Bool
+  ..
+
+\end{verbatim}
+
+The first \clink{declare} command introduces names for two \llink{sort}{sorts},
+\f{E} and \f{S}.  LP predefines the boolean sort \f{Bool}.
+\p
+The second command introduces \llink{variable}{variables} ranging over \f{E}
+and \f{S}.  These variables will be used when stating axioms and conjectures.
+\p
+The third command introduces symbols for the \llink{operator}{operators} whose
+properties we will axiomatize.  This command uses LP's multi-line input
+convention: if the \dlink{command-arguments}{arguments} for a command do not
+fit on the line containing the command, they can be given on subsequent lines.
+Two periods (\f{..}) mark the end of the command.
+\p
+The declaration for each operator specifies sorts for the operator's arguments
+and the sort of its result.  Operators like \f#{}# with no arguments are
+\llink{constant}{constants}.  Operators like \fq{insert} are used in functional
+notations like \fq{insert(e, x)}.  The placeholders in operators like \f#{__}#
+and \f{__\in__} indicate where their arguments belong in notations like
+\fq#{e}# and \fq{e \in x}.

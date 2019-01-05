@@ -1,0 +1,15 @@
+#extend
+
+% Processes the "set" command by allowing the user to set various LP settings.
+
+c_set = proc (i: interactive) signals (error)
+    ao: bool := i.sys.automatic_ordering
+    begin
+	settings$set(i)
+	   except when excess_input: check_end_of_line(i.io) end
+	end resignal error
+    if ~ao cand i.sys.automatic_ordering then c_order(i) end
+       resignal error
+    end c_set
+
+

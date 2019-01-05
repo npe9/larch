@@ -1,0 +1,162 @@
+#extend
+
+% Yields a set {c1, ..., cn} of clauses that is satisfiable iff "bt" is.
+% Ensures that all literals (and their negations) in these clauses are in
+% "lits".
+
+% IMPROVE: Push "~" in.
+
+term2cnf = iter (bt: bterm, lits: literal_table) yields (clause)
+    if term_is_literal(bt) then 
+       yield(clause$[cnf_lit(bt, lits)])
+       return
+     elseif bt.root = op_and() then
+       for bt1: term in term_seq$elements(bt.args) do
+           for c: clause in term2cnf(bt1, lits) do yield(c) end
+           end
+       return
+     elseif bt.root = op_or() then
+       for bt1: term in term_seq$elements(bt.args) do
+           if ~term_is_literal(bt1) then exit not_a_clause end
+           end
+       c: clause := clause$[]
+       for bt1: term in term_seq$elements(bt.args) do
+	   clause$insert(c, cnf_lit(bt1, lits))
+	   end
+       yield(c)
+       return
+     end except when not_a_clause: end
+    fresh: literal := cnf_fresh_lit(lits)
+    yield(clause$[fresh])
+    for c: clause in convert_eq(fresh, bt, lits) do yield(c) end
+    end term2cnf
+    
+
+% Enters literals for "bt" and "~bt" in "lits" and returns the literal for
+% "bt".
+
+cnf_lit = proc (bt: term, lits: literal_table) returns (literal)
+    return(literal_table$add(lits, literal$create(bt)))
+    end cnf_lit
+
+
+% Enters a fresh literal and its negation in "lits" and returns the fresh
+% literal.
+
+cnf_fresh_lit = proc (lits: literal_table) returns (literal)
+    return(literal_table$add(lits, literal$make_fresh()))
+    end cnf_fresh_lit
+
+
+% Yields a set {c1, ..., cn} of clauses that is satisfiable iff "lit = bt" is.
+% Ensures that all literals (and their negations) in these clauses are in
+% "lits".  Assumes "lit" is in "lits".
+    
+convert_eq = iter (lit: literal, bt: bterm, lits: literal_table) 
+	       yields (clause)
+    args: lit_arr := lit_arr$predict(1, term_seq$size(bt.args))
+    for bt1: term in term_seq$elements(bt.args) do
+	if term_is_literal(bt1)
+	   then lit_arr$addh(args, cnf_lit(bt1, lits))
+	   else lc: literal := cnf_fresh_lit(lits)
+		lit_arr$addh(args, lc)
+		for c: clause in convert_eq(lc, bt1, lits) do yield(c) end
+	   end
+	end
+    op: operator := bt.root
+    if op = op_or() then 
+       % convert_eq(lit, t1 \/ ... \/ tn) is
+       %    (lit <=> l1 \/ ... \/ ln) /\ convert_eq(l1, t1) /\ ...
+       % where lit <=> l1 \/ ... \/ ln is 
+       %    (lit \/ ~l1) /\ ... /\ (lit \/ ~ln) /\ (~lit \/ l1 \/ ... \/ ln)
+       c: clause := clause$[lit.negation]
+       for li: literal in lit_arr$elements(args) do
+           yield(clause$[lit, li.negation])
+           clause$insert(c, li)
+           end
+       yield(c)
+     elseif op = op_and() then 
+       % convert_eq(lit, t1 /\ ... /\ tn) is
+       %    (lit <=> l1 /\ ... /\ ln) /\ convert_eq(l1, t1) /\ ...
+       % where lit <=> l1 /\ ... /\ ln is  
+       %    (~lit \/ l1) /\ ... /\ (~lit \/ ln) /\ (lit \/ ~l1 \/ ... \/ ~ln)
+       not_lit: literal := lit.negation
+       c: clause := clause$[lit]
+       for li: literal in lit_arr$elements(args) do
+           clause$insert(c, li.negation)
+           yield(clause$[not_lit, li])
+           end
+       yield(c)
+     elseif op = op_not() then 
+       % convert_eq(lit, ~t) is 
+       %    (lit <=> ~l1) /\ convert_eq(l1, t1)
+       % where lit <=> ~l1 is 
+       %    (~lit \/ ~l1) /\ (lit \/ l1 )
+       l1: literal := args[1]
+       yield(clause$[lit.negation, l1.negation])
+       yield(clause$[lit, l1])
+     elseif op = op_implies() then 
+       % convert_eq(lit, t1 => t2) is
+       %    (lit <=> ~l1 \/ l2) /\ convert_eq(l1, t1) /\ convert_eq(l2, t2)
+       % where lit <=> ~l1 \/ l2 is 
+       %    (l1 \/ lit) /\ (~l2 \/ lit) /\ (~l1 \/ l2 \/ ~lit)
+       l1: literal := args[1]
+       l2: literal := args[2]
+       yield(clause$[l1, lit])
+       yield(clause$[l2.negation, lit])
+       yield(clause$[l1.negation, l2, lit.negation])
+     elseif op = op_bool_equals() cor op = op_iff() then 
+       % convert_eq(lit, t1 <=> t2 <=> ... <=> tn) is
+       %    (lit <=> (l1 <=> l2 <=> ... <=> ln) /\ convert_eq(l1, t1) /\ ...
+       % where lit <=> (l1 <=> l2) is 
+       %    (lit \/ l1 \/ l2) /\ (lit \/ ~l1 \/ ~l2) /\ 
+       %    (~lit \/ l1 \/ ~l2) /\ (~lit \/ ~l1 \/ l2)
+       % and where lit <=> (l1 <=> l2 <=> l3) is
+       %    (lit <=> (l1 <=> lit1)) /\ (lit1 <=> (l2 <=> l3))
+       n: int := lit_arr$size(args)
+       for i: int  in int$from_to(1, n - 1) do
+	   l1: literal := args[i]
+	   l2: literal 
+	   if i = n - 1
+	      then l2 := args[n] 
+	      else l2 := cnf_fresh_lit(lits)
+	      end
+           yield(clause$[lit, l1, l2])
+           yield(clause$[lit, l1.negation, l2.negation])
+           yield(clause$[lit.negation, l1, l2.negation])
+           yield(clause$[lit.negation, l1.negation, l2])
+	   lit := l2
+	   end
+     elseif op = op_bool_neq() then
+       % convert_eq(lit, t1 ~= t2) is convert_eq(lit, t1 = ~t2), which is
+       %    (lit <=> l1 = ~l2) /\ convert_eq(l1, t1) /\ convert_eq(l2, t2)
+       % where (lit <=> l1 = ~l2) is
+       %    (lit \/ l1 \/ ~l2) /\ (lit \/ ~l1 \/ l2) /\
+       %    (~lit \/ l1 \/ l2) /\ (~lit \/ ~l1 \/ ~l2)
+       l1: literal := args[1]
+       l2: literal := args[2]
+       yield(clause$[lit, l1, l2.negation])
+       yield(clause$[lit, l1.negation, l2])
+       yield(clause$[lit.negation, l1, l2])
+       yield(clause$[lit.negation, l1.negation, l2.negation])
+     end
+    end convert_eq
+
+
+% Returns true iff "t" is a literal.
+
+term_is_literal = proc (t: term) returns (bool)
+    if t.sort ~= bool_sort() then return(false) end
+    op: operator := t.root
+       except when wrong_tag: return(true) end
+    if op = op_not() then
+       t := t.args[1]
+       op := t.root
+       if op = op_not() then return(true) end
+       end except when wrong_tag: return(true) end
+    if op.arity = 0 cor op.arity > 2 then return(true) end
+    return(op ~= op_and() cand op ~= op_or() cand op ~= op_implies() 
+	     cand op ~= op_bool_equals() cand op ~= op_bool_neq()
+	     cand op ~= op_iff())
+    end term_is_literal
+

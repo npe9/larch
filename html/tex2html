@@ -1,0 +1,65 @@
+/\\doc{\([^{}]*\)}/s//<html>\
+<head>\
+  <title>LP: \1<\/title>\
+  <link href="style.css" rel="stylesheet" type="text\/css">\
+<\/head>\
+<body>\
+<h1>LP, the Larch Prover \&mdash; \1<\/h1>\
+<hr>/
+
+/\\head{\([0-9]\)}{\([^{}]*\)}/s//<h\1>\2<\/h\1>/
+/^\\ref{/d
+/\\begin{itemize}/s//<ul>/
+/\\end{itemize}/s//<\/ul>/
+/\\begin{description}/s//<dl>/
+/\\end{description}/s//<\/dl>/
+/\\begin{verbatim}/{
+  s//<blockquote><pre><tt>/
+  N
+  s/\n//
+  }
+/\\end{verbatim}/s//<\/tt><\/pre><\/blockquote>/
+/\\begin{quote}/s//<blockquote>/
+/\\end{quote}/s//<\/blockquote>/
+
+/\\item/s//<li>/
+/\\dt/s//<dt>/
+/\\dd/s//<dd>/
+
+
+/\\[$]/s//$/g
+/\\%/s//%/g
+/\\lt/s//\&lt;/g
+/\\gt/s//\&gt;/g
+
+/\\anchor{\([^{}]*\)}/s//<a name="\1"><\/a>/g
+/\\clink{\([^{}]*\)}/s//<a href="..\/commands\/\1.html">\1<\/a>/g
+/\\cflink{\([^{}]*\)}/s//<a href="..\/commands\/\1.html">\1<\/a>/g
+/\\dlink{\([^{}]*\.lp\)}{\([^{}]*\)}/s//<a href="\1">\2<\/a>/g
+/\\dlink{\([^{}]*\)}{\([^{}]*\)}/s//<a href="\1.html">\2<\/a>/g
+/\\dflink{\([^{}]*.lp\)}{\([^{}]*\)}/s//<a href="\1">\2<\/a>/g
+/\\dflink{\([^{}]*\)}{\([^{}]*\)}/s//<a href="\1.html">\2<\/a>/g
+/\\glink{\([^{}]*\)}{\([^{}]*\)}/s//<a href="..\/glossary\/\1.html">\2<\/a>/g
+/\\llink{\([^{}]*\)}{\([^{}]*\)}/s//<a href="..\/logic\/\1.html">\2<\/a>/g
+/\\olink{\([^{}]*\)}{\([^{}]*\)}/s//<a href="..\/operation\/\1.html">\2<\/a>/g
+/\\plink{\([^{}]*\)}{\([^{}]*\)}/s//<a href="..\/proof\/\1.html">\2<\/a>/g
+/\\pflink{\([^{}]*\)}{\([^{}]*\)}/s//<a href="..\/proof\/\1.html"><tt>\2<\/tt><\/a>/g
+/\\slink{\([^{}]*\)}{\([^{}]*\)}/s//\&lt;<a href="\1.html#\2">\2<\/a>\&gt;/g
+/\\setlink{\([^{}]*\)}/s//<a href="..\/settings\/\1.html">\1<\/a>/g
+/\\ftp{\([^{}]*\)}/s??<a href="http://people.csail.mit.edu/garland/LP/\1">\1</a>?g
+
+/\\s{\([^{}]*\)}/s//\&lt;\1\&gt;/g
+/\\sd{\([^{}]*\)}/s//<a name="\1"><\/a>\&lt;\1\&gt;/g
+/\\v{\([^{}]*\)}/s//<var>\1<\/var>/g
+/\\def{\([^{}]*\)}/s//<em>\1<\/em>/g
+/\\f{\([^{}]*\)}/s//<tt>\1<\/tt>/g
+/\\fq{\([^{}]*\)}/s//<tt>\1<\/tt>/g
+/\\qf{\([^{}]*\)}/s//"<tt>\1<\/tt>"/g
+
+/\\f#\([^#]*\)#/s//<tt>\1<\/tt>/g
+/\\fq#\([^#]*\)#/s//<tt>\1<\/tt>/g
+/\\qf#\([^#]*\)#/s//"<tt>\1<\/tt>"/g
+/\\v#\([^#]*\)#/s//<var>\1<\/var>/g
+
+/\\p/s//<p>/
+/\\br/s//<br>/g

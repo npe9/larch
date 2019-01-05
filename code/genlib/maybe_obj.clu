@@ -1,0 +1,140 @@
+% This data type is similar to "oneof[exists: t, none: null]", but it doesn't
+% require any additional storage.  However, its operations are not optimized by
+% the compiler.
+
+% CAVEAT: maybe_obj[t]$make(x) signals failure if the primitive type used to
+% represent "x" is identical to the bit pattern "maybe_none" (see below).  For
+% the primitive types record, struct, variant, oneof, array, sequence, and
+% string, this never happens.  For int and real, it can happen.  It can also 
+% happen for maybe_obj[maybe_obj[t]].
+
+
+maybe_obj = cluster [t: type] is none, make, exists, value, equal, similar,
+                                 get_value, copy, _gcd, decode, encode, print
+
+    rep = int
+
+    %maybe_none = -2147483648	% <integer value used to represent tag none,
+    %maybe_none = -2*(2**29)	%  usually the smallest integer.>
+    maybe_none = 0
+    
+
+    % -2147483648 = - 2 ** 31
+    % For Vax, use -2*(2**29), but check that this can't point into the heap.
+    % Alas, the PCLU compiler refuses to accept -2147483648
+
+    
+    % Returns the object with the NONE tag.
+
+    none = proc () returns (cvt)
+	return(maybe_none)
+	end none
+
+    
+    % Return a maybe with tag EXISTS and value "x".
+    
+    make = proc (x: t) returns (cvt)
+	if _cvt[t,int](x) = maybe_none then
+	   signal failure("Bad value for maybe_obj$make.")
+	   end
+	return(_cvt[t,int](x))
+	end make
+
+    
+    % Returns "true" if "m" has tag EXISTS.
+
+    exists = proc (m: cvt) returns (bool)
+	return(m ~= maybe_none)
+	end exists
+
+    
+    % Returns the value of "m" if the tag is EXISTS.  Otherwise signals
+    % "wrong_tag".
+    
+    value = proc (m: cvt) returns (t) signals (wrong_tag)
+	if m = maybe_none then signal wrong_tag end
+	return(_cvt[int,t](m))
+	end value
+
+    
+    % A convenient synonym for "value".
+
+    get_value = proc (m: cvt) returns (t) signals (wrong_tag)
+	if m = maybe_none then signal wrong_tag end
+	return(_cvt[int,t](m))
+	end get_value
+
+
+    % Returns "true" if "m1" and "m2" have tag NONE or if both have tag EXISTS
+    % and their values are t$equal.
+
+    equal = proc (m1, m2: cvt) returns (bool)
+		where t has equal: proctype (t, t) returns (bool)
+	if m1 = maybe_none then return(m2 = maybe_none) end
+	if m2 = maybe_none then return(false) end
+	return(_cvt[int,t](m1) = _cvt[int,t](m2))
+	end equal
+
+    
+    % Returns "true" if "m1" and "m2" have tag NONE or if both have tag EXISTS
+    % and their values are t$similar.
+
+    similar = proc (m1, m2: cvt) returns (bool)
+		where t has similar: proctype (t, t) returns (bool)
+	if m1 = maybe_none then return(m2 = maybe_none) end
+	if m2 = maybe_none then return(false) end
+	return(t$similar(_cvt[int,t](m1), _cvt[int,t](m2)))
+	end similar
+
+    
+    % Returns "m" if it has tag NONE.  Otherwise returns a maybe with tag
+    % EXISTS and value t$copy(value(m)).
+
+    copy = proc (m: cvt) returns (cvt)
+		where t has copy: proctype (t) returns (t)
+	if m = maybe_none then return(m) end
+	return(_cvt[t,int](t$copy(_cvt[int,t](m))))
+	end copy
+
+
+    % Necessary for "gc_dump".
+    
+    _gcd = proc (m: cvt, tab: gcd_tab) returns (int)
+		where t has _gcd: proctype (t, gcd_tab) returns (int)
+	if m = maybe_none then return(int$_gcd(m, tab)) end
+	return(t$_gcd(_cvt[int,t](m), tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+	       signals (end_of_file, not_possible(string))
+		where t has decode: proctype(istream) returns (t)
+				      signals (end_of_file, 
+					       not_possible(string))
+	begin
+	    if bool$decode(s) then return(maybe_none) end
+	    return(_cvt[t,int](t$decode(s)))
+	    end resignal end_of_file, not_possible
+	end decode
+
+    
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+		where t has encode: proctype(t, istream) 
+				      signals(not_possible(string))
+	begin
+	    none_: bool := c = maybe_none
+	    bool$encode(none_, s)
+	    if ~none_ then t$encode(_cvt[int,t](c), s) end
+	    end resignal not_possible
+	end encode
+
+    
+    print = proc (m: cvt, ps: pstream)
+		where t has print: proctype(t, pstream)
+	if m = maybe_none
+	   then pstream$text(ps, "none")
+	   else t$print(_cvt[int,t](m), ps)
+	   end
+	end print
+
+    end maybe_obj

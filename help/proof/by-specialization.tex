@@ -1,0 +1,26 @@
+\doc{Proofs by specialization}
+\ref{proof-by-specialization}
+\ref{specialization}
+\ref{specialize}
+\ref{specializing}
+
+The command \fq{prove F by specializing x to t} directs LP to prove a formula
+\fq{F} by creating a single subgoal in which all
+\glink{accessible}{accessible} 
+\glink{prenex}{prenex-existential} quantifiers over the variable 
+\fq{x} have been eliminated from \fq{F} and all occurrences of \fq{x} bound by 
+those quantifier have been replaced by \fq{t}.  
+\p
+The command \fq{resume by generalizing x from t} directs LP to resume the proof
+of the current conjecture by this method.
+\p
+This proof method, which eliminates existential quantifiers from a conjecture,
+is the dual of the \cflink{instantiate} command, which eliminates universal
+quantifiers from facts.
+\p
+For example, the command
+\begin{verbatim}
+prove \A x \E y (x < y) by specializing y to s(x)
+\end{verbatim}
+reduces the proof of the conjecture to establishing the subgoal \fq{x < s(x)}.
+

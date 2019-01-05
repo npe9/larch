@@ -1,0 +1,225 @@
+#extend
+
+% Returns the "flattened" form of "t", i.e., a term that is a canonical
+% representative of the equivalence class of "t" modulo the equational theories
+% of the operators recorded in "osys".  Works by dispatching to the flatten
+% operation of the equational theory of the top operator of "t".  NOTE: To
+% preserve sharing of subterms, the implementation returns "t" (and not a copy)
+% if the operation leaves "t" unchanged.
+
+flatten = proc (t: term, osys: op_system) returns (term)
+    if term$is_var(t) then return(t) end
+    begin % Flatten functional term
+	% Flatten subterms, if necessary.
+	args: term_arr
+	same: bool := true
+	for i: int in term_seq$indexes(t.args) do
+	    arg: term := t.args[i]
+	    arg1: term := flatten(arg, osys)
+	    if same then
+	       if term$same_object(arg, arg1) then continue end
+	       same := false
+	       args := term_seq$s2a(t.args)
+	       end
+	    args[i] := arg1
+	    end
+	if ~same then t := term$change_args(t, term_seq$a2s(args)) end
+	ot: op_theory := op_system$lookup_theory_quickly(osys, t.root)
+	return(ot.flatten(t))
+	   except when already_flattened: return(t) end
+	end except when wrong_tag: end
+    % Flatten quantified term
+    subform: term := flatten(t.subform, osys)
+    if term$same_object(subform, t.subform)
+       then return(t)
+       else return(term$make_quant(t.quant, subform))
+       end
+    end flatten
+
+
+% Like "flatten", but assumes that the subterms of "t" are already been
+% flattened.
+
+flatten1 = proc (t: term, osys: op_system) returns (term)
+    ot: op_theory := op_system$lookup_theory_quickly(osys, t.root)
+       except when wrong_tag: return(t) end
+    return(ot.flatten(t))
+       except when already_flattened: return(t) end
+    end flatten1
+
+
+% Flattens a term "t" whose top operator has the empty theory.  Unflattens "t"
+% if its top operator previously had another operator theory.  Assumes that
+% the subterms of "t" have already been flattened.
+
+flatten_empty = proc (t: term) returns (term) signals (already_flattened)
+    if term_seq$size(t.args) = t.root.arity 
+       then signal already_flattened
+       else return(unflatten1(t))
+       end
+    end flatten_empty
+
+
+% Flattens a term "t" whose top operator is commutative.  Assumes that the
+% subterms of "t" have already been flattened.  Works by sorting "t.args" using
+% "term$lt"
+
+flatten_c = proc (t: term) returns (term) signals (already_flattened)
+    if term_seq$size(t.args) ~= 2 then fail("flatten_c") end
+    if ~(t.args[2] < t.args[1]) then signal already_flattened end
+    return(term$flip_args(t))
+    end flatten_c
+
+
+% Flattens a term "t" whose top operator is AC.  Assumes that the subterms of
+% "t" have already been flattened.  Works by completely flattening "t", so that
+% none of its immediate subterms have the same top operator as "t", and the
+% sorting the subterms using "term$lt".
+
+flatten_ac = proc (t: term) returns (term) signals (already_flattened)
+    changed: bool := false
+    args: term_arr
+    for i: int in term_seq$indexes(t.args) do
+	tt: term := t.args[i]
+	if tt.root = t.root then	% promote arguments of this subterm
+	   if ~changed then
+	      changed := true
+	      args := term_seq$s2a(t.args)
+	      end
+	   first: bool := true
+	   for ttt: term in term_seq$elements(tt.args) do
+	       if first
+		  then args[i] := ttt		% 1st argument replaces subterm
+		       first := false
+		  else term_arr$addh(args, ttt)	% rest are tacked on the end
+		  end
+	       end
+	   end except when wrong_tag: end
+	if ~changed cand t.args[i+1] < tt then
+	   changed := true
+	   args := term_seq$s2a(t.args)
+	   end except when bounds: end
+	end
+    if ~changed then signal already_flattened end
+    n: int := term_arr$size(args)
+    if n = 2 
+       then return(term$flip_args(t)) 
+       else quicksort[term](args, 1, n, term$lt)
+	    return(term$make_funct(t.root, term_seq$a2s(args)))
+       end
+    end flatten_ac
+
+
+% Like "flatten_ac", but assumes that there exists some term "t1" such that the
+% result of replacing "t.arg[i]" in "t" by "t1" is also flattened.  Returns the
+% flattened form "t2" of "t" together with an integer "j <= i" such that
+% "t.args[k] = t2.args[k]" for all "k < j".
+
+% ENHANCE: With cached reductions, it should suffice just to return a term.
+
+flatten1_ac = proc (t: term, i: int) returns (int, term)
+		signals (already_flattened)
+    size: int := term_seq$size(t.args)      % current size of t.args
+    args2: term_seq := term_seq$[t.args[i]] % terms to reinsert in t.args
+    tt: term := args2[1]		    % first term to reinsert
+    spot: int := i			    % guess where to reinsert tt
+    if tt.root = t.root then 
+       args2 := tt.args
+       tt := args2[1]
+       end except when wrong_tag: end
+    size2: int := term_seq$size(args2)
+    while spot > 1 cand tt < t.args[spot-1] do spot := spot - 1 end
+    if spot = i cand size2 = 1 cand (i = size cor ~(t.args[i+1] < tt)) 
+       then signal already_flattened end
+    % Reflatten the term
+    if size + size2 = 3 then return(1, term$flip_args(t)) end
+    new_args: term_arr := term_arr$predict(1, size+size2-1)
+    for j: int in int$from_to(1, spot-1) do 	% copy unchanged arguments
+	term_arr$addh(new_args, t.args[j])
+	end
+    p1: int := spot				% merge remaining arguments
+    if p1 = i then p1 := p1 + 1 end
+    p2: int := 1
+    while p1 <= size cor p2 <= size2 do
+	if p2 <= size2 cand (p1 > size cor args2[p2] < t.args[p1])
+	   then term_arr$addh(new_args, args2[p2])
+		p2 := p2 + 1
+	   else term_arr$addh(new_args, t.args[p1])
+		p1 := p1 + 1
+		if p1 = i then p1 := p1 + 1 end
+	   end
+	end
+    return(spot, term$make_funct(t.root, term_seq$a2s(new_args)))
+    end flatten1_ac
+
+
+% Returns the unflattened form of "t".  NOTES: Unflattening may not restore
+% the original parenthesization of "t".  To preserve sharing of subterms, the
+% implementation returns "t" itself (and not a copy) if the operation leaves
+% "t" unchanged.  If new operator theories are added to LP, this routine (plus
+% a simpler variant invoked by "term$prettyprint") may need to be generalized,
+% e.g., by defining separate "unflatten_X" procedures.
+
+unflatten = proc (t: term) returns (term)
+    if term$is_var(t) then return(t) end
+    begin % Unflatten functional term
+	% Unflatten arguments of "t", if necessary.
+	args: term_arr
+	same: bool := true
+	for i: int in term_seq$indexes(t.args) do
+	    arg: term := t.args[i]
+	    arg1: term := unflatten(arg)
+	    if same then
+	       if term$same_object(arg, arg1) then continue end
+	       same := false
+	       args := term_seq$s2a(t.args)
+	       end
+	    args[i] := arg1
+	    end
+	if term_seq$size(t.args) = t.root.arity
+	   then if t.root.arity = 2 cand t.flipped then
+	           same := false
+		   args := term_arr$[t.args[2], t.args[1]]
+		   end
+	        if same
+		   then return(t)
+		   else return(term$make_funct(t.root, term_seq$a2s(args)))
+		   end
+	   else if same then args := term_seq$s2a(t.args) end
+		t1: term := term_arr$reml(args)
+		while term_arr$size(args) > 0 do
+		    args2: term_seq := term_seq$[t1, term_arr$reml(args)]
+		    t1 := term$make_funct(t.root, args2)
+		    end
+		return(t1)
+	   end
+	end except when wrong_tag: end
+    % Unlatten quantified term
+    subform: term := unflatten(t.subform)
+    if term$same_object(subform, t.subform)
+       then return(t)
+       else return(term$make_quant(t.quant, subform))
+       end
+    end unflatten
+
+
+% Like unflatten, but does not unflatten the subterms of "t".
+
+unflatten1 = proc (t: term) returns (term)
+    root: operator := t.root
+       except when wrong_tag: return(t) end
+    if term_seq$size(t.args) = root.arity then
+	if root.arity = 2 cand t.flipped
+	   then return(term$flip_args(t))
+	   else return(t)
+	   end
+	end
+    args: term_arr := term_seq$s2a(t.args)
+    t1: term := term_arr$reml(args)
+    while term_arr$size(args) > 0 do
+	t1 := term$make_funct(root, term_seq$[t1, term_arr$reml(args)])
+	end
+    return(t1)
+    end unflatten1
+
+

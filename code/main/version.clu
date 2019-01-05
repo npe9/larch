@@ -1,0 +1,60 @@
+% The following procedures describe the current configuration of LP.  Since
+% some of the values they return can be determined only when LP is compiled and
+% linked, the makefiles for LP create appropriately edited copies of this file.
+
+
+% Returns the copyright notice for LP.
+
+lp_copyright = proc () returns (string)
+    return("Copyright (C) 1994, S. J. Garland and J. V. Guttag")
+    end lp_copyright
+
+
+% Returns a string used by the "freeze" command to identify the version of LP
+% creating a ".lpfrz" file and used by the "thaw" command to avoid attempting
+% to thaw a ".lpfrz" file created by an out-of-date version of LP.  This string
+% must be changed whenever the rep of an LP data structure changes.
+
+lp_freeze_version = proc () returns (string)
+    return("30 November 2016")
+    end lp_freeze_version
+
+
+% Returns the name, release number, and last modification date for LP.  This
+% string should be changed whenever LP is modified.
+
+lp_version = proc () returns (string)
+    return("LP (the Larch Prover), Release 3_1c (2016/11/30)")
+    end lp_version
+
+
+% Returns "true" if LP was compiled by a native CLU compiler, thereby making
+% max_heap_size() meaniningful.  The makefiles for LP edit the returned value
+% of this function.
+
+version_is_clu = proc () returns (bool)
+    return(false)
+    end version_is_clu
+
+
+% Returns the maximum size of the heap, which was set when LP was linked.  This
+% size is specified in "lp.xload" and is set by the makefiles for LP.
+
+max_heap_size = proc () returns (int)
+    return(2)
+    end max_heap_size
+
+
+% Returns the number of megabytes by which the heap must grow before garbage
+% collection occurs.  Formerly, this size was set by the makefiles for LP.
+
+gc_heap_increment = proc () returns (int)
+    return(max_heap_size())
+    end gc_heap_increment
+
+
+% Returns the name of the directory containing help and examples.
+
+lpdir = proc () returns (string)
+    return("/usr/local/lib/LP")
+    end lpdir

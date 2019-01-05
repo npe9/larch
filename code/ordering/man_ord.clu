@@ -1,0 +1,35 @@
+#extend
+
+% The procedures "man_quiet", "man_user", and "man_auto" in this file comprise
+% the "manual_ordering", which requires user interaction to order evey
+% equation.
+
+
+% Signals "cannot_orient" (because all ordering actions require user
+% interaction).
+
+man_quiet = proc (reg: registry, eq: equation) returns (rewrite_rule)
+	      signals (cannot_orient)
+    signal cannot_orient
+    end man_quiet
+
+
+% Presents an appropriate list of choices for ordering "eq" to the user (see
+% the "ordering_choice" procedure).
+
+man_user = proc (p: printer, reg: registry, stab: symtab, eq: equation)
+	     returns (order_action)
+    own sug: suggestions := suggestions$[]
+    tracer$present_equation(eq)
+    return(ordering_choice[suggestions]
+	       (eq, reg, p, stab, sug, sug, false, false, dsmpos_choice))
+    end man_user
+
+
+% Signals "cannot_orient" (because all ordering actions require user
+% interaction).
+
+man_auto = proc (reg: registry, eq: equation, choice: int)
+	     returns (rewrite_rule) signals (cannot_orient)
+    signal cannot_orient
+    end man_auto

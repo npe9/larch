@@ -1,0 +1,59 @@
+\doc{Forward inference}
+\ref{forward-inference}
+\ref{inference}
+
+LP provides mechanisms for proving theorems using both \dlink{forward}{forward}
+and \dlink{backward}{backward} inference.  Forward inferences produce
+consequences from LP's logical system.  Backward inferences produce subgoals
+whose proof will suffice to establish a conjecture.
+
+LP provides four methods of forward inference, each of which derives
+consequences from the axioms in LP's logical system.
+\begin{description}
+\dt Normalization
+\dd
+Whenever a new \llink{rewrite-rule}{rewrite rule} is added to its logical
+system, LP automatically \olink{normalization}{renormalizes} all formulas,
+rewrite rules, and deduction rules.  It discards any formula or rewrite rule
+that normalizes to \fq{true}.  If all hypotheses of a deduction rule normalize
+to \fq{true}, LP replaces the deduction rule by the formulas in its
+conclusions.  If all conclusions of a deduction rule normalize to \fq{true}, LP
+discards the deduction rule.
+\p
+Users can make formulas, rewrite rules, and deduction rules
+\dlink{../settings/immunity}{immune} or ancestor-immune to protect them from 
+automatic normalization, both to enhance the performance of LP and to preserve
+particular forms for use in a proof.  Users can also
+\dlink{../settings/activity}{deactivate} rewrite rules to prevent them from 
+being applied automatically.  The \cflink{normalize} and \cflink{rewrite}
+commands explicitly apply rewrite rules (whether or not active) to facts
+(whether or not immune).
+\p
+\dt Deduction
+\dd
+Whenever a new \llink{deduction-rule}{deduction rule} is added to its logical
+system, LP automatically applies that deduction rule to all formulas and
+rewrite rules.  Likewise, whenever a formula or rewrite rule is normalized, LP
+automatically applies all deduction rules to the new normal form.  
+\p
+Inactive deduction rules are not used for automatic deduction, and immune
+formulas and rewrite rules are not subject to automatic deduction.  Users can
+also \clink{apply} deduction rules explicitly, for example, to immune formulas.
+\p
+\dt Critical pairs
+\dd
+The computation of \clink{critical-pairs} and the Knuth-Bendix
+\dlink{../commands/complete}{completion procedure} produce consequences from 
+incomplete rewriting systems.  It is generally impossible or overly costly to
+complete a rewriting system.  However, the completion procedure can be used to
+look for inconsistencies in a system, or to perform the final steps in some
+proofs.
+\p
+\dt Quantifier elimination
+\dd
+The \cflink{instantiate} command enables users to eliminate universal
+quantifiers, or to replace free variables by terms, in formulas, rewrite rules,
+and deduction rules.  The \cflink{fix} command enables users to eliminate
+existential quantifiers in formulas and rewrite rulest to produce a
+conservative extension of LP's logical system.
+\end{description}

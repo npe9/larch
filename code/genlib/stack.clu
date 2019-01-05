@@ -1,0 +1,128 @@
+% A last-in, first-out list.
+
+stack = cluster [t: type] is
+	new, cons, push, pop, top, size, empty, elements,
+	equal, similar, similar1, copy1, copy, _gcd
+
+    % The top of the array is the top of the stack.
+
+    rep = array[t]
+
+
+    % Returns a new stack.
+
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+
+
+    % Returns a new stack consisting of the elements in "e", where the elements
+    % are pushed onto the stack in the same order as they appear in "e".  This
+    % operation is provided so that a sequence-like constructor can be used to
+    % build a stack.  This facility is provided by the "#extend" mode of the
+    % CLU compiler.
+
+    cons = proc (e: elem_seq) returns (cvt)
+	elem_seq = sequence[t]
+
+	return(rep$cons(e))
+	end cons
+
+
+    % Pushes "e" onto "s".
+
+    push = proc (s: cvt, e: t)
+	rep$addh(s, e)
+	end push
+
+
+    % Pops "e" off "s" and returns it.  Signals "empty" if "s" is empty.
+
+    pop = proc (s: cvt) returns (t) signals (empty)
+	return(rep$remh(s))
+	   except when bounds: signal empty end
+	end pop
+
+
+    % Returns the top element of "s".  Signals "empty" if "s" is empty.
+
+    top = proc (s: cvt) returns (t) signals (empty)
+	return(rep$top(s))
+	   except when bounds: signal empty end
+	end top
+
+
+    % Returns the number of elements in "s".
+
+    size = proc (s: cvt) returns (int)
+	return(rep$size(s))
+	end size
+
+
+    % Returns "true" iff "s" is empty.
+
+    empty = proc (s: cvt) returns (bool)
+	return(rep$empty(s))
+	end empty
+
+
+    % Yields the elements of "s" as they would be by successive "pops".
+
+    elements = iter (s: cvt) yields (t)
+	for i: int in int$from_to_by(rep$high(s), rep$low(s), -1) do
+	    yield(s[i])
+	    end
+	end elements
+
+
+    % Returns "true" iff "s1" and "s2" are the same object.
+
+    equal = proc (s1, s2: cvt) returns (bool)
+	return(s1 = s2)
+	end equal
+
+
+    % Returns "true" iff "s1" and "s2" contain similar objects in the same
+    % order.
+
+    similar = proc (s1, s2: cvt) returns (bool)
+		where t in similar_type
+	return(rep$similar(s1, s2))
+	end similar
+
+
+    % Returns "true" iff "s1" and "s2" contain the same objects in the same
+    % order.
+
+    similar1 = proc (s1, s2: cvt) returns (bool)
+		where t in equal_type
+	return(rep$similar1(s1, s2))
+	end similar1
+
+
+    % Returns a new stack containing the same objects as in "s", in the same
+    % order.
+
+    copy1 = proc (s: cvt) returns (cvt)
+	return(rep$copy1(s))
+	end copy1
+
+
+    % Returns a new stack containing copies of all objects in "s", in the same
+    % order.
+
+    copy = proc (s: cvt) returns (cvt)
+		where t in copy_type
+	return(rep$copy(s))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where t in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    end stack

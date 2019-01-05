@@ -1,0 +1,52 @@
+\doc{The freeze and thaw commands}
+\ref{freeze-command}
+\ref{thaw-command}
+
+The \def{freeze} and \def{thaw commands} enable LP to save and restore its
+state. 
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{freeze-command} ::= (\f{freeze} | \f{freeze-current}) \slink{execute}{file}
+\sd{thaw-command}   ::= \f{thaw} \slink{execute}{file}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+freeze case1
+thaw case1
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{freeze} command saves LP's entire state, excluding the
+\clink{statistics} and \dlink{set}{global settings}, but
+including all proof contexts, in the file named \s{file}\f{.lpfrz} (unless
+\s{file} contains a period, in which case LP does not supply the suffix
+\f{.lpfrz}) in LP's current working \setlink{directory}.  If a file with that 
+name already exists, its previous contents are erased; if it does not exist, it
+is created.
+\p
+The \fq{freeze-current} command does the same, except that it only saves the
+state of the current proof context.  This command is faster and uses less disk
+space than the \fq{freeze} command.  It is useful primarily for trying
+different strategies for proving the current conjecture.
+\p
+The \fq{thaw} command restores the state of LP from that saved previously using
+the \fq{freeze} command in the file named \s{file}\f{.lpfrz} (unless \s{file}
+contains a period, in which case LP does not supply the suffix \f{.lpfrz}) on
+the current LP \dlink{../settings/lp-path}{search path}.  The \fq{thaw} command
+will not thaw files that were frozen using an out-of-date version of LP.
+\p
+These commands are useful for checkpointing attempted proofs.  They are also
+useful for saving and restoring completed or partially-completed systems.  
+
+\head{2}{See also}
+\begin{itemize}
+\item
+\dlink{forget}{Forgetting} information to save space before a \fq{freeze}
+\item
+\dlink{write}{Writing} commands into a file to recreate the current proof 
+context
+\end{itemize}
+
+

@@ -1,0 +1,289 @@
+#extend
+
+% An object ThE of type TheoryE is a set C of formulas together with a set T of
+% terms such that
+% (a) every formula in C has the form "t1 = t2" or "t1 ~= t2" 
+%     (for now, "t1" and "t2" are not boolean terms),
+% (b) every (for now, nonboolean) term in a formula in C is in T,
+% (c) every (for now, nonboolean) subterm of a term in T is in T,
+% (d) C is closed under equivalence:
+%     if "t1 = t2" is in C, then "t2 = t1" is also in C
+%     if "t1 = t2" and "t2 = t3" are in C, then "t1 = t3" is also in C
+% (e) C is closed under congruence:
+%     if t1, t2, f(t1), f(t2) are in T and "t1 = t2" is in C, then 
+%     "f(t1) = f(t2)" is in C
+
+% Theory E can undo " assert" operations.
+%    undo(assert(Th, l1)) = undo(Th, l1)
+%    undo(save(Th)) = Th
+
+% A literal "l" is relevant to ThE if it has the form "t1 = t2" or "t1 ~= t2".
+
+%          We'll consider rewrite system R related to Theory E 
+%          R(Th: TheoryE) is reduced rewrite system, constructed 
+%          from equalities of Th.C. (In fact, there can be more than one
+%          system, currently, the only constraint on ordering is, that 
+%          numbers are considered lighter than constants, therefore,
+%          2=x will be oriented x -> 2. Also, since R is reduced, it is 
+%          canonical)
+%          We'll denote by CongrClosure(C, T) the result of closing C
+%          under congruence, with respect to set of terms T
+%          We'll denote by EqClosure(C) the result of closure C under 
+%          equivalence       
+%          We'll denote by EqCongrClosure(C, T) the result of
+%          closing C under both , congruence and equivalence.
+
+TheoryE = cluster is new, add_subterms, relevant, assert, contradicts, model, 
+                     normalize, normalize_selected_subt, save, undo, _gcd
+
+    rep = record[neq: lit_set, g: egraph]
+    
+    % Representation invariants:
+    %  "r.neq" is a set of literals of the form "t1 ~= t2", where "t1" and
+    %  "t2" correspond to nodes "n1" and "n2" in "r.g" such that
+    %  egraph$add_equation(r.g, n1, n2) is forbidden
+
+    %             Let Neg(eg: egraph) be the set of all literals
+    %             l s. t. l : t1 ~= t2 
+    %                     egraph$add_equation(r.g, 
+    %                                         egraph$add_term(r.g, t1),
+    %                                        egraph$add_term(r.g, t2)) is
+    %              forbidden;
+    %             let Eq(eg: egraph) be the set of all literals l s.t. 
+    %             l : t1 = t2,
+    %             egraph$equiv(r.g, egraph$add_term(r.g, t1),
+    %                                      egraph$add_term(r.g, t2));
+    %             let St(eg: egraph) be the underlying subterm graph.
+    %             Now, let's consider egraph eg1, s.t. Eq(r.g) = Eq(eg1)
+    %             St(r.g) = St(eg1), r.neg \subset Neq(eg1).
+    %             Then Neq(r.g) \subseteq Neq(eg1). 
+    %          
+    % Abstraction function A(r) : 
+    %   A(r).T is the set of terms associated with enodes in r.g
+    %   A(r).C is the set of equations "t1 = t2" such that
+    %        egraph$equiv(r.g, n1, n2)
+    %   where "n1" and "n2" are the enodes in "r.g" corresponding to "t1" and
+    %   "t2", together with the set of inequations "t1 ~= t2" such that
+    %   egraph$add_equation(r.g., n1, n2) is forbidden
+
+
+    s_type = proctype (theory_system, term) returns (bool)
+
+    % Returns a new, empty TheoryE.
+    
+    new = proc () returns (cvt)
+	return(rep${neq: lit_set$[], g: egraph$[]})
+	end new
+
+    
+    % Modifies: Th
+    % Effects:  Th'.T = Th^.T U subterms(t)
+    %           Th'.C is the closure Th^.C under congruence wrt Th'.T
+    %           term2enode(t1) is defined for all subterms t1 of t
+    % Yields:   literals "t1 = t2" in Th'.C ~ Th^.C
+    % Signals:  contradiction (and does not modify Th^.C) if Th'.C would 
+    %           be inconsistent
+    % Note:     Currently, due to the problems with the egraph we assume that 
+    %           Th^.C is empty.  Therefore nothing is yielded.
+    
+    add_subterms = iter (Th: cvt, t: term) yields (literal)
+	dbg = false
+	if dbg then
+	   pr: printer := tracer$get_printer()
+	   printer$text(pr, "TheoryE$add_subterms: ")
+	   term$print(pr, t, tracer$get_symtab())
+	   printer$newline(pr)
+	   end
+%	if is_op_equals(t.root) cor t.root = op_iff()
+        op: operator := t.root
+	if op = op_or() cor op = op_and() cor op = op_not()
+	    cor op = op_implies() cor op = op_iff() cor op = op_bool_equals()
+	    cor op = op_bool_neq()
+	   then for t1: term in term_seq$elements(t.args) do
+		    for l: literal in add_subterms(up(Th), t1) do yield(l) end
+		    end
+	   else for l: literal in egraph$add_term(Th.g, t) do 
+		    if dbg then dbg_assert("Propagate:", l) end
+		    yield(l)
+		    end except when node (*): end
+	   end
+	end add_subterms
+    
+    
+    % Returns true iff "l" is relevant for TheoryE.
+    % IMPROVE: What about <=>?
+    
+    relevant = proc (l: literal) returns (bool)
+	return(is_op_equals(l.root))
+	end relevant
+    
+    
+    %Modifies Th.
+    %         If relevant(l) then:
+    %         Th'.T = Th^.T U subterms(l.args[1]) U subterms(l.args[2]);
+    %         Th'.C = EQ-CongrClosure(Th^.C&l, Th'.T).
+    %Effects: If relevant(l) then:
+    %        Yields all literals in Th'.C ~ Th^.C ~ {l}
+    %        Signals contradiction if EQ-CongrClosure(Th^.C&l, Th'.T)
+    %        is inconsistent(In this case Th.C is not modified.)
+    %NOTE: Nothing is modified, yielded or signaled if l is not relevant;
+    %      If contradiction is signaled, some literals still can be yielded
+    %      before the signal;
+    %      It's possible not to yield all new lit's from Th'.C, but
+    %      only new congruences, since all other theories, that handle 
+    %      equalities are closed under equivalence. This is not done now.
+    %      Temporary assumes, that l.args[1], l.args[2] are in Th^.T (due
+    %      to problems with egraph)
+     
+    assert = iter (Th: cvt, l: literal) yields (literal)
+	       signals (contradiction)
+        dbg = false
+        l1: literal
+        if relevant(l) then	
+	   if dbg then dbg_assert("TheoryE$assert:", l) end
+	   t1: term := l.args[1]
+	   t2: term := l.args[2]
+	   node1: enode := t1.enode 
+	      except when none:
+			  for l1 in add_subterms(up(Th), t1) do 
+			      if dbg then dbg_assert("Propagate1: ", l1) end
+			      yield(l1) 
+			      end
+			  node1 := t1.enode
+		     end
+	   node2: enode := t2.enode 
+	      except when none:
+			  for l1 in add_subterms(up(Th), t2) do 
+			      if dbg then dbg_assert("Propagate1: ", l1) end
+			      yield(l1) 
+			      end
+			  node2 := t2.enode
+		     end
+	   if l.sense 
+	      then for l1 in egraph$add_equation(Th.g, node1, node2) do
+		       if dbg then dbg_assert("Propagate: ", l1) end
+		       yield(l1)
+		       end
+	      else egraph$forbid_merge(Th.g, node1, node2)
+		   lit_set$insert_unique(Th.neq, l)
+	      end except when forbidden, impossible: signal contradiction
+			 when redundant:
+			 end
+	   end
+	end assert
+    
+    dbg_assert = proc (s: string, l: literal)
+	p: printer := tracer$get_printer()
+	stab: symtab := tracer$get_symtab()
+	printer$text(p, s)
+	printer$text(p, " ")
+	literal$print(p, l, stab)
+	printer$newline(p)
+	end dbg_assert
+    
+    
+    % Effects: result = (Th^.C /\ l is inconsistent)
+    
+    contradicts = proc (Th: TheoryE, l: literal) returns (bool)
+	result: bool := false
+	TheoryE$save(Th)
+	for l1: literal in TheoryE$assert(Th, l) do end
+	   except when contradiction: result := true end
+        TheoryE$undo(Th)	      
+        return(result)
+	end contradicts
+    
+
+    % Yields a sequence of nonredundant, internormalized literals that are
+    % equivalant to Th.C.
+
+    model = iter (Th: cvt) yields (literal)
+	for l: literal in egraph$reduced(Th.g) do
+	    if l.root ~= op_bool_equals() then yield(l) end
+	    % Boolean equalities are yielded by TheoryB$model.
+	    end
+	for l: literal in lit_set$elements(Th.neq) do
+	    yield(normalize(up(Th), l))
+	    end
+	end model
+
+    
+    % Requires: t \in l.args => t \in Th.T
+    % Ensures:  normalized(result) /\ ThE |= result = t
+    
+    normalize = proc (Th: TheoryE, l: literal) returns (literal)
+	return(normalize_selected_subt(Th, theory_system$[], l, select_all))
+	end normalize
+    
+    
+    % (Internal) Dummy procedure.
+    % Ensures: result
+    
+    select_all = proc (tsys: theory_system, t: term) returns (bool)
+	return(true)
+	end select_all
+
+    
+    % Requires: t \in subterms(l) /\ t.sort ~= Bool  /\ select(t) => t \in Th.T
+    % Ensures:  result can be derived from l by normalizing (wrt R(Th)) all
+    %           subterms s of l such that select(s) is true
+       
+    normalize_selected_subt = proc (Th: TheoryE, tsys: theory_system,
+	                            l: literal, select: s_type) 
+				returns (literal)
+        args: term_arr := term_arr$predict(1, term_seq$size(l.args))
+	for t: term in term_seq$elements(l.args) do
+	    term_arr$addh(args, normalize_subts(Th, tsys, t, select))
+            end
+	t: term := term$make_funct(l.root, term_seq$a2s(args))
+	return(literal$term2lit(t, l.sense))
+	end normalize_selected_subt
+    
+
+    % Requires: t \in subterms(t) /\ t.sort ~= Bool /\ select(t) => t \in Th.T
+    % Ensures:  result can be derived from t by normalizing (wrt R(Th)) all
+    %           subterms s of t such that select(st) is true
+    
+    normalize_subts = proc (Th: cvt, tsys: theory_system, t: term, 
+			    select: s_type)
+			returns(term)
+	if select(tsys, t) then return(egraph$get_canonical(Th.g, t)) end
+	   except when none: return(t) end %temporary: if t is bool
+	%it is not in egraph
+	args: term_arr := term_arr$[]
+	same: bool := true
+	for t1: term in term_seq$elements(t.args) do
+	    t2: term := normalize_subts(up(Th), tsys, t1, select)
+	    if t2 ~= t1 then same := false end
+	    term_arr$addh(args, t2)
+	    end
+	if same then return(t) end
+	return(term$make_funct_without_checking(t.root, term_seq$a2s(args)))
+	end normalize_subts
+
+    
+    % Modifies: Th
+    % Effects:  Th' = save(Th^)
+    
+    save = proc (Th: cvt)
+	egraph$save(Th.g)
+	lit_set$save(Th.neq)
+	end save
+    
+    
+    % Modifies: Th
+    % Effects:  Th' = undo(Th^)
+    % Signals:  empty if there is nothing to undo
+
+    undo = proc (Th: cvt) signals (empty)
+	egraph$undo(Th.g) resignal empty
+	lit_set$undo(Th.neq) resignal empty
+	end undo
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end TheoryE

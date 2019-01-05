@@ -1,0 +1,686 @@
+#extend
+
+% A "suggestions" is a set of alternatives for extending the registry.  Each
+% alternative is a set of individual extensions to the registry.
+
+suggestions = cluster is new, make_prec, make_stat, make_single, concat, merge,
+			 trim, already_satisfied, elements, size, fetch,
+			 empty, get_single_sugs, simplify, print, unparse, 
+			 equal, similar, copy
+
+    % The rep is a list of alternatives, each of which is an array of "single
+    % suggestions", or individual extensions to the registry.
+    
+    rep = list[ss_arr]
+    
+
+    % Returns the empty set of alternatives.
+
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+
+
+    % Returns a single alternative, which is a single precedence suggestion.
+
+    make_prec = proc (op1: operator, val: sym, op2: operator) returns (cvt)
+	ps: prec_sug := prec_sug${gt: op1, val: val, lt: op2}
+	return(rep$[ss_arr$[single_suggest$make_prec(ps)]])
+	end make_prec
+
+
+    % Returns a single alternative, which is a single status suggestion.
+
+    make_stat = proc (op: operator, stat: status) returns (cvt)
+	ss: stat_sug := stat_sug${op: op, stat: stat}
+	return(rep$[ss_arr$[single_suggest$make_stat(ss)]])
+	end make_stat
+
+
+    % Returns a single alternative consisting of "ssa".
+    
+    make_single = proc (ssa: ss_arr) returns (cvt)
+	return(rep$[ssa])
+	end make_single
+
+
+    % Returns a "suggestions" formed by "concatenating" "s1" and "s2".  Returns
+    % a copy of "s2" if "s1" is empty.  The "concatenation" of two sets of
+    % individual suggestions is simply their union, unless the union is
+    % inconsistent, in which case it is nothing.  The concatenation of two sets
+    % "s1" and "s2" of alternatives is formed by concatenating each of the
+    % pairs in their cartesian product.
+
+    concat = proc (s1, s2: cvt) returns (cvt)
+	if ord_dbg then 
+	   _dump_msg("enter concat")
+	   _dump_sugs("s1", up(s1))
+	   _dump_sugs("s2", up(s2))
+	   if rep$empty(s1) then _dump_msg("leave concat with copy of s2") end
+	   end
+	if rep$empty(s1) then return(rep$copy(s2)) end
+	new_sugs: rep := rep$[]
+	for ssa1: ss_arr in rep$each(s1) do
+	    for ssa2: ss_arr in rep$each(s2) do
+		ssa3: ss_arr := ss_arr_concat(ssa1, ssa2)
+		   except when inconsistent: continue end
+		quicksort[single_suggest](ssa3, ss_arr$low(ssa3),
+					  ss_arr$size(ssa3),
+					  single_suggest_less)
+		rep$addh(new_sugs, ssa3)
+		end
+	    end
+	if ord_dbg then 
+	   _dump_msg("leave concat")
+	   _dump_sugs("new sugs", up(new_sugs))
+	   end
+	return(new_sugs)
+	end concat
+
+
+    % Returns the "concatenation" of two sets "ssa1" and "ssa2" of individual
+    % suggestions.
+
+    ss_arr_concat = proc (ssa1, ssa2: ss_arr) returns (ss_arr)
+		      signals (inconsistent)
+	new_sugs: ss_arr := ss_arr$copy1(ssa1)
+	for sug2: single_suggest in ss_arr$elements(ssa2) do
+	    for i1: int in ss_arr$indexes(ssa1) do
+		compare_single_suggest(sug2, ssa1[i1])
+		   resignal inconsistent
+		   except when imply_eq (op1, op2: operator):
+			       ps: prec_sug :=
+				   prec_sug${gt: op1, val: eq_sym, lt: op2}
+			       new_sugs[i1] := single_suggest$make_prec(ps)
+			  when incomparable:	continue
+			  when less_general:
+			  when more_general:    new_sugs[i1] := sug2
+			  when same:            
+			  end
+		exit done
+		end except when done: continue end
+	    ss_arr$addh(new_sugs, sug2)
+	    end
+	return(new_sugs)
+	end ss_arr_concat
+
+
+    % Modifies "s1" by adding the alternatives in "s2" to it and retaining the
+    % the most general elements of the union.
+
+    merge = proc (s1, s2: cvt)
+	if ord_dbg then 
+	   _dump_msg("enter merge")
+	   _dump_sugs("s1", up(s1))
+	   _dump_sugs("s2", up(s2))
+	   end
+	for ssa2: ss_arr in rep$each(s2) do
+	    ssa1: ss_arr := rep$first(s1)
+	       except when empty: rep$addh(s1, ssa2)
+			          continue
+		      end
+	    while true do
+		begin
+		    ss_arr_meld(ssa1, ssa2)
+		    ssa11: ss_arr := rep$first(s1)
+		    while true do
+			if ssa1 ~= ssa11 cand ss_arr_more_general(ssa1, ssa11)
+			   then rep$delete(s1)
+				ssa11 := rep$current(s1)
+			        % QUERY: Can this happen more than once?
+			   else ssa11 := rep$next(s1)
+			   end
+			end except when end_of_list: end
+		    exit dont_add
+		    end except when cant_meld: end
+		if ss_arr_more_general(ssa1, ssa2) then exit dont_add end
+		if ss_arr_more_general(ssa2, ssa1)
+		   then rep$delete(s1)
+			ssa1 := rep$current(s1)
+		   else ssa1 := rep$next(s1)
+		   end
+		end except when dont_add: continue
+			   when end_of_list:
+			   end
+	    rep$addh(s1, ssa2)
+	    end
+	if ord_dbg then 
+	   _dump_msg("leave merge")
+	   _dump_sugs("s1", up(s1))
+	   end
+	end merge
+
+
+    % Modifies "ssa1" by melding "ssa2" with it.  Melding is successful if
+    % "ssa1" and "ssa2" are the same except for one individual precedence
+    % suggestion in each, one suggesting "op1 > op2" and the other "op1 = op2",
+    % which is melded to "op1 >= op2" in "ssa1".  Signals "cant_meld" if this
+    % can't be done.
+
+    ss_arr_meld = proc (ssa1, ssa2: ss_arr) signals (cant_meld)
+	if ss_arr$size(ssa1) ~= ss_arr$size(ssa2) then signal cant_meld end
+	diff_already: bool := false
+	diff_at: int
+	for i: int in ss_arr$indexes(ssa1) do
+	    if ssa1[i] = ssa2[i] then continue end
+	    if diff_already then signal cant_meld end
+	    diff_already := true
+	    diff_at := i
+	    end
+	if ~diff_already then return end
+
+        gt_psug, eq_psug: prec_sug
+	tagcase ssa1[diff_at]
+	   tag prec (ps1: prec_sug):
+	       tagcase ssa2[diff_at]
+		  tag prec (ps2: prec_sug):
+		      if sym$is_gt(ps1.val) cand sym$is_eq(ps2.val) then
+			 gt_psug, eq_psug := ps1, ps2
+		       elseif sym$is_gt(ps2.val) cand sym$is_eq(ps1.val) then
+			 gt_psug, eq_psug := ps2, ps1
+		       else signal cant_meld
+		       end
+		  tag stat: signal cant_meld
+		  end
+	   tag stat: signal cant_meld
+	   end
+	if ~((gt_psug.gt = eq_psug.gt) cand (gt_psug.lt = eq_psug.lt)
+	       cor
+	     (gt_psug.gt = eq_psug.lt) cand (gt_psug.lt = eq_psug.gt))
+	   then signal cant_meld
+	   end
+        ps: prec_sug := prec_sug${gt: gt_psug.gt, 
+				  val: gt_eq_sym,
+				  lt: gt_psug.lt}
+	ssa1[diff_at] := single_suggest$make_prec(ps)
+	end ss_arr_meld
+
+
+    % Returns "true" iff "ssa1" is more general than "ssa2".  Assumes that both
+    % arguments have been sorted before the call.
+
+    ss_arr_more_general = proc (ssa1, ssa2: ss_arr) returns (bool)
+	if ss_arr$size(ssa1) > ss_arr$size(ssa2) then return(false) end
+	i1: int := 1
+	for ssug2: single_suggest in ss_arr$elements(ssa2) do
+	    compare_single_suggest(ssa1[i1], ssug2)
+	       except when imply_eq (op1, op2: operator): return(false)
+		      when incomparable:    
+		      when inconsistent:    return(false)
+		      when less_general:    return(false)
+		      when more_general:    i1 := i1 + 1
+		      when same:	    i1 := i1 + 1
+		      end
+	    end except when bounds: end
+	return(i1 > ss_arr$size(ssa1))
+	end ss_arr_more_general
+
+
+    % Removes any suggestions from "s1" that are inconsistent when applied to
+    % "reg".
+
+    trim = proc (s1: cvt, reg: registry) returns (cvt)
+	s: rep := rep$[]
+	merge(up(s), up(s1))
+	new_sugs: rep := rep$[]
+	ssa: ss_arr := rep$first(s)
+	   except when empty: return(new_sugs) end
+	deleted: bool_arr := bool_arr$fill(1, rep$size(s), false)
+	nssa: int := 0
+	while true do
+	    nssa := nssa + 1
+	    ticket: int := registry$push(reg)
+	    ssa2: ss_arr := ss_arr$predict(1, ss_arr$size(ssa))
+	    begin
+		for ssug: single_suggest in ss_arr$elements(ssa) do
+		    if new_suggestion(reg, ssug) then
+		       ss_arr$addh(ssa2, ssug)
+		       end
+		    end
+		% Check whether some other suggestion set is more general
+		nssa1: int := 0
+		for ssa1: ss_arr in rep$each(s) do
+		    nssa1 := nssa1 + 1
+		    if ssa = ssa1 cor deleted[nssa1] then continue end
+		    if satisfied_in(ssa1, reg) then exit less_general end
+		    end
+		rep$addh(new_sugs, ssa2)
+		end except when less_general, inconsistent:
+				deleted[nssa] := true
+			   end
+	    registry$pop(reg, ticket)
+	    ssa := rep$next(s)
+	    end except when end_of_list: end
+	return(new_sugs)
+	end trim
+    
+
+    % (Internal procedure) If "ssug" is not implied by "reg", adds it to "reg"
+    % and returns "true".  Returns "false" if it is implied.  Signals
+    % "inconsistent", and does not modify "reg" if this would make "reg"
+    % inconsistent.
+    
+    new_suggestion = proc (reg: registry, ssug: single_suggest)
+		       returns(bool)
+		       signals (inconsistent)
+	tagcase ssug
+	   tag prec (ps: prec_sug):
+	       tagcase registry$compare(reg, ps.gt, ps.lt)
+		  tag gt:
+		      tagcase ps.val
+			 tag eq:        signal inconsistent
+			 tag gt, gt_eq: return(false)
+			 end
+		  tag eq:
+		      tagcase ps.val
+			 tag eq, gt_eq: return(false)
+			 tag gt:        signal inconsistent
+			 end
+		  tag lt:               signal inconsistent
+		  tag lt_eq:
+		      tagcase ps.val
+			 tag eq, gt_eq: registry$make_equal(reg, ps.gt, ps.lt)
+			 tag gt:        signal inconsistent
+			 end
+		  tag undefined, gt_eq:
+		      tagcase ps.val
+			 tag gt:        registry$make_higher(reg, ps.gt, ps.lt)
+			 tag eq:        registry$make_equal(reg, ps.gt, ps.lt)
+			 tag gt_eq:     registry$make_higher_or_equal
+					    (reg, ps.gt, ps.lt)
+			 end except when redundant: return(false) end
+		  end
+	   tag stat (ss: stat_sug): registry$set_status(reg, ss.op, ss.stat)
+	   end except when multi_and_lex, status_defined: signal inconsistent
+		      when ordered (*): signal inconsistent
+		      end
+	return(true)
+	end new_suggestion
+
+
+    % (Internal procedure) Returns "true" iff all members of "ssa" are already
+    % true in the registry "r".
+
+    satisfied_in = proc (ssa: ss_arr, r: registry) returns (bool)
+	for ssug: single_suggest in ss_arr$elements(ssa) do
+	    tagcase ssug
+	       tag prec (ps: prec_sug):
+		   xc: xcomparison := registry$compare(r, ps.gt, ps.lt)
+		   tagcase ps.val
+		      tag gt:    if ~xcomparison$is_gt(xc) then exit bad end
+		      tag gt_eq: if ~xcomparison$is_gt(xc)
+				      cand ~xcomparison$is_eq(xc)
+				      cand ~xcomparison$is_gt_eq(xc) then
+				    exit bad
+				    end
+		      tag eq:    if ~xcomparison$is_eq(xc) then exit bad end
+		      end
+	       tag stat (ss: stat_sug):
+		   if ss.stat ~= registry$get_status(r, ss.op) then exit bad end
+	       end
+	    end except when bad: return(false) end
+	return(true)
+	end satisfied_in
+
+
+    % Returns "true" iff some member of "sugs" is already true in the registry
+    % "r".
+
+    already_satisfied = proc (sugs: suggestions, r: registry) returns (bool)
+	for ssa: ss_arr in suggestions$elements(sugs) do
+	    if satisfied_in(ssa, r) then return(true) end
+	    end
+	return(false)
+	end already_satisfied
+
+
+    % Yields all the suggestion sets in "s" as ss_arr's.
+
+    elements = iter (s: cvt) yields (ss_arr)
+	for ssa: ss_arr in rep$each(s) do yield(ssa) end
+	end elements
+
+
+    % Returns the number of suggestion sets in "s".    
+
+    size = proc (s: cvt) returns (int)
+	return(rep$size(s))
+	end size
+
+
+    % Returns the "idx"th suggestion set that would be yielded by "elements(s)"
+    % as an ss_arr.
+
+    fetch = proc (s: cvt, idx: int) returns (ss_arr)
+	return(s[idx])
+	end fetch
+    
+    
+    % Returns "true" iff "s" is empty.
+
+    empty = proc (s: cvt) returns (bool)
+	return(rep$empty(s))
+	end empty
+
+
+    % Returns the union of the sets of single suggestions in "s".
+    
+    get_single_sugs = proc (s: suggestions) returns (ss_set)
+	result: ss_set := ss_set$[]
+	for ssa: ss_arr in suggestions$elements(s) do
+	    ss_set$merge(result, ss_set$arr2s(ssa))
+	    end
+	return(result)
+	end get_single_sugs
+
+    
+    % Returns the result of discharging the set "ss" of single suggestions in 
+    % each set of single suggestions in "s".  Signals
+    % (a) "same" if "s" is unchanged
+    % (b) "satisfied" if some set of single suggestions in "s" is completely
+    %     discharged by "ss"
+    % (c) "inconsistent" if "ss" is inconsistent with every set of single
+    %     suggestions in "s".  Signals
+    
+    simplify = proc (sugs: cvt, ss: ss_set) returns (cvt)
+		 signals (inconsistent, same, satisfied)
+	same: bool := true
+	i: int := 1
+	while true do
+	    ssa: ss_arr := sugs[i]
+	    for s: single_suggest in ss_set$elements(ss) do
+		ssa := simplify_ssa(ssa, s)
+		   except when same: continue end
+		if same then
+		   sugs := rep$copy(sugs)
+		   same := false
+		   end
+		end resignal satisfied
+	       except when inconsistent:
+			   if same then
+			      sugs := rep$copy(sugs)
+			      same := false
+			      end
+			   rep$delete_at(sugs, i)
+			   continue
+		      end
+            if ~same then sugs[i] := ssa end
+            i := i + 1
+	    end except when bounds: end
+	if same then signal same
+	 elseif rep$empty(sugs) then signal satisfied
+	 else return(sugs)
+	 end
+	end simplify
+    
+
+    % Returns the result of discharging the single suggestion "ss" in the
+    % array "ssa" of single suggestions.  Signals as for "simplify"
+
+    simplify_ssa = proc (ssa: ss_arr, ss: single_suggest) returns (ss_arr) 
+		     signals (inconsistent, same, satisfied)
+        same: bool := true
+	i: int := ss_arr$low(ssa)
+	while true do
+	    ss1: single_suggest := ssa[i]
+	    compare_single_suggest(ss, ss1)
+	       resignal inconsistent
+	       except when imply_eq (op1, op2: operator):
+		           if same then 
+			      ssa := ss_arr$copy(ssa)
+			      same := false
+			      end
+			   ps: prec_sug :=
+			       prec_sug${gt: op1, val: eq_sym, lt: op2}
+			   ssa[i] := single_suggest$make_prec(ps)
+		      when incomparable, more_general:
+		      when same, less_general:	
+		           % Delete ssa[i] from ssa, preserving order of
+			   % remaining elements (for single_suggest_less)
+		           if same then 
+			      ssa := ss_arr$copy(ssa)
+			      same := false
+			      end
+			   for j: int in int$from_to(i, ss_arr$high(ssa)-1) do
+			       ssa[j] := ssa[j+1]
+			       end
+			   ss_arr$remh(ssa)
+			   continue
+		      end
+	    i := i + 1
+	    end except when bounds: end
+	if same then signal same
+	 elseif ss_arr$empty(ssa) then signal satisfied
+	 else return(ssa)
+	 end
+	end simplify_ssa
+    
+
+    % Prints the suggestions in "s".
+
+    print = proc (p: printer, stab: symtab, arrow: string, s: suggestions,
+		  last_number: int)
+	j: int := last_number
+	for ssa: ss_arr in suggestions$elements(s) do
+	    j := j + 1
+	    printer$start_block(p)
+	    printer$puts(p, padr(int$unparse(j) || ".", 4))
+	    printer$puts(p, "   " || arrow || "       ")
+	    p.indent := 0
+	    print_ss_arr(p, ssa, stab)
+	    printer$finish_block(p)
+	    printer$newline(p)
+	    end
+	end print
+
+
+    % Dumps the suggestions in "s" on the primary output stream for debugging.
+
+    dump = proc (s: suggestions)
+	p: printer := tracer$get_printer()
+	stab: symtab := tracer$get_symtab()
+	j: int := 0
+	for ssa: ss_arr in suggestions$elements(s) do
+	    j := j + 1
+	    printer$start_block(p)
+	    printer$puts(p, padr(int$unparse(j) || ".", 4))
+	    p.indent := 0
+	    print_ss_arr(p, ssa, stab)
+	    printer$finish_block(p)
+	    printer$newline(p)
+	    end
+	end dump
+
+
+    % Returns a string describing "s".  This string will have one suggestion
+    % set per line.
+
+    unparse = proc (s: cvt, stab: symtab) returns (string)
+	return("suggestions$unparse not implemented")   % ENHANCE
+	end unparse
+
+
+    % Returns "true" iff "s1" and "s2" are the same object.
+
+    equal = proc (s1, s2: cvt) returns (bool)
+	return(s1 = s2)
+	end equal
+
+
+    % Returns "true" iff "s1" and "s2" represent the same suggestions.
+
+    similar = proc (s1, s2: cvt) returns (bool)
+	for ssa: ss_arr in rep$elements(s1) do
+	    quicksort[single_suggest](ssa, ss_arr$low(ssa),
+				      ss_arr$size(ssa), single_suggest_less)
+	    end
+	for ssa: ss_arr in rep$elements(s2) do
+	    quicksort[single_suggest](ssa, ss_arr$low(ssa),
+				      ss_arr$size(ssa), single_suggest_less)
+	    end
+	return(same_elements_seq[ss_arr](rep$l2s(s1), rep$l2s(s2),
+					 ss_arr$similar))
+	end similar
+
+
+    % Returns a copy of "s".
+
+    copy = proc (s: cvt) returns (cvt)
+	return(rep$copy(s))
+	end copy
+
+
+    % (Internal procedures for debugging)
+    
+    _dump_sugs = proc (msg1: string, sug1: suggestions)
+	own p: printer := tracer$get_printer()
+	own stab: symtab := tracer$get_symtab()
+	suggestions$print(p, stab, msg1, sug1, 0)
+	end _dump_sugs
+
+    _dump_msg = proc (msg: string)
+	own p: printer := tracer$get_printer()
+	printer$text(p, msg)
+	printer$text(p, "\n")
+	end _dump_msg
+
+
+    end suggestions
+
+
+% Prettyprints the suggestions in "ssa".
+
+print_ss_arr = proc (p: printer, ssa: ss_arr, stab: symtab)
+    printer$start_block(p)
+    for ssug: single_suggest in ss_arr$elements(ssa) do
+	print_single_suggest(p, ssug, stab)
+	printer$filled_blanks(p, 5)
+	end
+    printer$finish_block(p)
+    end print_ss_arr
+
+
+dump_ss_arr = proc (ssa: ss_arr)
+    print_ss_arr(tracer$get_printer(), ssa, tracer$get_symtab())
+    printer$newline(tracer$get_printer())
+    end dump_ss_arr
+
+
+dump_ss_set = proc (sss: ss_set)
+    dump_ss_arr(ss_set$s2arr(sss))
+    end dump_ss_set
+
+
+% Prettyprints the single suggestion "ssug".
+
+print_single_suggest = proc (p: printer, ssug: single_suggest, stab: symtab) 
+    upm: unparse_mode := stab.unparse_mode
+    if upm = unqualified_mode then stab.unparse_mode := unambiguous_mode end
+    printer$start_block(p)
+    p.indent := 2
+    tagcase ssug
+       tag prec (ps: prec_sug):
+           operator$print(p, ps.gt, stab)
+	   tagcase ps.val
+	      tag gt:     printer$text(p, " > ")
+	      tag gt_eq:  printer$text(p, " >= ")
+	      tag eq:     printer$text(p, " = ")
+	      end
+           operator$print(p, ps.lt, stab)
+       tag stat (ss: stat_sug):
+           operator$print(p, ss.op, stab)
+	   tagcase ss.stat
+	      tag left_to_right:  printer$puts(p, "(L)")
+	      tag right_to_left:  printer$puts(p, "(R)")
+	      tag multiset:       printer$puts(p, "(M)")
+	      others:
+	      end
+       end
+    printer$finish_block(p)
+    stab.unparse_mode := upm
+    end print_single_suggest
+
+
+% This procedure provides a way of sorting ss_arr's.
+
+single_suggest_less = proc (s1, s2: single_suggest) returns (bool)
+    tagcase s1
+       tag prec (ps1: prec_sug):
+	   tagcase s2
+	      tag prec (ps2: prec_sug):
+		  op11: operator := ps1.gt
+		  op12: operator := ps1.lt
+		  if op12 < op11 then op11, op12 := op12, op11 end
+		  op21: operator := ps2.gt
+		  op22: operator := ps2.lt
+		  if op22 < op21 then op21, op22 := op22, op21 end
+		  if op11 = op21
+		     then return(op12 < op22)
+		     else return(op11 < op21)
+		     end
+	      tag stat: return(true)
+	      end
+       tag stat (ss1: stat_sug):
+	   tagcase s2
+	      tag prec:		        return(false)
+	      tag stat (ss2: stat_sug): return(ss1.op < ss2.op)
+	      end
+       end
+    end single_suggest_less
+
+
+% Signals the result of comparing "s1" with "s2".
+%    \   s2    	op1 = op2	op1 > op2	op1 >= op2	op.status
+% s1  \
+% op1 = op2	same		inconsistent	less general	incomparable
+% op1 > op2	inconsistent	same		less general	incomparable
+% op1 >= op2	more general	more general	same		incomparable
+% op2 = op1	same		inconsistent	less general	incomparable
+% op2 > op1	inconsistent	inconsistent	inconsistent	incomparable
+% op2 >= op1	more general	inconsistent	imply_eq	incomparable
+% op.status	incomparable	incomparable	incomparable	same
+% op.status1	incomparable	incomparable	incomparable	inconsistent
+% op1.status	incomparable	incomparable	incomparable	incomparable
+
+
+compare_single_suggest = proc (s1, s2: single_suggest)
+			   signals (imply_eq(operator, operator),
+				    incomparable, inconsistent,
+				    less_general, more_general, same)
+    tagcase s1
+       tag prec (ps1: prec_sug):
+	   ps2: prec_sug := single_suggest$value_prec(s2)
+	   sym1: sym := ps1.val
+	   sym2: sym := ps2.val
+	   if ps1.gt = ps2.gt cand ps1.lt = ps2.lt then
+	      if sym1 = sym2 then             signal same
+	       elseif sym$is_gt_eq(sym1) then signal more_general
+	       elseif sym$is_gt_eq(sym2) then signal less_general
+	       else                           signal inconsistent
+	       end
+	    elseif ps1.gt = ps2.lt cand ps1.lt = ps2.gt then
+ 	      tagcase sym1
+		 tag gt:                      signal inconsistent
+		 tag gt_eq: tagcase sym2
+			       tag gt:        signal inconsistent
+			       tag gt_eq:     signal imply_eq(ps1.lt, ps1.gt)
+			       tag eq:        signal more_general
+			       end
+		 tag eq:    tagcase sym2
+			       tag gt:        signal inconsistent
+			       tag gt_eq:     signal less_general
+			       tag eq:        signal same
+			       end
+		 end
+	    end
+       tag stat (ss1: stat_sug):
+           ss2: stat_sug := single_suggest$value_stat(s2)
+	   if ss1.op ~= ss2.op then           signal incomparable
+	    elseif ss1.stat = ss2.stat then   signal same
+	    else                              signal inconsistent
+	    end
+       end except when wrong_tag: end
+    signal incomparable
+    end compare_single_suggest
+
+	

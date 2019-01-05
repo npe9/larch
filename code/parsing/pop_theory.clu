@@ -1,0 +1,71 @@
+#extend
+
+% This cluster parses and unparses external representations for operator
+% theories using the following syntax:
+
+%    op-theory ::= ("ac" | "commutative") operator
+
+% The "poperator" cluster defines the nonterminal "operator".
+
+
+pop_theory = cluster is print, read
+    
+    rep = null
+    
+    
+    % Prettyprints "ot" on "p".  Qualifies "op" according to the conventions
+    % of "poperator$print".
+    
+    print = proc (p: printer, ot: op_theory, stab: symtab)
+	printer$start_block(p)
+	p.indent := 2
+	printer$puts(p, ot.theory_name)
+	printer$filled_blanks(p, 1)
+	if op_theory$is_free(ot)
+	   then printed: bool := false
+		for op: operator in op_set$elements(ot.ops) do
+		    if printed then printer$text(p, ", ") end
+		    operator$print(p, op, stab)
+		    printed := true
+		    end
+	   else operator$print(p, ot.op, stab)
+	   end
+	printer$finish_block(p)
+	end print
+
+
+    % Scans and returns an operator theory for an operator in "stab" from
+    % "scan".  Writes a message to "scan", and signals "error", if there is a
+    % syntax error, if the operator is ambiguous, if it is not in "scan", or if
+    % it has an inappropriate signature.
+    
+    % ENHANCE: disambiguate operator by looking at its signature
+    
+    read = proc (scan: scanner, stab: symtab) returns (op_theory) 
+	     signals (error)
+	th_name: string := scan.nextToken.text
+	if th_name ~= "ac" cand th_name ~= "commutative" then
+	   scanner$error(scan, "expecting an operator theory")
+	   signal error
+	   end
+	scanner$get(scan)
+	loc: locator := scan.nextToken.loc
+	op: operator := operator$read(scan, stab)
+	   resignal error
+	msg: string
+	if th_name = "ac" then 
+	   return(op_theory$make_ac(op))
+	 elseif th_name = "commutative" then
+	   return(op_theory$make_commutative(op))
+	 else fail("op_theory$read")
+	 end except when wrong_arity: msg := "be binary"
+		    when bad_domain:  msg := "have equal domain sorts"
+		    when bad_range:   msg := "have same range, domain sorts"
+		    end
+	if msg ~= "" then 
+	   scanner$error_at(scan, loc, "operator must " || msg)
+	   signal error
+	   end
+	end read
+
+    end pop_theory

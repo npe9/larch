@@ -1,0 +1,122 @@
+#extend
+
+% A "signature" (for an operator) contains a range sort and a sequence of
+% domain sorts.  The "arity" of a signature is the number of domain sorts.
+    
+
+signature = cluster is create, get_arity, get_dom, get_rng, read, print,
+		       sig2s, unparse, equal, similar, copy, _gcd, decode,
+		       encode
+
+    rep = struct[dom: sort_seq, rng: sort]
+    
+    
+    % Returns the signature with domain "a.dom" and range "a.rng".  The
+    % "#extend" mode of the CLU compiler provides sugared invocations of the
+    % form "signature${dom: sort_seq, rng: sort}".
+
+    create = proc (a: rep) returns (cvt)
+	return(rep${dom: a.dom, rng: a.rng})
+	end create
+
+
+    % Returns the arity of "sig".
+    
+    get_arity = proc (sig: cvt) returns (int)
+	return(sort_seq$size(sig.dom))
+	end get_arity
+    
+    
+    % Returns the domain of "sig".
+
+    get_dom = proc (sig: cvt) returns (sort_seq)
+	return(sig.dom)
+	end get_dom
+    
+    
+    % Returns the range of "sig".
+
+    get_rng = proc (sig: cvt) returns (sort)
+	return(sig.rng)
+	end get_rng
+    
+
+    % Reads and returns a signature from "scan".  Writes a message to "scan",
+    % and signals "error", if "scan" does not start with the representation of
+    % a signature constructed from sorts in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (signature) 
+	    signals (error)
+	return(psignature$read(scan, stab))
+	   resignal error
+	end read
+    
+    
+    % Prettyprints "sig" on "p".
+    
+    print = proc (p: printer, sig: signature)
+	psignature$print(p, sig)
+	end print
+
+
+    % Returns a string representation for "sig".
+    
+    sig2s = proc (sig: signature) returns (string)
+	s: string := ""
+	printed: bool := false
+	for so: sort in sort_seq$elements(sig.dom) do
+	    if printed then s := s || "," end
+	    s := s || sort$unparse(so)
+	    printed := true
+	    end
+	return(s || "->" || sort$unparse(sig.rng))
+	end sig2s
+
+    
+    % Returns a prettyprinted string representation for "sig".
+
+    unparse = proc (sig: signature) returns (string)
+	return(unparse_item[signature](sig))
+	end unparse
+    
+    
+    % Returns "true" if "sig1" and "sig2" represent the same signature.
+
+    equal = proc (sig1, sig2: cvt) returns (bool)
+	return(sig1.rng = sig2.rng cand sig1.dom = sig2.dom)
+	end equal
+
+    
+    % Returns "true" if "sig1" and "sig2" represent the same signature.  This
+    % procedure is identical to "signature$equal".
+
+    similar = proc (sig1, sig2: signature) returns (bool)
+	return(sig1 = sig2)
+	end similar
+    
+    
+    % Returns "sig", which is immutable.
+    
+    copy = proc (sig: cvt) returns (cvt)
+	return(sig)
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+	
+
+    end signature

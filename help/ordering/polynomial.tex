@@ -1,0 +1,71 @@
+\doc{Polynomial orderings}
+\ref{polynomial-ordering}
+\ref{polynomial-constraints}
+
+The polynomial ordering can be used to prove the termination of sets of 
+\llink{rewrite-rule}{rewrite rules} involving 
+\llink{operator-theory}{associative-commutative} operators.  Because it 
+requires considerable user input, it is generally used only to experiment with
+termination proofs of small sets of rewrite rules, not to orient large sets of
+equations into rewrite rules.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{polynomial-constraint} ::= \f{polynomials} \slink{../logic/operator}{operator} \s{polynomial}*[,]
+\sd{polynomial}            ::= \s{polynomial-term} ( \qf{+} \s{polynomial-term} )*
+\sd{polynomial-term}       ::= \s{polynomial-factor} ( \qf{*} \s{polynomial-factor} )*
+\sd{polynomial-factor}     ::= \s{polynomial-primary} [ \qf{^} \slink{../symbols/symbols}{number} ]
+\sd{polynomial-primary}    ::= \slink{../logic/variable}{variable} | \slink{../symbols/symbols}{number} | \qf{(} \s{polynomial} \qf{)}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+polynomials + x + y + 1, x + 2
+\end{verbatim}
+
+\head{2}{Usage}
+The \def{polynomial ordering} is based on user-supplied interpretations of
+operators by sequences of polynomials.  The ordering extends these
+interpretations to terms by interpreting a variable by a sequence of identity
+polynomials and a compound term by the interpretation of its principal operator
+applied to the interpretations of its arguments.  One term is less than another
+in the polynomial ordering if its interpretation is lexicographically less than
+that of the second term (one polynomial is less than another if its value is
+less than that of the other for all values of its variables).
+\p
+The command \fq{set ordering polynomial \v{n}} sets the current
+\setlink{ordering-method} to a polynomial ordering based on sequences of length
+\v{n}; the default value of \fq{n} is 1.
+\p
+The command \fq{register polynomial \v{op} \v{p1}, ..., \v{pn}} assigns the
+sequence \v{p1}, ..., \v{pn} of polynomials as the polynomial interpretation of
+the operator \v{op}.  If no polynomials are specified, LP prompts the user to
+enter them on the following lines.  The polynomials are entered like standard
+LP \llink{term}{terms}, using the binary operators \fq{+}, \fq{*}, \and fq{^}
+(for exponentiation), the variables in the prompt, and positive integer
+coefficients.  LP understands operator precedence for terms representing
+polynomials, so these terms need not be fully parenthesized..
+\p
+If the sequence of polynomials associated with an operator is longer than the
+length of the current polynomial ordering, the extra polynomials are ignored.
+If it is shorter, it is extended by replicating its last element.
+\p
+Each operator has a default interpretation.  Suggestions for assigning 
+polynomials:
+\begin{verbatim}
+(1) f nullary                           I[f]   = 2
+(2) f(x1,...,xn) -> t  [f not in t]     I[f]   = I[t] + 1
+(3) h(f(t1,...,tn)) ->                  I[h]   = a*(x^i) with i > 1
+       f(h(t1),...,h(tn))               I[f]   = x1 + ... + xn
+(4) f associative                       I.1[f] = (a*x*y) + x with a > 0
+    f(f(x,y),z) -> f(x,f(y,z))          I.2[f] = (a*(x^i)) + y with a, i > 0
+(5) f associative                       I.1[f] = (a*x*y) + y with a > 0
+    f(x,f(y,z)) -> f(f(x,y),z)          I.2[f] = x + (a*(y^i)) with a, i > 0
+(6) f associative-commutative           I[f]   = (a*x*y) + (b*(x+y)) + c
+                                                 with ac + b - b^2 = 0
+(7) f, g associative-commutative        I[f]   = a*x*y with a > 0
+    g distributive over f               I[g]   = x + y
+                                    or  I[f]     as in (6) with a > 0
+                                        I[g]   = x+y+d     with d = b/a
+(8) f should be rewritten to g          degree(I.1[f]) > degree(I.1[g])
+\end{verbatim}

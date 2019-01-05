@@ -1,0 +1,36 @@
+#extend
+
+% Processes the command "critical-pairs <rules1> with <rules2>".  Computes the
+% critical pair equations resulting from superposing the rewrite rules in the
+% first set with those in the second and adds them to the system.  Does not
+% recompute critical pairs that have already been computed.  Sorts rewrite
+% rules in both sets in ascending order based on the size of left hand side
+% before computing critical pairs.  Aborts the critical pair computation if a
+% critical pair, upon being ordered into a rewrite rule, completes the proof of
+% the current conjecture.
+
+% QUERY: Should trivial ones be checked for inconsistency, deduction rules?
+
+c_critical_pairs = proc (i: interactive) signals (error)
+    ce1, ce2: class_expression :=
+	query$two_classes(i.symtab, "rewrite rules", "with", "rewrite rules")
+       except when none:  return
+	      when error: aborted(i.p, "error in names")
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    names1, names2: name_set
+    begin
+	names1 := class_expression$full_eval(ce1, i.sys, i.symtab.classes)
+	names2 := class_expression$full_eval(ce2, i.sys, i.symtab.classes)
+	end except when undefined (cn: class_name):
+			aborted(i.p, "Undefined class name: "|| cn)
+		   end resignal error
+    system$critical_pairs(i.sys, names1, names2, i.symtab)
+       except when no_rr1: aborted(i.p, "no rewrite rules in first set")
+	      when no_rr2: aborted(i.p, "no rewrite rules in second set")
+	      end resignal error
+    prover$make_inferences(i, cp_task_mode)
+       except when interrupt, proved: end
+    end c_critical_pairs
+
+

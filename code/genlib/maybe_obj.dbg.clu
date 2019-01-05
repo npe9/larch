@@ -1,0 +1,105 @@
+% This is a debugging version of maybe_obj, which uses a oneof for the rep so
+% that the print routine supplied by the debugger will work.  It does not
+% economize on storage, as does the production version.
+
+% This data type is similar to "oneof[exists: t, none: null]", but it doesn't
+% require any additional storage.  However, its operations are not optimized by
+% the compiler.
+
+% CAVEAT: maybe_obj[t]$make(x) signals failure if the primitive type used to
+% represent "x" is identical to the bit pattern "maybe_none" (see below).  For
+% the primitive types record, struct, variant, oneof, array, sequence, and
+% string, this never happens.  For int and real, it can happen.
+
+
+maybe_obj = cluster [t: type] is none, make, exists, value, equal, similar,
+                                 get_value, copy, _gcd
+
+    rep = oneof[exists: t, none: null]
+
+    %maybe_none = -2147483648	% <integer value used to represent tag none,
+    %maybe_none = -2*(2**29)	%  usually the smallest integer.>
+    maybe_none = 0
+    
+
+    % -2147483648 = - 2 ** 31
+    % For Vax, use -2*(2**29), but check that this can't point into the heap.
+    % Alas, the PCLU compiler refuses to accept -2147483648
+
+    
+    % Returns the object with the NONE tag.
+
+    none = proc () returns (cvt)
+	return(rep$make_none(nil))
+	end none
+
+    
+    % Return a maybe with tag EXISTS and value "x".
+    
+    make = proc (x: t) returns (cvt)
+	if _cvt[t,int](x) = maybe_none then
+	   signal failure("Bad value for maybe_obj$make.")
+	   end
+	return(rep$make_exists(x))
+	end make
+
+    
+    % Returns "true" if "m" has tag EXISTS.
+
+    exists = proc (m: cvt) returns (bool)
+	return(rep$is_exists(m))
+	end exists
+
+    
+    % Returns the value of "m" if the tag is EXISTS.  Otherwise signals
+    % "wrong_tag".
+    
+    value = proc (m: cvt) returns (t) signals (wrong_tag)
+	return(rep$value_exists(m))
+	resignal wrong_tag
+	end value
+
+    
+    % A convenient synonym for "value".
+
+    get_value = proc (m: cvt) returns (t) signals (wrong_tag)
+	return(rep$value_exists(m))
+	resignal wrong_tag
+	end get_value
+
+
+    % Returns "true" if "m1" and "m2" have tag NONE or if both have tag EXISTS
+    % and their values are t$equal.
+
+    equal = proc (m1, m2: cvt) returns (bool)
+		where t has equal: proctype (t, t) returns (bool)
+	return(m1 = m2)
+	end equal
+
+    
+    % Returns "true" if "m1" and "m2" have tag NONE or if both have tag EXISTS
+    % and their values are t$similar.
+
+    similar = proc (m1, m2: cvt) returns (bool)
+		where t has similar: proctype (t, t) returns (bool)
+	return(rep$similar(m1, m2))
+	end similar
+
+    
+    % Returns "m" if it has tag NONE.  Otherwise returns a maybe with tag
+    % EXISTS and value t$copy(value(m)).
+
+    copy = proc (m: cvt) returns (cvt)
+		where t has copy: proctype (t) returns (t)
+        return(rep$copy(m))
+	end copy
+
+
+    % Necessary for "gc_dump".
+    
+    _gcd = proc (m: cvt, tab: gcd_tab) returns (int)
+		where t has _gcd: proctype (t, gcd_tab) returns (int)
+	return(rep$_gcd(m, tab))
+	end _gcd
+
+    end maybe_obj

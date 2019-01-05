@@ -1,0 +1,128 @@
+#extend
+
+% An "unknowns" is a set of unknowns.
+
+unknowns = cluster is new, single, add, get_elt, fetch, is_in, have_same_elt, 
+		      elements, copy, save, undo, _gcd, unparse
+    
+    rep = record[uns: un_arr, u_stack: int_arr]
+    
+    
+    % Returns a new, empty set of unknowns.
+    
+    new = proc () returns(cvt)
+	return(rep${uns: un_arr$[], u_stack: int_arr$[]})
+	end new
+    
+    
+    % Returns {u}.
+    
+    single = proc (u: unknown) returns (unknowns)
+	uns: unknowns := new()
+        add(uns, u)
+	return(uns)
+	end single
+    
+    
+    % Modifies uns
+    % Effects: uns.post = uns.pre U {u}
+    
+    add = proc (uns: cvt, u: unknown)
+	if ~is_in(up(uns), u) then un_arr$addh(uns.uns, u) end
+	end add
+    
+    
+    % Returns a nonfresh element of "uns", if one exists.  Otherwise returns
+    % an arbitrary element of "uns".  Signals "empty" if "uns" is empty.
+    
+    get_elt = proc (uns: cvt) returns (unknown) signals (empty)
+	if un_arr$empty(uns.uns) then signal empty end
+	for u: unknown in un_arr$elements(uns.uns) do
+	    if unknown$is_mapped(u) cor unknown$is_number(u) then return(u) end
+	    end
+	return(uns.uns[1])
+	end get_elt
+    
+
+    % Returns an element "u" of "uns" such that "t = map(u)".  Signals "none"
+    % if there is no such element.
+    
+    fetch = proc (uns: cvt, t: term) returns (unknown) signals (none)
+	begin
+	   r: rat := term2rat(t)
+	   for u: unknown in un_arr$elements(uns.uns) do
+	       if u.number = r then return(u) end
+		  except when not_number: end
+	       end
+	   signal none
+	   end except when not_number: end
+	for u: unknown in un_arr$elements(uns.uns) do
+	    if u.t = t then return(u) end 
+	     except when none, number (*): end
+            end				       
+	signal none
+	end fetch
+    
+
+    % Returns true if "u" is in "uns".
+    
+    is_in = proc (uns: cvt, u: unknown) returns (bool)
+	for u1: unknown in un_arr$elements(uns.uns) do
+	    if u1 = u then return(true) end
+	    end
+	return(false)
+	end is_in
+    
+    
+    % Returns "true" if the intersection of "uns1" and "uns2" is nonempty.
+    
+    have_same_elt = proc (uns1, uns2: cvt) returns(bool)
+	for u1: unknown in un_arr$elements(uns1.uns) do
+	    for u2: unknown in un_arr$elements(uns2.uns) do
+		if u1 = u2 then return(true) end
+		end
+	    end
+	return(false)
+	end have_same_elt
+    
+    
+    % Yields the elements of "uns".
+    
+    elements = iter (uns: cvt) yields(unknown)
+	for u: unknown in un_arr$elements(uns.uns) do yield(u) end
+	end elements
+    
+    
+    
+    copy = proc (uns: cvt) returns (cvt)
+	return(rep${uns: un_arr$copy1(uns.uns), 
+	            u_stack: int_arr$copy1(uns.u_stack)})
+	end copy
+    
+    
+    unparse = proc (uns: cvt) returns(string)
+	s: string := "{"
+	for u: unknown in un_arr$elements(uns.uns) do
+	    s := s || ", " || unknown$unparse(u)
+	    end
+	return(s || "}")
+	end unparse
+    
+    
+    save = proc (uns: cvt) 
+	int_arr$addh(uns.u_stack, un_arr$size(uns.uns))
+	end save
+    
+    
+    undo = proc (uns: cvt) signals (empty)
+	un_arr$trim(uns.uns, 1, int_arr$remh(uns.u_stack))
+	   except when bounds: signal empty end
+	end undo
+        
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end unknowns

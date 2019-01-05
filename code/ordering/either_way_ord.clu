@@ -1,0 +1,52 @@
+#extend
+
+% The procedures "either_way_quiet", "either_way_user", and "either_way_auto"
+% in this file comprise the "either_way_ordering", which orders equations from
+% left to right or, failing that, from right to left.
+
+
+% Orders "eq" from left to right if the result is a valid rewrite rule whose
+% left side is neither "true" nor "false".  Otherwise order "eq" from right to
+% left, if that is possible.
+
+either_way_quiet = proc (reg: registry, eq: equation) returns (rewrite_rule)
+		     signals (cannot_orient)
+    return(equation$e2cr(eq))
+       except when impossible: end
+    return(equation$e2cr_reversed(eq))
+       except when impossible: end
+    return(equation$e2r(eq))
+       except when wrong_tag, invalid_rule: end
+    return(equation$e2r_reversed(eq))
+       except when invalid_rule, user_prevents (*): signal cannot_orient end
+    end either_way_quiet
+
+
+% Attempts to order "eq" using "either_way_quiet".  If this fails, presents an
+% appropriate list of choices for ordering "eq" to the user (see the
+% "ordering_choice" procedure).
+
+either_way_user = proc (p: printer, reg: registry, stab: symtab, eq: equation)
+		    returns (order_action)
+    own sug: suggestions := suggestions$[]
+    tracer$present_equation(eq)
+    begin
+	rr: rewrite_rule := either_way_quiet(reg, eq)
+	printer$text(p, "\nOrdered automatically.\n")
+	return(order_action$make_auto(rr))
+	end except when cannot_orient: end
+    return(ordering_choice[suggestions]
+	       (eq, reg, p, stab, sug, sug, false, false, dsmpos_choice))
+    end either_way_user
+
+
+% If "choice" is greater than one, signals "cannot_orient" (because there's no
+% point in backing up).  Otherwise, attempts to order "eq" using
+% "either_way_quiet".
+
+either_way_auto = proc (reg: registry, eq: equation, choice: int)
+		    returns (rewrite_rule) signals (cannot_orient)
+    if choice > 1 then signal cannot_orient end
+    return(either_way_quiet(reg, eq))
+       resignal cannot_orient
+    end either_way_auto

@@ -1,0 +1,731 @@
+#extend
+
+% A dsmpos_flow is used to determine whether the multiset of arguments for a
+% term t1 of the form
+%     t11 op t12 op ... op t1n
+% is ac-dsmpos greater than the multiset of arguments for a term t2 of the form
+%     t21 op t22 op ... op t2m
+% for some ac operator op.  The ac-dsmpos multiset comparision is defined as 
+% follows.  
+
+% First, we define a partial function "comp" on pairs of sets of terms by 
+% recursion:
+%   comp(empty, empty)                   = eq
+%   comp(insert(T1, t1), empty)          = gt
+%   comp(insert(T1, t1), insert(T2, t2)) = 
+%      / comp(T1, T2)              if dsmpos(t1, t2) = eq
+%     <  comp(insert(T1, t1), T2)  if Unequal(t2), Bigger(t1, t2), and Good(t1)
+%      \ comp(T1, T2)              if Difficult(t2) and Bigger(t1, t2)
+% where
+%   Unequal(t2)    <=> dsmpos(t1, t2) ~= eq for any t1' in T1
+%   Bigger(t1, t2) <=> dsmpos(t1, t2) = gt 
+%   Good(t1)       <=> precedence(t1.root, op) = gt
+%   Difficult(t2)  <=> Unequal(t2) and for any t1' in T1, 
+%                      either ~Good(t1') or ~Bigger(t1', t2)
+
+% Second, we define an operation "flat" mapping terms to multisets of terms.
+% Suppose that "t" is the term "f(t1, ..., tn)".  Then
+%     flat(t) = {t}                                  if precedence(f, op) = eq
+%     flat(t) = flat(t1) \union ... \union flat(tn)  otherwise
+
+% Now ac-dsmpos(T1, T2) = gt iff 
+%     comp(flat(T1), flat(T2)) = gt or 
+%     for some t1 in flat(T1) and some subterm t1' of t1, 
+%       ac-dsmpos(insert(delete(flat(T1), t1), flat(t1')), flat(T2)) = gt.
+
+% When computing ac-dsmpos, it suffices to consider maximal subterms "t1'" of
+% "t1" with precedence(t1'.root, op) equal to "eq" or to "gt".
+
+% To compute the value of "comp", we use the following flow graph to perform a
+% bipartite matching of {t11, ..., t1n} to {t21, ..., t2m}.  
+
+%         source
+%        /   |   \        The capacity of the flow into t1i is either
+%       /    |    \       - the reduced multiplicity of t1i in t1 or 
+%      /     |     \      - infinite if precedence(t1i.root, op) = gt
+%     /      |      \    
+%   t11     t12     t1n
+%    ..       .           The capacity of the link from t1i to t2j is infinite
+%    .   .       .        if dsmpos(t1i, t2j) = gt and 0 otherwise
+%    .      .       .
+%   t21     t22     t2m
+%     \      |      /
+%      \     |     /      The capacity of the flow out of t2j is the
+%       \    |    /       reduced multiplicity of t2j in t2.
+%        \   |   /
+%           sink
+            
+% This flow graph contains one node for each distinct element of {t11, ...,
+% t1n} and one node for each distinct element of {t21, ..., t2m}.  "Reduced
+% multiplicities" are computed by decreasing the multiplicities of each t1i and
+% t2j such that dsmpos(t1i, t2j) = eq by the minimum of their multiplicities.
+
+% To compute "comp(T1, T2)", we define the capacity_in of the flow graph to be
+% the sum of the reduced multiplicities of t11, ..., t1n, and the capacity_out
+% to be the sum of the reduced multiplicities of t21, ..., t2m.  Then
+%                 eq if capacity_out = capacity_in = 0
+% comp(T1, T2) =  lt if capacity_out > capacity_in = 0
+%                 gt if the maximum flow into the sink equals capacity_out
+
+
+dsmpos_flow = cluster is create, is_gt, is_lt, suggest
+
+    source = 1
+    sink   = 2
+    huge   = 100000
+    add_capacity = flow_graph$add_capacity
+    get_capacity = flow_graph$get_capacity
+    set_capacity = flow_graph$set_capacity
+    comp_array   = array[comp]
+    comp_matrix  = matrix[comp]
+    comp         = oneof[eq, gt, lt, undefined: null, sugs: sug_pair]
+    gt_comp      = comp$make_gt(nil)
+    eq_comp      = comp$make_eq(nil)
+    lt_comp      = comp$make_lt(nil)
+    no_comp      = comp$make_undefined(nil)
+    sug_pair     = struct[gt, eq: suggestions]
+    t1status     = record[big_op: bool, compared: bool]
+    t1stat_arr   = array[t1status]
+
+    rep = record[capacity_out: int,         % sum of t2counts
+                 dsmpos_comp:  comp_matrix, % dsmpos comparison matrix
+                 g:            flow_graph,  % flow graph for bipartite matching
+                 op:           operator,    % the ac operator
+                 t1counts:     int_arr,     % multiplicities of t1terms
+                 t2counts:     int_arr,     % multiplicities of t2terms
+                 t1size:       int,         % # of distinct elements in T1
+                 t2size:       int,         % # of distinct elements in T2
+                 t1status:     t1stat_arr,  % t1terms to replace by subterms
+                 t1terms:      term_arr,    % distinct elements of T1
+                 t2terms:      term_arr]    % distinct elements of T2
+
+    % Representation invariants:
+    %   r.t2size  = term_arr$size(r.t2terms) = int_arr$size(r.t2counts)
+    %                                        = r.dsmpos_comp.n_cols
+    %   r.t1size <= term_arr$size(r.t1terms) = int_arr$size(r.t1counts) 
+    %                                        = t1stat_arr$size(r.t1status)
+    %                                        = r.dsmpos_comp.n_rows 
+    %   r.dsmpos_comp[i, j]       = dsmpos(r.t1terms[i], r.t2terms[j])
+    
+    % Representation invariants after invocation of "is_gt":
+    %   get_capacity(r.g, t1node(df, i), t2node(df, j)) =
+    %          huge   if dsmpos(r.t1terms[i], r.t2terms[j]) = gt
+    %          0      otherwise
+    %   get_capacity(r.g, t2node(df, j), sink) = df.t2counts[j]
+    %   r.capacity_out                         = sum {df.t2counts[j]}
+    %   r.t1status[i].big_op      = (precedence(t1terms[i].root, op) = gt)
+
+    small_term 		= record[which: int, count: int]
+    small_term_arr     	= array[small_term]
+    
+    undo_info = oneof[restore_capacity_out: int, restore_capacity_in: int_pair]
+    int_pair  = struct[first, second: int]
+    ui_arr    = array[undo_info]
+
+    comp_entry = record[i, j: int, comp: comp]
+    ce_arr     = array[comp_entry]
+    
+    
+    % Returns a dsmpos_flow for comparing two sequences "tms1" and "tms2" of
+    % arguments to the ac operator "op", considered as multisets flattened with
+    % respect to operators equivalent to "op" in "reg".  Signals "gt", "lt", or
+    % "eq" if the result of comparing "tms1" and "tms2" is known because one or
+    % both of the multisets is empty (or becomes empty upon removing elements
+    % that are equivalent in the dsmpos ordering).
+    
+    create = proc (ts1, ts2: term_seq, op: operator, try_lt: bool, 
+                   reg: registry) returns (cvt) signals (done(xcomparison))
+        % Flatten "ts1" and "ts2", convert to multisets, remove common elements
+        tms1: term_mset := flat_seq(ts1, op, reg)
+        tms2: term_mset := flat_seq(ts2, op, reg)
+        tms1, tms2 := (tms1 - tms2), (tms2 - tms1)
+        t1size: int := term_mset$size(tms1)
+        t2size: int := term_mset$size(tms2)
+        check_simple_cases(t1size, t2size)
+           resignal done
+        % Compare elements of "tms1" and "tms2" wrt dsmpos
+        t1terms: term_arr := term_arr$predict(1, t1size)
+        t2terms: term_arr := term_arr$predict(1, t2size)
+        t1counts: int_arr := int_arr$predict(1, t1size)
+        t2counts: int_arr := int_arr$predict(1, t2size)
+        dsmpos_comp: comp_matrix := comp_matrix$fill(t1size, t2size, no_comp)
+        capacity_out: int := 0
+        for t: term, count: int in term_mset$elements(tms2) do
+            term_arr$addh(t2terms, t)
+            int_arr$addh(t2counts, count)
+            capacity_out := capacity_out + count
+            end
+        i: int := 0
+        capacity_in: int := 0
+        for t: term, count: int in term_mset$elements(tms1) do
+            i := i + 1
+            term_arr$addh(t1terms, t)
+            int_arr$addh(t1counts, count)
+            for j: int in int$from_to(1, t2size) do
+                c: comp := dsmpos2comp(t, t2terms[j], reg, try_lt)
+                comp_matrix$store(dsmpos_comp, i, j, c)
+                if comp$is_eq(c) then
+                   countj: int  := t2counts[j]
+                   x: int       := int$min(count, countj)
+                   capacity_out := capacity_out - x
+                   t2counts[j]  := countj - x
+                   count        := count - x
+                   end
+                end
+            capacity_in := capacity_in + count
+            end
+        check_simple_cases(capacity_in, capacity_out)
+           resignal done
+	dummy_stat: t1status := t1status${big_op: false, compared: false}
+        return(rep${capacity_out: 0,
+                    dsmpos_comp: dsmpos_comp,
+                    g:           flow_graph$new(t1size + t2size + 2),
+                    op:          op,
+                    t1counts:    t1counts,
+                    t2counts:    t2counts,
+                    t1size:      t1size,
+                    t2size:      t2size,
+                    t1status:    t1stat_arr$fill_copy(1, t1size, dummy_stat),
+                    t1terms:     t1terms,
+                    t2terms:     t2terms})
+        end create
+    
+    
+    % (Internal) Returns the multiset of elements of "ts", flattened with
+    % respect to "op" and "reg".
+    
+    flat_seq = proc (ts: term_seq, op: operator, reg: registry)
+                 returns (term_mset)
+        tms: term_mset := term_mset$[]
+        for t: term in term_seq$elements(ts) do
+            for t1: term in op_subterms(t, op, reg) do
+                term_mset$insert(tms, t1)
+                end
+            end
+        return(tms)
+        end flat_seq
+    
+    
+    % (Internal) Yields all maximal subterms of "t" that are not headed by an
+    % operator equivalent to "op" in "reg".
+
+    op_subterms = iter (t: term, op: operator, reg: registry) yields (term)
+        if xcomparison$is_eq(registry$compare(reg, t.root_or_quant, op))
+           then for t1: term in term_seq$elements(t.subterms) do
+                    for t2: term in op_subterms(t1, op, reg) do yield(t2) end
+                    end
+           else yield(t)
+           end except when wrong_tag: yield(t) end
+        end op_subterms
+    
+    
+    % (Internal) Signals the result of comparing two multisets of size "m"
+    % and "n" if either "m" or "n" is zero.  
+
+    check_simple_cases = proc (m, n: int) signals (done(xcomparison))
+        if m + n = 0  then signal done(xcomparison$make_eq())
+         elseif m = 0 then signal done(xcomparison$make_lt())
+         elseif n = 0 then signal done(xcomparison$make_gt())
+         end
+        end check_simple_cases
+    
+    
+    % (Internal) Returns the result of comparing "t1" and "t2" under dsmpos.
+
+    dsmpos2comp = proc (t1, t2: term, reg: registry, try_lt: bool)
+                    returns (comp)
+        tagcase dsmpos(true, false, false, try_lt, t1, t2, reg)
+           tag gt: return(gt_comp)
+           tag lt: return(lt_comp)
+           tag eq: return(eq_comp)
+           others: return(no_comp)
+           end
+        end dsmpos2comp
+
+    
+    % Returns "true" if the multiset of "t1terms" in "df" is ac-greater-than
+    % the multiset of "t2terms".
+
+    is_gt = proc (df: cvt, reg: registry) returns (bool)
+        g: flow_graph := df.g
+        df.capacity_out := 0
+        for j: int in int$from_to(1, df.t2size) do
+            count: int := df.t2counts[j]
+            set_capacity(g, t2node(df, j), sink, count)
+            df.capacity_out := df.capacity_out + count
+            end
+        replaceables: small_term_arr := small_term_arr$[]
+        for i: int in int$from_to(1, df.t1size) do
+            ni: int := t1node(df, i)
+            t: term := df.t1terms[i]
+	    s: t1status := df.t1status[i]
+            needed: int := 0
+	    if i <= df.t1size
+	       then for j: int in int$from_to(1, df.t2size) do
+			if comp$is_gt(comp_matrix$lookup(df.dsmpos_comp, i, j))
+			   then set_capacity(g, ni, t2node(df, j), huge)
+				needed := needed + df.t2counts[j]
+			   else set_capacity(g, ni, t2node(df, j), 0) % NEEDED?
+			   end
+			end
+		    s.compared := true
+	       else s.compared := false
+	       end
+            if xcomparison$is_gt(registry$compare(reg, t.root_or_quant, df.op))
+               then s.big_op := true
+               else s.big_op := false
+		    count: int := df.t1counts[i]
+		    nsubterms: int := term_seq$size(t.subterms)
+		    if i <= df.t1size cand 0 < count cand count < needed 
+			 cand nsubterms > 0 then
+		       % Replacing one or more copies of this term by a subterm
+		       % may help
+		       count := int$min(count, nsubterms)
+                       st: small_term := small_term${which: i, count: count}
+                       small_term_arr$addh(replaceables, st)
+                       end
+               end except when wrong_tag: end
+            % NOTE: set_capacity(g, source, ni, count) is done in outflow()
+            end
+        return(is_gt_work(df, reg, replaceables))
+        end is_gt
+
+    
+    % Returns "true" if the multiset of "t1terms" in "df" is ac-less-than
+    % the multiset of "t2terms".
+
+    is_lt = proc (df: cvt, reg: registry) returns (bool)
+        % Transpose comparison matrix
+        dsmpos_comp: comp_matrix :=
+            comp_matrix$fill(df.t2size, df.t1size, no_comp)
+        for i: int in int$from_to(1, df.t1size) do
+            for j: int in int$from_to(1, df.t2size) do
+                tagcase comp_matrix$lookup(df.dsmpos_comp, i, j)
+                   tag eq: comp_matrix$store(dsmpos_comp, j, i, eq_comp)
+                   tag gt: comp_matrix$store(dsmpos_comp, j, i, lt_comp)
+                   tag lt: comp_matrix$store(dsmpos_comp, j, i, gt_comp)
+                   others:
+                   end
+                end
+            end
+	t2counts1: int_arr := int_arr$copy(df.t1counts)
+	int_arr$trim(t2counts1, 1, df.t1size)
+	t2terms1: term_arr := term_arr$copy(df.t1terms)
+	term_arr$trim(t2terms1, 1, df.t1size)
+	dummy_stat: t1status := t1status${big_op: false, compared: false}
+        df1: rep :=
+            rep${capacity_out: 0,
+                 dsmpos_comp: dsmpos_comp,
+                 g:           flow_graph$new(df.t1size + df.t2size + 2),
+                 op:          df.op,
+                 t1counts:    int_arr$copy(df.t2counts),
+                 t2counts:    t2counts1,
+                 t1size:      df.t2size,
+                 t2size:      df.t1size,
+                 t1status:    t1stat_arr$fill_copy(1, df.t2size, dummy_stat),
+                 t1terms:     term_arr$copy(df.t2terms),
+                 t2terms:     t2terms1}
+        return(is_gt(up(df1), reg))
+        end is_lt
+
+
+    is_gt_work = proc (df: rep, reg: registry, replaceables: small_term_arr)
+                   returns (bool)
+        
+        % Return a result if there is a large enough flow without using any
+        % subterms, or if using subterms cannot help.
+
+        if outflow(df) >= df.capacity_out then return(true) end
+        if maxoutflow(df) < df.capacity_out then return(false) end
+
+        % Now try replacing some "t1i" with one of its subterms.
+
+        while true do
+	    if try_subterm(df, reg, replaceables) then return(true) end
+            end except when bounds: end
+        return(false)
+        end is_gt_work
+
+
+    try_subterm = proc (df: rep, reg: registry, replaceables: small_term_arr)
+		    returns (bool) signals (bounds)
+        st: small_term := small_term_arr$reml(replaceables)
+	   resignal bounds
+        i: int := st.which
+        count: int := df.t1counts[i]
+        if count = 0 then return(false) end
+        df.t1counts[i] := count - 1
+        st.count := st.count - 1
+        t1i: term := df.t1terms[i]
+        result: bool := false
+        for t: term, gt: bool in max_subterms(t1i, df, reg) do
+            replaceables1: small_term_arr := small_term_arr$copy(replaceables)
+            if st.count > 0 then small_term_arr$addh(replaceables1, st) end
+            if gt
+               then ui: undo_info := 
+	                add_term(df, i, t, reg, replaceables1, true)
+                    result := is_gt_work(df, reg, replaceables1)
+                    undo_add_term(df, ui)
+               else uia: ui_arr := ui_arr$[]
+                    for t1: term in op_subterms(t, df.op, reg) do
+                        ui: undo_info :=
+                            add_term(df, i, t1, reg, replaceables1, false)
+                        ui_arr$addh(uia, ui)
+                        end
+                    result := is_gt_work(df, reg, replaceables1)
+                    while true do
+                        undo_add_term(df, ui_arr$remh(uia))
+                        end except when bounds: end
+               end
+            if result then break end
+            end
+        df.t1counts[i] := df.t1counts[i] + 1
+        return(result)
+        end try_subterm
+
+
+    % (Internal) Returns the index of the node representing "t1i" in "df.g".
+    % Note that the nodes representing the "t1i" come before those representing
+    % the "t2j" so that we can add new nodes for subterms of "t1i".  We never
+    % need to add new nodes for subterms of "t2j".
+
+    t1node = proc (df: rep, i: int) returns (int)
+        return(sink + df.t2size + i)
+        end t1node
+
+
+    % (Internal) Returns the index of the node representing "t2j" in "df.g".
+
+    t2node = proc (df: rep, j: int) returns (int)
+        return(sink + j)
+        end t2node
+
+
+    % Yields all maximal subterms "s" of "t", together with boolean values "b",
+    % such that 
+    %    b => precedence(s.root, df.op) = gt
+    %   ~b => precedence(s.root, df.op) = eq
+
+    max_subterms = iter (t: term, df: rep, reg: registry) yields (term, bool)
+        for s: term in term_seq$elements(t.subterms) do
+            tagcase registry$compare(reg, s.root_or_quant, df.op)
+               tag gt: yield(s, true)
+               tag eq: yield(s, false)
+               others:
+                   for s1: term, b1: bool in max_subterms(s, df, reg) do
+                       yield(s1, b1)
+                       end
+                   % ENHANCE: Only do this if "s" is still bigger than at
+                   % least one t2term that "t" was bigger than.  This requires
+                   % some communication with "add_term".
+               end except when wrong_tag: end
+            end
+        end max_subterms
+
+
+    % Adds the subterm "t" of "df.t1terms[i]" to "df.g".
+    % FIX: Signal an exception if the added term is not (cannot be) greater
+    % than any t2term.
+    
+    add_term = proc (df: rep, i: int, t: term, reg: registry,
+                     replaceables: small_term_arr, reusable: bool)
+                 returns (undo_info)
+        k: int := index_in_array[term](t, df.t1terms)
+        if k = 0 then
+           term_arr$addh(df.t1terms, t)
+           int_arr$addh(df.t1counts, 0)
+           flow_graph$add_node(df.g)
+           s: t1status := t1status${big_op: reusable, compared: false}
+           t1stat_arr$addh(df.t1status, s)
+           k := term_arr$size(df.t1terms)
+           row: comp_array := comp_array$fill(1, df.t2size, no_comp)
+           comp_matrix$insert_row(df.dsmpos_comp, k, row)
+           end
+        nk: int := t1node(df, k)
+        found_eq: int := 0
+        needed: int := 0
+	compared: bool := df.t1status[k].compared
+        for j: int in int$from_to(1, df.t2size) do
+            tagcase comp_matrix$lookup(df.dsmpos_comp, i, j)
+               tag gt:
+               tag lt, eq: comp_matrix$store(df.dsmpos_comp, k, j, lt_comp)
+                           % This avoids wasting time later when we attempt
+                           % to compute suggestions.
+                           continue
+               others:     continue
+               end
+            countj: int := df.t2counts[j]
+            if ~compared then % Compute comparison
+               c: comp := dsmpos2comp(t, df.t2terms[j], reg, false)
+               comp_matrix$store(df.dsmpos_comp, k, j, c)
+               tagcase c
+                  tag gt: set_capacity(df.g, nk, t2node(df, j), huge)
+                          needed := needed + countj
+                  tag eq: if countj > 0 cand found_eq = 0 then
+                             found_eq := j
+                             % Don't break; continue to compute comparisons
+                             end
+                          needed := needed + countj
+                  others:
+                  end
+             elseif comp$is_eq(comp_matrix$lookup(df.dsmpos_comp, k, j)) then
+               if countj > 0 then
+                  found_eq := j
+                  break
+                  end
+             end
+            end
+	df.t1status[k].compared := true
+        if found_eq > 0 then
+           df.t2counts[found_eq] := df.t2counts[found_eq] - 1
+           add_capacity(df.g, t2node(df, found_eq), sink, -1)
+           df.capacity_out := df.capacity_out - 1
+           return(undo_info$make_restore_capacity_out(found_eq))
+           end
+        df.t1counts[k] := df.t1counts[k] + 1
+        % Find action, if any, affecting this term.
+        st: small_term
+        replaceable_index: int := 0
+        for ai: int in small_term_arr$indexes(replaceables) do
+            st := replaceables[ai]
+            if st.which = k then
+               replaceable_index := ai
+               break
+               end
+            end
+        % Update that action
+        if needed > df.t1counts[k] cand ~df.t1status[k].big_op
+           then % We can try replacing one more copy of this term
+                if replaceable_index = 0
+                   then st := small_term${which: k, count: 1}
+                        small_term_arr$addh(replaceables, st)
+                   else st.count := st.count + 1
+                   end
+           else % We have enough copies of this term.
+                if replaceable_index > 0 then
+                   delete_at_arr[small_term](replaceables, replaceable_index)
+                   end
+           end
+        ip: int_pair := int_pair${first: k, second: df.t1counts[k]}
+        return(undo_info$make_restore_capacity_in(ip))
+        end add_term
+    
+    
+    % Undoes the changes to "df" made by "add_term".
+
+    undo_add_term = proc (df: rep, ui: undo_info)
+        tagcase ui
+           tag restore_capacity_out (j: int):
+               df.t2counts[j] := df.t2counts[j] + 1
+               add_capacity(df.g, t2node(df, j), sink, 1)
+               df.capacity_out := df.capacity_out + 1
+           tag restore_capacity_in (ip: int_pair):
+               df.t1counts[ip.first] := ip.second
+           end
+        end undo_add_term
+
+
+    % Returns complete sets of suggestions for making the multiset of "t1terms"
+    % in "df" ac-greater-than and ac-equal-to the multiset of "t2terms".
+    
+    suggest = proc (df: cvt, reg: registry, use_eq: bool)
+                returns (suggestions, suggestions)
+        single_sugs: ss_set := ss_set$[]
+        for i: int in int$from_to(1, df.t1size) do
+	    ti: term := df.t1terms[i]
+	    for ti1: term in op1_subterms(df.t1terms[i], df.op, reg) do
+		op1: operator := ti1.root_or_quant
+		except when wrong_tag: continue end
+		ss_set$merge(single_sugs, 
+		             suggestions$make_prec(op1, gt_sym, df.op).single_sugs)
+		end
+            for j: int in int$from_to(1, df.t2size) do
+                if ~comp$is_undefined(comp_matrix$lookup(df.dsmpos_comp, i, j))
+                   then continue
+                   end
+                dsmpos(use_eq, false, true, false, ti, df.t2terms[j], reg)
+                   except when suggest (gt_sugs, eq_sugs: suggestions):
+                               ss_set$merge(single_sugs, gt_sugs.single_sugs)
+                               ss_set$merge(single_sugs, eq_sugs.single_sugs)
+                               sp: sug_pair := 
+                                   sug_pair${gt: gt_sugs, eq: eq_sugs}
+                               comp_matrix$store(df.dsmpos_comp, i, j,
+                                                 comp$make_sugs(sp))
+                          end
+                end
+            end
+        gt_sugs: suggestions := suggestions$[]
+        eq_sugs: suggestions := suggestions$[]
+	nsugs: int := ss_set$size(single_sugs)
+	if nsugs = 0 then return(gt_sugs, eq_sugs) end
+	sugs: ss_seq := ss_set$s2seq(single_sugs)
+	ss_gen: subseq_gen := subseq_gen$create(nsugs)  
+	indexes: int_seq := subseq_gen$first(ss_gen)	% empty set is first
+	try_superset: bool := true
+	while true do
+	    if try_superset 
+	       then indexes := subseq_gen$next(ss_gen)
+	       else indexes := subseq_gen$skip_extensions(ss_gen)
+	       end
+	    ticket: int := registry$push(reg)
+	    ssa: ss_arr := ss_arr$[]
+	    for i: int in int_seq$elements(indexes) do
+		ss_arr$addh(ssa, sugs[i])
+		end
+            cea: ce_arr := apply_suggestions(df, reg, ssa)
+	       except when inconsistent: registry$pop(reg, ticket)
+			                 try_superset := false
+			                 continue
+		      end
+	    % FIX: Only call is_gt if applying the suggestions made a useful
+	    % change in the comparison matrix or in making an operator big.
+            if is_gt(up(df), reg) then
+               suggestions$merge(gt_sugs, suggestions$make_single(ssa))
+	       try_superset := false
+               end
+	    registry$pop(reg, ticket)
+            for ce: comp_entry in ce_arr$elements(cea) do
+                comp_matrix$store(df.dsmpos_comp, ce.i, ce.j, ce.comp)
+                end
+            end except when done: end
+        return(gt_sugs, eq_sugs)
+        end suggest
+    
+    
+    % (Internal) Yields all subterms of "t" headed by an operator incomparable
+    % with "op" in "reg" that are not contained in a subterm headed by an
+    % operator that is comparable with "op".
+
+    op1_subterms = iter (t: term, op: operator, reg: registry) yields (term)
+        if xcomparison$is_undefined(registry$compare(reg, t.root_or_quant, op))
+           then yield(t)
+                for t1: term in term_seq$elements(t.subterms) do
+                    for t2: term in op1_subterms(t1, op, reg) do yield(t2) end
+                    end
+           end except when wrong_tag: yield(t) end
+        end op1_subterms
+    
+    
+    apply_suggestions = proc (df: rep, reg: registry, ssa: ss_arr)
+			  returns (ce_arr) signals (inconsistent)
+	% Apply suggestions to registry to determine if they are consistent.
+	for ssug: single_suggest in ss_arr$elements(ssa) do
+	    tagcase ssug
+	       tag prec (ps: prec_sug):
+		   tagcase ps.val
+		      tag gt:    registry$make_higher(reg, ps.gt, ps.lt)
+		      tag eq:    registry$make_equal(reg, ps.gt, ps.lt)
+		      tag gt_eq:
+			  registry$make_higher_or_equal(reg, ps.gt, ps.lt)
+		      end
+	       tag stat (ss: stat_sug): 
+	           registry$set_status(reg, ss.op, ss.stat)
+	       end except when same, redundant: end
+	    end except when inconsistent, multi_and_lex, 
+	                    ordered, status_defined (*): signal inconsistent
+		       end
+        % Check whether any entries in matrix can be promoted from suggestions
+	% to actual comparisons.
+        cea: ce_arr := ce_arr$[]
+        for i: int in term_arr$indexes(df.t1terms) do
+            for j: int in term_arr$indexes(df.t2terms) do
+                c: comp := comp_matrix$lookup(df.dsmpos_comp, i, j)
+                sp: sug_pair := comp$value_sugs(c)
+                   except when wrong_tag: continue end
+		if suggestions$already_satisfied(sp.gt, reg) then
+		   ce_arr$addh(cea, comp_entry${i: i, j: j, comp: c})
+		   comp_matrix$store(df.dsmpos_comp, i, j, gt_comp)
+		 elseif suggestions$already_satisfied(sp.eq, reg) then
+		   ce_arr$addh(cea, comp_entry${i: i, j: j, comp: c})
+		   comp_matrix$store(df.dsmpos_comp, i, j, eq_comp)
+		 end
+		end
+	    end
+	return(cea)
+	end apply_suggestions
+         
+    
+    outflow = proc (df: rep) returns (int)
+        for i: int in term_arr$indexes(df.t1terms) do
+	    count: int := df.t1counts[i]
+	    if count > 0 cand df.t1status[i].big_op
+               then set_capacity(df.g, source, t1node(df, i), huge)
+               else set_capacity(df.g, source, t1node(df, i), count)
+               end except when bounds: 
+			       set_capacity(df.g, source, t1node(df, i), 0)
+			  end
+            end
+        return(flow_graph$max_flow(df.g, source, sink))
+        end outflow
+
+    
+    maxoutflow = proc (df: rep) returns (int)
+        for i: int in term_arr$indexes(df.t1terms) do
+            set_capacity(df.g, source, t1node(df, i), huge)
+            end
+        return(flow_graph$max_flow(df.g, source, sink))
+        end maxoutflow
+
+    
+    dump = proc (df: rep)
+        pr: printer := tracer$get_printer()
+        stab: symtab := tracer$get_symtab()
+        printer$text(pr, "t1size = ")
+        printer$text(pr, int$unparse(df.t1size))
+        printer$text(pr, "\ni/t1counts[i]/t1status[i]/t1terms[i]\n")
+        for i: int in term_arr$indexes(df.t1terms) do
+            printer$text(pr, int$unparse(i))
+            printer$text(pr, " ")
+            printer$text(pr, int$unparse(df.t1counts[i]))
+               except when bounds: printer$puts(pr, "-") end
+            if df.t1status[i].big_op
+               then printer$puts(pr, "B")
+               else printer$puts(pr, " ")
+               end except when bounds: printer$puts(pr, "-") end
+            if df.t1status[i].compared
+               then printer$puts(pr, "C")
+               else printer$puts(pr, " ")
+               end except when bounds: printer$puts(pr, "-") end
+            printer$text(pr, " ")
+            term$print(pr, df.t1terms[i], stab)
+            printer$newline(pr)
+            end
+        printer$text(pr, "t2size = ")
+        printer$text(pr, int$unparse(df.t2size))
+        printer$text(pr, "\ni/t2counts[i]/t2terms[i]\n")
+        for i: int in term_arr$indexes(df.t2terms) do
+            printer$text(pr, int$unparse(i))
+            printer$text(pr, " ")
+            printer$text(pr, int$unparse(df.t2counts[i]))
+               except when bounds: printer$puts(pr, "-") end
+            printer$text(pr, " ")
+            term$print(pr, df.t2terms[i], stab)
+            printer$newline(pr)
+            end
+        printer$text(pr, "capacity_out = ")
+        printer$text(pr, int$unparse(df.capacity_out))
+        printer$text(pr, "\n\nFlow graph\n  ")
+        for j: int in term_arr$indexes(df.t2terms) do
+            printer$text(pr, int$unparse(j))
+            printer$text(pr, " ")
+            end
+        printer$newline(pr)
+        for i: int in term_arr$indexes(df.t1terms) do
+            ni: int := t1node(df, i)
+            printer$text(pr, int$unparse(i))
+            printer$text(pr, " ")
+            for j: int in term_arr$indexes(df.t2terms) do
+                nj: int := t2node(df, j)
+                c: int := flow_graph$get_capacity(df.g, ni, nj)
+                if c = 0 then printer$text(pr, " ")
+                 elseif c = huge then printer$text(pr, "*")
+                 else printer$text(pr, int$unparse(c))
+                 end
+                printer$text(pr, " ")
+                end
+            printer$newline(pr)
+            end
+        end dump
+    
+    end dsmpos_flow
+

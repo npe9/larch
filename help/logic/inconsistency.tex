@@ -1,0 +1,18 @@
+\doc{Inconsistency}
+\ref{inconsistency}
+\ref{inconsistencies}
+\ref{inconsistent}
+
+An \def{inconsistency} is a \dlink{formula}{formula} that is logically false.
+\p
+LP automatically recognizes the formula \fq{x ~= t}, where \fq{t} is a term not
+involving the variable \fq{x}, as inconsistent.  Thus, LP rules out empty
+sorts.  It also recognizes the formulas \fq{false} and \fq{b = t}, where \fq{t}
+is a term not involving the boolean variable \fq{b}, as inconsistent.  Thus,
+the boolean sort contains two distinct values.
+\p
+If an inconsistency arises during a proof by
+\dlink{../proof/by-contradiction}{contradiction}, that proof succeeds.  If it 
+arises during a proof by \dlink{../proof/by-cases}{cases}, the current case is
+deemed impossible.
+

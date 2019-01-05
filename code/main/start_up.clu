@@ -1,0 +1,181 @@
+#extend
+
+
+% This is the main procedure in the interactive version of LP.
+
+start_up = proc ()
+
+    % Define the top-level command tables.
+    
+    cct = command_table[command]
+
+    own commands: cct := 
+	    cct${help: cct$help, delims: " \t", label: "command",
+		 as: lp_commands()}
+
+    own private_commands: cct := 
+	    cct${help: cct$help, delims: " \t", label: "private command",
+		 as: front_end_commands()}
+
+
+    % Arrange for garbage collection to occur everytime the heap grows by
+    % "gc_heap_increment()" megabytes rather than by 1/2 megabyte.
+
+    %_gc_control(gc_heap_increment()*7*2**18, gc_heap_increment()*2**20-1)
+
+    %_set_max_heap(22 * 2**20)	  % Maximum heap size for 32MB machines
+	%      except others: end
+    
+    % Set up communication with user.
+    
+    io: iodev := iodev$[]
+    io.comment_char := '%'
+    io.command_prompt := setting$value_s(default_prompt)
+    % ENHANCE: Make multiline input work properly: io.line_break := ';'
+    io.history_setting := -1  % Keep the entire history
+    iodev$printl(io, "\nWelcome to " || lp_version() || ".")
+    iodev$printl(io, lp_copyright())
+    iodev$printl(io, 
+	         "Type `help lp' (followed by a carriage return) for help.")
+
+    home_directory$set_name("~lp/")
+    home_directory$set_location(lpdir())
+
+    % Interpret command-line arguments
+    
+    inter: interactive := interactive$create(io)
+    args: string_arr := string_seq$s2a(get_argv())
+    while true do
+	arg: string := string_arr$bottom(args)
+	if arg[1] ~= '-' then break end
+	if arg = "-c" then   % set experimental conditional rewriting mode
+	   interactive$set_conditional(true)
+	 elseif arg = "-d" then    % set home directory
+	   string_arr$reml(args)
+	   home_directory$set_location(string_arr$bottom(args))
+	      except when bounds: 
+			  exit error("\nExpecting directory after `-d'.")
+		     end
+	 elseif arg = "-debug" then     % set debug mode
+	   interactive$set_debug(true)
+	 elseif arg = "-e" then     % set experimental mode
+	   cct$append(commands, xcommands())
+	   interactive$set_experimental(true)
+	 elseif arg = "-f" then     % set communication for window front-end
+	   front_end$establish(inter)
+	   iodev$set_communication(io, "\177", "\177", front_end$respond)
+%	 elseif arg = "-p" then     % set communication for prover front-end
+%	   front_end$establish_prover(inter)
+%	   iodev$set_communication(io, "\177", "\177", front_end$respond)
+% 	   cct$append(commands, prover_commands())
+% 	   ninteractive$init_printer(inter.p)
+	 elseif arg = "-s" then     % set statistics mode for front-end
+	   front_end$set_stat_mode(true)
+	 elseif arg = "-t" then     % set testing mode
+	   iodev$set_testing_mode(true)
+%	 elseif arg = "-max_heap" then  % set maximum heap size
+%	   string_arr$reml(args)
+%           _set_max_heap(int$parse(string_arr$bottom(args))
+%			   * 2**20)       % convert megabytes to bytes
+%	      except when bounds, bad_format:
+%			  exit error("\nExpecting integer after `-max_heap'.")
+%		     when not_applicable: exit error("\n-max_heap ignored")
+%		     when illegal: exit error("\n-max_heap too small")
+%		     when illegal_size(limit: int):
+%			  exit error("\n-max_heap exceeds limit (" ||
+%				     int$unparse(limit) || " bytes)" )
+%		     when overflow: exit error("\n-max_heap too big")
+%		     end
+%	 elseif arg = "-min_gc" then    % set minumum gc threshold
+%	   string_arr$reml(args)
+%          _set_min_gc(int$parse(string_arr$bottom(args))
+%			 * 2**20)         % convert megabytes to bytes
+%	      except when bounds, bad_format:
+%			  exit error("\nExpecting integer after `-min_gc'.")
+%		     when not_applicable: exit error("\n-min_gc ignored")
+%		     when toobig, overflow: exit error("\n-min_gc too big")
+%		     when negative_size:
+%			  exit error("\n-min_gc must be positive")
+%		     end
+	 else exit error("\nIllegal command line argument: " || arg)
+	 end except when error(msg: string):
+		         iodev$printl(io, msg)
+			 return
+		    end
+	string_arr$reml(args)
+	end except when bounds: end
+    files: string := ""
+    for arg: string in string_arr$elements(args) do
+	files := files || "execute " || arg || "\n"
+	end
+    if ~string$empty(files) then 
+       iodev$read_script(io, stream$create_input(files), false)
+       end
+
+   
+    % Get and interpret commands from the user.
+
+    trouble: string := ""
+    while true do
+	if front_end$interrupt() then
+	   iodev$error(io)
+	   iodev$putl(io, "\nInterrupt ...")
+	   end
+	iodev$putl(io, "")
+	cct$choose(commands, "", io)(inter)
+	   except when no_response: continue 
+	          when quit: fail("error in public command")
+		  when error: 
+		       if iodev$pending_input(io) then iodev$getl(io) end
+		       continue
+		  end
+	iodev$end_of_line_check(io)
+	   except when excess (s: string): fail("start_up: excess input") end
+	  
+	% The following auxiliary interaction loop between LP and the prover
+	% front-end uses the private command table.  It allows the front-end to
+	% to select a proof context, resume proofs, etc.  This loop is entered
+	% only if the preceding command was not empty and succeeded.  It starts
+	% with a special 'hello' to the front-end to maintain synchronization
+	% between the two parts of the system; otherwise public commands could
+	% be sent while LP expects private commands and vice-versa!
+
+	if front_end$prover_exists() then
+%	   ninteractive$send_echo(inter, "private-loop")
+	   while true do
+	       cct$choose(private_commands, "", io)(inter)
+		  except when no_response: continue % temporaire !!
+			 end
+	       end except when quit:
+			  when error: fail("error in a private command")
+			  end
+	   end
+
+
+	end except when quit_lp, end_of_file:
+		   when assumption_failed (msg: string):
+			trouble := "\nLP failure in " || msg
+		   when failure (msg: string):
+			if string$indexs("end_of_file", msg) = 0 then
+			   if string$indexs("\nLP failure", msg) = 0 then
+			      msg := "\nUnexpected LP failure: " || msg
+			      end
+			   trouble := msg
+			   end
+		   end
+    if ~string$empty(trouble) then
+       iodev$error(io)
+       iodev$printl(io, trouble)
+       iodev$printl(io, "\nPlease inform garland@lcs.mit.edu about this bug.")
+       if front_end$prover_exists() then
+	  % Without this code, the error message never reaches the front-end
+	  % and that is unpleasant.  This is the case even if I use
+	  % front_end$notify()...
+	  stdout: stream := stream$primary_output()
+	  stream$puts_image(stdout, "\177")
+	  stream$flush(stdout)
+	  end
+       end
+    iodev$close(io)
+    
+    end start_up

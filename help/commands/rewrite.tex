@@ -1,0 +1,43 @@
+\doc{The rewrite command}
+\ref{rewrite-command}
+
+The \def{rewrite command} provides manual control over the application of
+(possibly passive) rewrite rules to (possibly immune) formulas, rewrite rules,
+and deduction rules.  It also provides a means of backward inference.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{rewrite-command} ::= \f{rewrite} \slink{normalize}{target} [ \f{with} [ \f{reversed} ] \slink{../misc/names}{names} ]
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+rewrite immune / lemmas with *
+rewrite conjecture with distributiveLaws
+\end{verbatim}
+
+\head{2}{Usage} 
+
+The first version of the \fq{rewrite} command \olink{reduce}{rewrites} some
+term in each of the formulas, deduction rules, and rewrite rules in the
+\s{target}, whether or not they are immune, using the hardwired rewrite
+rules together with the rewrite rules obtained as described below.  Rewrite
+rules in the \s{target} that are also named by \s{names} are not rewritten.
+\p
+If \fq{reversed} is present, all named formulas and rewrite rules, whether or
+not they are active, that can be oriented from right to left into legal rewrite
+rules are used with that orientation.  If \fq{reversed} is not present, all
+named rewrite rules and formulas, whether or not they are active, that can be
+oriented from left to right are used with that orientation.  If no \s{names}
+are given, all rewrite rules and left-to-right orientable formulas are used.
+\p
+The second version of the \fq{rewrite} command rewrites some term in the
+current conjecture using the rewrite rules obtained as just described.
+\p
+The \fq{rewrite} command is typically used to ``open up'' definitions using a
+set of passive rewrite rules or to undo an application of a rewrite rule.  When
+\fq{reversed} is present, the named rewrite rules should ordinarily be passive
+to prevent them from immediately undoing the result of the \fq{rewrite}
+command.  See also the \cflink{normalize} command.
+
+

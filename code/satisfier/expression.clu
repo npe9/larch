@@ -1,0 +1,211 @@
+#extend
+
+% An "expression" is a formal sum
+%	c1*a1 + .. + cn*an + c0
+% where 
+% (a) the coefficients "ci" have type "coef" and form a ring,
+% (b) the elements "ai" have type "atom" and form a totally ordered set, and
+% (c) "i < j => ai < aj".
+
+% Two formal sums, which need not satisfy property (c), are equivalent if one
+% can be transformed into the other using the laws
+%   c1*a1 + c2*a2 = c2*a2 + c1*a1
+%   c1*a + c2*a = (c1+c2)*a
+%   s + 0*a = s
+
+
+expression = cluster [atom, coef: type] is 
+	create, add, sub, constant_multiple, summands, atoms, is_constant,
+	get_constant_term, get_coeffs, unparse
+	    where atom has lt, equal: proctype (atom, atom) returns (bool),
+		  coef has add, sub, mul: proctype (coef, coef) returns (coef)
+					    signals (overflow),
+			   minus: proctype (coef) returns (coef)
+				    signals (overflow),
+			   zero: proctype () returns (coef),
+			   equal: proctype (coef, coef) returns (bool)
+
+
+    rep = record[coeffs: coef_seq, atoms: atom_seq]
+
+    %I(r) : r.coeffs is not empty.
+    %       r.atoms is sorted with respect to atom$le
+    %       size(r.atoms) = size(r.coeffs) - 1
+    %       all elements of r.coeffs (except the last one) are ~= coef$zero()
+    %A(r) : r.coeffs(high) = c0
+    %       r.coeffs[i] = ci,  1 <= i < high(r.coeffs)
+    %       r.atoms[i] = ai,   1 <= i <= high(r.atoms)
+
+    coef_seq = sequence[coef]
+    coef_arr = array[coef]
+    atom_seq = sequence[atom]
+    atom_arr = array[atom]
+
+    own zero: coef := coef$zero()
+
+    
+    % Returns the expression "0".
+
+    new = proc() returns (cvt)
+	return(rep${coeffs: coef_seq$[zero], atoms: atom_seq$[]})
+	end new
+
+    
+    % Returns the expression
+    %   a.coeffs[1]*a.atoms[1] +....  + a.coeffs[n]*a.atoms[n] + a.coeffs[n+1]
+    % where "n = size(a.atoms)".  Signals invalid if "size(a.coeffs) ~= n + 1".
+    
+    % FIX: This does not check the rep invariant.
+
+    create = proc (a: args) returns (cvt) signals (invalid)
+	args = struct[coeffs: coef_seq, atoms: atom_seq]
+	if coef_seq$size(a.coeffs) = atom_seq$size(a.atoms) + 1
+	   then return(rep${coeffs: a.coeffs, atoms: a.atoms})
+	   else signal invalid
+	   end
+	end create
+
+    
+    % Returns the expression representing the formal sum "e1 + e2".
+
+    add = proc (e1, e2: cvt) returns (cvt)
+	return(merge(e1, e2, coef$add))
+	end add
+
+    
+    % Returns the expression representing the formal sum "e1 - e2".
+
+    sub = proc (e1, e2: cvt) returns (cvt)
+	return(merge(e1, e2, coef$sub))
+	end sub
+
+    
+    % Returns the expression obtained by multiplying each coefficient in "e"
+    % by "c".
+
+    constant_multiple = proc (c: coef, e: cvt) returns (cvt)
+	if c = zero then return(down(new())) end
+	coeffs: coef_arr := coef_arr$predict(1, coef_seq$size(e.coeffs))
+	for coeff: coef in coef_seq$elements(e.coeffs) do
+	    coef_arr$addh(coeffs, c * coeff)
+	    end
+	return(rep${coeffs: coef_seq$a2s(coeffs), atoms: e.atoms})
+	end constant_multiple
+
+    
+    % Yields all pairs "(ci, ai)" such that "e" contains summand "ci * ai".
+    % Yields each pair exactly once, in the order it occurs in "e".
+    
+    summands = iter (e: cvt) yields (coef, atom)
+	for i: int in atom_seq$indexes(e.atoms) do
+	    yield(e.coeffs[i], e.atoms[i])
+	    end
+	end summands
+
+    
+    % Yields the atoms in "e", each exactly once, in order they occur in "e".
+    
+    atoms = iter (e: cvt) yields (atom)
+        for a: atom in atom_seq$elements(e.atoms) do yield(a) end
+	end atoms
+    
+    
+    % Returns true iff "e" consists only of a constant term.
+    
+    % IMPROVE: This does not make use of the rep invariant.
+    
+    is_constant = proc (e: cvt) returns (bool)
+        for i: int in int$from_to(1, coef_seq$size(e.coeffs) - 1) do
+	    num: coef := e.coeffs[i]
+	    if num ~= zero then return(false) end
+	    end
+	return(true)
+	end is_constant
+    
+    
+    % Returns the constant term in "e".
+    
+    get_constant_term = proc (e: cvt) returns (coef)
+	return(coef_seq$top(e.coeffs))
+	end get_constant_term
+
+    
+    % Returns the sequence of all coefficients from "e".
+    
+    get_coeffs = proc (e: cvt) returns (coef_seq)
+	return(e.coeffs)
+	end get_coeffs
+	
+    
+    % Returns a string representation for "e".
+    
+    unparse = proc (e: cvt) returns (string)
+		where atom has unparse: proctype (atom) returns (string),
+		      coef has unparse: proctype (coef) returns (string)
+	n: int := coef_seq$size(e.coeffs)
+	s: string := ""
+	for i: int in atom_seq$indexes(e.atoms) do
+	    s := s || coef$unparse(e.coeffs[i]) || "*" ||
+		 atom$unparse(e.atoms[i]) || " + "
+	    end
+	s := s || coef$unparse(e.coeffs[n])
+	return(s)
+	end unparse
+
+    
+    % Internal procedure
+    % Requires: I(e1) /\ I(e2)
+    % Returns:  e such that 
+    %   I(e)
+    %   If a is in Atoms(e1) and Atoms(e2), then 
+    %      coeff(e, a) = op(coeff(e1, a), coeff(e2, a)).
+    %   If a is in Atoms(e1), but not in Atoms(e2), then 
+    %      coeff(e, a) = op(coeff(e1, a), zero).
+    %   If a is in Atoms(e2), but not in Atoms(e1), then 
+    %      coeff(e, a) = op(zero, coeff(e1, a)).
+    
+    % IMPROVE: Handle overflow.
+
+    merge = proc (e1, e2: rep, op: oper_type) returns (rep)
+	oper_type = proctype (coef, coef) returns (coef) signals (overflow)
+	atms: atom_arr := atom_arr$[]
+	r: coef_arr := coef_arr$[]
+	i: int := 1
+	j: int := 1
+	while true do
+	    a1i: atom := e1.atoms[i]
+	    a2j: atom := e2.atoms[j]
+	    num1i: coef := e1.coeffs[i]
+	    num2j: coef := e2.coeffs[j]
+	    if a1i = a2j then
+	       op_num: coef := op(num1i, num2j)
+	       if op_num ~= zero then
+		  atom_arr$addh(atms, a1i)
+		  coef_arr$addh(r, op_num)
+		  end
+	       i := i + 1
+	       j := j + 1
+	     elseif a1i < a2j then
+	       atom_arr$addh(atms, a1i)
+	       coef_arr$addh(r, op(num1i, zero))
+	       i := i+1
+	     else atom_arr$addh(atms, a2j)
+		  coef_arr$addh(r, op(zero, num2j))
+		  j := j + 1
+	     end
+	    end except when bounds: end
+	n1: int := atom_seq$size(e1.atoms)
+	n2: int := atom_seq$size(e2.atoms)
+	for k: int in int$from_to(i, n1) do
+	    atom_arr$addh(atms, e1.atoms[k])
+	    coef_arr$addh(r, op(e1.coeffs[k], zero))
+	    end
+	for k: int in int$from_to(j, n2) do
+	    atom_arr$addh(atms, e2.atoms[k])
+	    coef_arr$addh(r, op(zero, e2.coeffs[k]))
+	    end
+	coef_arr$addh(r, op(e1.coeffs[n1+1], e2.coeffs[n2+1]))
+	return(rep${atoms: atom_seq$a2s(atms), coeffs: coef_seq$a2s(r)})
+	end merge
+
+    end expression

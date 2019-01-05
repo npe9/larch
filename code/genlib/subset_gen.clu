@@ -1,0 +1,52 @@
+#extend
+
+subset_gen = cluster is first, next, next_nonsuperset, exists, print
+
+    rep = record[current: int_arr,
+                 bound: int,
+		 top: int]
+    
+    first = proc (n: int) returns (cvt) signals (illegal)
+	if n < 1 then signal illegal end
+	return(rep${current: int_arr$fill(1, n, 0),
+	            bound: n,
+		    top: 0})
+	end first
+    
+    next = proc (s: cvt) signals (done)
+	last: int := s.current[s.top]
+	   except when bounds: last := 0 end
+	if last < s.bound 
+	   then s.top := s.top + 1
+		s.current[s.top] := last + 1
+	   else next_nonsuperset(up(s))
+	   end resignal done
+	end next
+       
+    next_nonsuperset = proc (s: cvt) signals (done)
+	while s.current[s.top] = s.bound do
+	    s.top := s.top - 1
+	    end except when bounds: signal done end
+	s.current[s.top] := s.current[s.top] + 1
+	end next_nonsuperset
+
+    exists = proc (s: cvt, n: int) returns (bool)
+	for i: int in int$from_to(1, s.top) do
+	    if n = s.current[i] then return(true) end
+	    end
+	return(false)
+	end exists
+    
+    print = proc (s: cvt)
+        own po: stream := stream$primary_output()
+	for i: int in int$from_to(1, s.top) do
+	    stream$puts(po, int$unparse(s.current[i]))
+	    stream$puts(po, " ")
+	    end
+	stream$putl(po, "")
+	end print
+    
+    end subset_gen
+		 
+	 
+	

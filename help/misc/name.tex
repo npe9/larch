@@ -1,0 +1,57 @@
+\doc{Assigning names to facts}
+\ref{name}
+\ref{extension}
+
+Each fact in LP's logical system has a name consisting of an alphanumeric
+prefix followed by a series of numeric suffixes separated by periods.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{name}      ::= \slink{../symbols/symbols}{simpleId} \s{extension}*
+\sd{extension} ::= \f{.} \slink{../symbols/symbols}{number} 
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+arith.1
+set.2.3
+\end{verbatim}
+
+\head{2}{Usage} 
+LP assigns new names to facts in response to the \cflink{assert} and
+\cflink{fix} commands, to critical pair equations in response to the 
+\cflink{critical-pairs} and \cflink{complete} commands, and to 
+conjectures in response to the \cflink{prove} command.  These names have a
+single numeric \s{extension}, whose value increases each time a new name is
+required.  Users can specify the name prefix for a fact in the
+\cflink{assert} command, or for a conjecture in the \cflink{prove}
+command, by writing \f{:}\s{simpleId}\f{:} before the fact.  Otherwise the
+value of the \setlink{name-prefix} setting governs the \s{simpleId} used as a
+prefix for new names.
+\p
+Normalization, ordering, unordering, and proofs preserve the names of formulas,
+rewrite rules, and deduction rules.  LP assigns subnames (i.e., names with an
+additional \s{extension}) to \dlink{../commands/instantiate}{instantiations} of
+formulas, rewrite rules, and deduction rules, to the results of applying
+deduction rules, and to hypotheses introduced during the proof of a conjecture.
+The names of the results of applying a \llink{deduction-rule}{deduction rule}
+to a formula extend the name of the deduction rule if the deduction rule has
+more than one hypothesis; otherwise they extend the name of the formula.
+\p
+One fact is called a \def{descendant} of another (and the latter is called an
+\def{ancestor} of the former) if the name of the first extends, by zero or more
+\s{extension}s, the name of the second.  A \def{proper} ancestor (or 
+descendant) of a fact is an ancestor (or descendant) with a different name.
+\p
+The names of the hardwired deduction rules for \llink{formula}{formulas} begin
+with \fq{lp_}.  The hardwired rewrite rules for the 
+\llink{connective}{logical connectives}, the \llink{conditional}{conditional} 
+and \llink{equality}{equality} operators, and the
+\llink{quantifier}{quantifiers} do not have names, nor do conjectures
+introduced as subgoals in proofs.
+
+\head{2}{See also}
+\begin{itemize}
+\item Using \slink{../misc/names}{names} in commands
+\item Name \dlink{../misc/class}{classes}
+\end{itemize}

@@ -1,0 +1,71 @@
+\doc{Quantifiers}
+\ref{quantifiers}
+\ref{universal-quantifiers}
+\ref{existential-quantifiers}
+\ref{\A}
+\ref{\E}
+\ref{scope}
+\ref{bound-variable}
+\ref{free-variable}
+\ref{exists}
+\ref{all}
+\ref{forall}
+
+Terms and formulas in LP can contain existential and universal first-order
+quantifiers.  Examples:
+\begin{verbatim}
+\A x \E y (x < y)
+x < y => \E z (x < z /\ z < y)
+\end{verbatim}
+The \def{existential quantifier} \fq{\E x} is pronounced ``there exists an
+\f{x}''.  The \def{universal quantifier} \fq{\A x} is pronounced ``for all
+\f{x}''.
+
+\head{2}{Syntax}
+\begin{verbatim}
+\sd{quantifier}    ::= \s{quantifierSym} \slink{variable}{variable}
+\sd{quantifierSym} ::= \f{\A} | \f{\E}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+\A x
+\E i: Nat
+\end{verbatim}
+
+\head{2}{Usage}
+All quantified variables must have been declared previously in a 
+\fq{\dlink{../commands/declare}{declare variables}} command.
+\p
+The standard quantifier scope rules (from first-order logic) apply within terms
+and formulas.  The \def{scope} of the leading quantifier in the terms 
+\fq{\A x t} and \fq{\E x t} is the term \fq{t}.  An occurrence of a variable 
+in a term is \def{bound} if it is in the scope of a quantifier over that
+variable; otherwise it is \def{free}.  The free variables in a formula, rewrite
+rule, or deduction rule are understood to be quantified universally.  LP
+suppresses the display of leading universal quantifiers.
+\p
+LP uses the following hardwired rewrite rules to reduce terms containing
+quantifiers.
+\begin{verbatim}
+\A x t -> t
+\E x t -> t
+\E x \E x1 ... xn (x = t /\ P(x))            -> \E x1 ... \E xn P(t)
+\A x \A x1 ... xn (~(x = t) \/ Q(x))         -> \A x1 ... xn Q(t)
+\A x \A x1 ... xn (x = t /\ P(x) => Q(x))    -> \A x1 ... xn (P(t) => Q(t))
+\A x \A x1 ... xn (P(x) => ~(x = t) \/ Q(x)) -> \A x1 ... xn (P(t) => Q(t))
+\end{verbatim}
+Here \f{P(x)} and \f{Q(x)} are arbitrary terms, \f{t} is a term with no free
+occurrences of \f{x}, and \f{P(t)} and \f{Q(t)} are the results of substituting
+\f{t} for \f{x} in \f{P(x)} and \f{Q(x)} with appropriate changes of bound 
+variables to prevent a quantifier in \f{P} or \f{Q} from
+\glink{capture}{capturing} a variable in \f{t}.
+\p
+The \cflink{fix} and \cflink{instantiate} commands, together with the 
+\dlink{../proof/by-generalization}{generalization} and
+\dlink{../proof/by-specialization}{specialization} proof methods, enable 
+users to eliminate quantifiers from facts and conjectures.  
+\p
+See also \glink{prenex}{prenex form}.
+
+

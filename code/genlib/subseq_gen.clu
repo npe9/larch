@@ -1,0 +1,58 @@
+#extend
+
+% This cluster provides a mechanism for generating all strictly increasing
+% subsequences of the integers from 1 to some integer "n".  It generates each
+% such subseqence once and only once, unless instructed to skip all extensions
+% of some particular subsequence.  It generates all intial segments of any
+% subsequence before generating the subsequence itself.
+
+% This cluster can be used to generate all subsets of a set by generating all
+% subsequences of indexes for elements in the set.
+
+
+subseq_gen = cluster is create, first, next, skip_extensions
+
+    rep = record[current: int_arr,
+                 bound: int,
+		 top: int]
+    
+    create = proc (n: int) returns (cvt) 
+	return(rep${current: int_arr$fill(1, n, 0),
+	            bound: n,
+		    top: 0})
+	end create
+    
+    first = proc (s: cvt) returns (int_seq)
+	s.top := 0
+	return(int_seq$[])
+	end first
+    
+    next = proc (s: cvt) returns (int_seq) signals (done)
+	last: int := s.current[s.top]
+	   except when bounds: last := 0 end
+	if last < s.bound 
+	   then s.top := s.top + 1
+		s.current[s.top] := last + 1
+	        return(rep2s(s))
+	   else return(skip_extensions(up(s)))
+	   end resignal done
+	end next
+       
+    skip_extensions = proc (s: cvt) returns (int_seq) signals (done)
+	while s.current[s.top] = s.bound do
+	    s.top := s.top - 1
+	    end except when bounds: signal done end
+	s.current[s.top] := s.current[s.top] + 1
+	return(rep2s(s))
+	end skip_extensions
+    
+    rep2s = proc (s: rep) returns (int_seq)
+	a: int_arr := int_arr$copy(s.current)
+	int_arr$trim(a, 1, s.top)
+	return(int_seq$a2s(a))
+	end rep2s
+    
+    end subseq_gen
+		 
+	 
+	

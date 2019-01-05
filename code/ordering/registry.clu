@@ -1,0 +1,488 @@
+#extend
+
+% A "registry" contains information about operators for use by the ordering
+% procedures.
+
+registry = cluster is
+	blank, new, check_new_status, commit, compare, compatible_stati, 
+	delete_op, delete_extreme_op, display, extreme_ops,
+	get_n_polys, get_status, is_bottom_op, is_top_op, lookup_polys, 
+	make_equal, make_higher, make_higher_or_equal, pop, push,
+	reset_status, set_n_polys, set_polys, set_status, write,
+	r_gets_r, copy, _gcd, decode, encode
+
+    % The rep for a registry contains the following information:
+    %
+    % "info":    maps operators in the symbol table to records giving their
+    %            current polynomial interpretation, their current status, and
+    %		 the value of "npushes" when the status was defined
+    % 
+    % "n_polys": the number of polynomials in the polynomial interpretation of
+    %		 each operator that will be used by the polynomial ordering
+    % 
+    % "npushes": the number of unpopped pushes
+    % "prec":    a precedence relation
+
+
+    rep = record[info: info_map, n_polys, npushes: int, prec: precedence]
+    info_map = keyed_mapping[operator, info]
+    info = record[npushes: int, polys: poly_interp, status: status]
+
+
+    % Returns a new registry containing no operators.
+
+    blank = proc () returns (cvt)
+	return(rep${info: info_map$[], n_polys: 1, npushes: 0, 
+	            prec: precedence$[]})
+	end blank
+
+
+    % Returns a new registry that records the status and precedence of the
+    % hardwired operators.
+    
+    new = proc () returns (registry)
+	reg: registry := registry$blank()
+	set_status(reg, op_and(), mset_stat)
+	set_status(reg, op_or(), mset_stat)
+	set_status(reg, op_implies(), l_to_r_stat)
+	set_status(reg, op_iff(), mset_stat)
+	extreme_ops(reg, op_set$[op_true(), op_false()], true)
+	return(reg)
+	end new
+
+
+    % Checks whether the status of "op" can be set to "stat".  Signals
+    % "same" if the status of "op" is already "stat".  Signals "multi_and_lex"
+    % if the equivalence class of "op" contains an operator whose status is not
+    % consistent with "stat"; i.e., it has multiset status and "stat" is a
+    % lexicographic status, or vice-versa.  Signals "status_defined" if "op"
+    % already has a different status.  ASSUMES: "op" is declared.
+   
+    check_new_status = proc (reg: cvt, op: operator, stat: status)
+			 signals (multi_and_lex, same, status_defined)
+        old_stat: status := get_status(up(reg), op)
+	if old_stat = stat then signal same end
+	if ~status$is_undefined(old_stat) then signal status_defined end
+	equiv_stat: status := undef_stat
+	for equiv_op: operator in precedence$equivalent_ops(reg.prec, op) do
+	    if equiv_op = op then continue end
+	    equiv_stat := get_status(up(reg), equiv_op)
+	    if ~status$is_undefined(equiv_stat) then break end
+	    end
+	tagcase equiv_stat
+	   tag multiset:
+	       tagcase stat
+		  tag left_to_right, right_to_left: signal multi_and_lex
+		  others:
+		  end
+	   tag left_to_right, right_to_left:
+	       tagcase stat
+		  tag multiset: signal multi_and_lex
+		  others:
+		  end
+	   others:
+	   end
+	end check_new_status
+
+
+    % Commits all additions made to the registry while "reg.npushes = np".
+    % Signals "mismatch" if "np" does not equal the height of the current
+    % stack.  Signals "empty" if the stack is empty.
+    
+    commit = proc (reg: cvt, np: int) signals (empty, mismatch)
+	precedence$commit(reg.prec, np)
+	   resignal empty, mismatch
+	for op: operator, inf: info in info_map$elements(reg.info) do
+	    if inf.npushes = np then inf.npushes := np - 1 end
+	    end
+	reg.npushes := np - 1
+	end commit
+
+
+    % Returns the result ("gt", "gt_eq", "eq", "lt_eq", "lt", or "undefined"
+    % of comparing "op1" and "op2" using "reg.prec".
+
+    compare = proc (reg: cvt, op1, op2: operator) returns (xcomparison)
+	return(precedence$compare(reg.prec, op1, op2))
+	end compare
+
+
+    % Yields all the stati that are compatible with the stati of the members
+    % of the equivalence class of "op" in "reg".  ASSUMES: "op" is in "reg".
+
+    compatible_stati = iter (reg: cvt, op: operator) yields (status)
+	if op.arity <= 1 then 
+	   yield(l_to_r_stat)
+	   return
+	   end
+	for op2: operator in precedence$equivalent_ops(reg.prec, op) do
+	    tagcase get_status(up(reg), op2)
+	       tag multiset: yield(mset_stat)
+			     return
+	       tag left_to_right, right_to_left:
+		   yield(l_to_r_stat)
+		   yield(r_to_l_stat)
+		   return
+	       others:
+	       end
+	    end
+	yield(mset_stat)
+	yield(l_to_r_stat)
+	yield(r_to_l_stat)
+	end compatible_stati
+
+
+    % Deletes "op" from the list of extreme operators in "reg.prec".
+
+    delete_extreme_op = proc (reg: cvt, op: operator) signals (missing)
+	precedence$delete_bottom(reg.prec, op)
+	   except when missing: precedence$delete_top(reg.prec, op)
+				   resignal missing
+		  end
+	end delete_extreme_op
+
+    
+    % Deletes "op" from "reg".
+
+    delete_op = proc (reg: cvt, op: operator)
+	info_map$delete(reg.info, op)
+	   except when missing: end
+	precedence$delete_op(reg.prec, op)
+	end delete_op
+
+
+    % Displays on "p" the current precedence and status information in "reg"
+    % for the operators in "ops".
+
+    display = proc (reg: cvt, p: printer, ops: op_set, stab: symtab)
+		signals (interrupt)
+	if op_set$empty(ops) then return end
+	printer$text(p, "\nOrdering constraints:\n\n")
+	precedence$display(reg.prec, p, ops, stab)
+	   resignal interrupt
+	left: op_arr := op_arr$[]
+	right: op_arr := op_arr$[]
+	multi: op_arr := op_arr$[]
+	for op: operator, inf: info in info_map$elements(reg.info) do
+	    if ~op_set$exists(ops, op) cor op.arity <= 1 then continue end
+	    tagcase inf.status
+	       tag left_to_right: op_arr$addh(left, op)
+	       tag right_to_left: op_arr$addh(right, op)
+	       tag multiset:      op_arr$addh(multi, op)
+	       others:		  if is_op_equals(op) then 
+				     op_arr$addh(multi, op)
+				     end
+	       end
+	    end
+        print_arr_with_ids[operator](p, "left-to-right", left, stab)
+	print_arr_with_ids[operator](p, "right-to-left", right,  stab)
+	print_arr_with_ids[operator](p, "multiset", multi, stab)
+	printer$newline(p)
+	end display
+
+    
+    % Dumps "reg" on the primary output for debugging.
+    
+    dump = proc (reg: registry)
+	stab: symtab := tracer$get_symtab()
+	display(reg, tracer$get_printer(), stab.ops, stab)
+	end dump
+    
+    
+    % Declares all operators in "ops" to be at the bottom or top of "reg.prec".
+    % Signals if an operator being placed at the bottom (top) of the precedence
+    % is already att he top (bottom).
+
+    extreme_ops = proc (reg: cvt, ops: op_set, bottom: bool) 
+	            signals (bottom(operator), top(operator))
+	if bottom
+	   then precedence$bottom(reg.prec, ops)
+	   else precedence$top(reg.prec, ops)
+	   end resignal bottom, top
+	end extreme_ops
+
+    
+    % Returns the number of polynomials in the polynomial interpretation that
+    % will be used by the polynomial ordering.
+
+    get_n_polys = proc (reg: cvt) returns (int)
+	return(reg.n_polys)
+	end get_n_polys
+
+
+    % Returns the status of "op" in "reg".
+
+    get_status = proc (reg: cvt, op: operator) returns (status)
+	if op.arity <= 1 then return(l_to_r_stat) end
+	return(info_map$image(reg.info, op).status)
+	   except when missing: if is_op_equals(op)
+				   then return(mset_stat)
+				   else return(undef_stat)
+				   end
+		  end
+	end get_status
+
+
+    % Returns "true" if "op" is at the top of the precedence.
+    
+    is_bottom_op = proc (reg: cvt, op: operator) returns (bool)
+	return(precedence$is_bottom(reg.prec, op))
+	end is_bottom_op
+    
+
+    % Returns "true" if "op" is at the top of the precedence.
+    
+    is_top_op = proc (reg: cvt, op: operator) returns (bool)
+	return(precedence$is_top(reg.prec, op))
+	end is_top_op
+    
+
+    % Returns the polynomial interpretation of "op".
+
+    lookup_polys = proc (reg: cvt, op: operator) returns (poly_interp)
+        if op.key = 0 
+	   then return(poly_interp$default(op.arity))
+	   else return(info_map$image(reg.info, op).polys)
+	   end except when missing: end
+	pi: poly_interp := poly_interp$default(op.arity)
+	create_info(reg, op, pi, undef_stat)
+	return(pi)
+	end lookup_polys
+
+
+    % Unites, in "reg.prec", the equivalence classes of "op1" and "op2".
+    % Signals "multi_and_lex" if the equivalence class of one of "op1" or "op2"
+    % contains an operator with multiset status and the equivalence class of
+    % the other contains an operator with lexicographic status.  Signals
+    % "ordered(opa, opb)" if "opa < opb" is in "reg.prec" and "{opa, opb} =
+    % {op1, op2}".  Does not change "reg.prec" if there is an exception.
+
+    make_equal = proc (reg: cvt, op1, op2: operator)
+		   signals (multi_and_lex, ordered(operator, operator))
+	if mixed_status(reg, op1, op2) then signal multi_and_lex end
+	precedence$make_equal(reg.prec, op1, op2)
+	   resignal ordered
+	end make_equal
+
+
+    % Adds "op1 > op2" to "reg.prec".  Signals "same" if "op1" and "op2" are
+    % the same operator.  Signals "inconsistent" and does not change "reg.prec"
+    % if "op2 >= op1" is in "reg.prec".
+
+    make_higher = proc (reg: cvt, op1, op2: operator) 
+		    signals (same, inconsistent)
+	precedence$make_higher(reg.prec, op1, op2)
+	   resignal same, inconsistent
+	end make_higher
+
+
+    % Declares that the operator "op1" is either higher than or equal to "op2"
+    % in "reg.prec".  Signals "inconsistent" if "op2 > op1" in "reg.prec".
+    % Signals "multi_and_lex" if the equivalence class of one of "op1" or "op2"
+    % contains an operator with multiset status and the equivalence class of
+    % the other contains an operator with lexicographic status.  Signals
+    % "redundant" if op1 > op2" or "op1 = op2" in "reg.prec".
+
+    make_higher_or_equal = proc (reg: cvt, op1, op2: operator)
+			     signals (inconsistent, multi_and_lex, redundant)
+	if mixed_status(reg, op1, op2) then signal multi_and_lex end
+	precedence$make_higher_or_equal(reg.prec, op1, op2)
+	   resignal inconsistent, redundant
+	end make_higher_or_equal
+
+
+    % (Internal procedure) Returns "true" if the equivalence of one of "op1"
+    % and "op2" contains an operator with multiset status and the other
+    % contains an operator with lexicographic status.
+    
+    mixed_status = proc (reg: rep, op1, op2: operator) returns (bool)
+	stat1, stat2: status
+	for op: operator in precedence$equivalent_ops(reg.prec, op1) do
+	    stat1 := get_status(up(reg), op)
+	    if ~status$is_undefined(stat1) then break end
+	    end
+	for op: operator in precedence$equivalent_ops(reg.prec, op2) do
+	    stat2 := get_status(up(reg), op)
+	    if ~status$is_undefined(stat2) then break end
+	    end
+	tagcase stat1
+	   tag multiset:
+	       tagcase stat2
+		  tag left_to_right, right_to_left: return(true)
+		  others: return(false)
+		  end
+	   tag left_to_right, right_to_left:
+	       tagcase stat2
+		  tag multiset: return(true)
+		  others: return(false)
+		  end
+	   tag undefined: return(false)
+	   end
+	end mixed_status
+
+
+    % Pops the state of the precedence and the status map.  Signals "mismatch"
+    % if "np" does not equal the height of the current stack.  Signals "empty"
+    % if the stack is empty.
+    
+    pop = proc (reg: cvt, np: int) signals (empty, mismatch)
+	precedence$pop(reg.prec, np)
+	   resignal empty, mismatch
+	for op: operator, inf: info in info_map$elements(reg.info) do
+	    if inf.npushes = np then inf.status := undef_stat end
+	    end
+	reg.npushes := np - 1
+	end pop
+    
+    
+    % Pushes the state of the precedence and the status map onto a stack.
+    % Returns the height of the stack.
+    
+    push = proc (reg: cvt) returns (int)
+	reg.npushes := reg.npushes + 1
+	if precedence$push(reg.prec) ~= reg.npushes then
+	   fail("registry$push")
+	   end
+	return(reg.npushes)
+	end push
+    
+
+    % Resets the status of all operators in the equivalence class of "op" in
+    % "reg" to undefined.  Returns the set of all operators whose status is
+    % changed.
+    
+    reset_status = proc (reg: cvt, op: operator) returns (op_set)
+	changed: op_set := op_set$[]
+	for equiv_op: operator in precedence$equivalent_ops(reg.prec, op) do
+	    if equiv_op.arity <= 1 then continue end
+	    i: info := info_map$image(reg.info, op)
+	       except when missing: continue end
+	    if ~status$is_undefined(i.status) then
+	       i.status := undef_stat
+	       op_set$insert(changed, op)
+	       end
+	    end
+	return(changed)
+	end reset_status
+
+    
+    % Sets to "n" the number of polynomials in the polynomial interpretations
+    % that will be used by the polynomial ordering.  Does not change the
+    % polynomials themselves.  If an operator has fewer than "n" polynomials
+    % associated with it, this sequence is extended by repeating the last
+    % polynomial in the sequence; if it has more, the extra polynomials are
+    % ignored.
+
+    set_n_polys = proc (reg: cvt, n: int) signals (bounds)
+	if n < 1 then signal bounds end
+	reg.n_polys := n
+	end set_n_polys
+
+
+    % Sets the polynomial interpretation of "op" to be "pi".  ASSUMES: "op" is
+    % declared.
+
+    set_polys = proc (reg: cvt, op: operator, pi: poly_interp)
+	info_map$image(reg.info, op).polys := pi
+	   except when missing: create_info(reg, op, pi, undef_stat) end
+	end set_polys
+
+
+    % Sets the status of "op" in "reg" to be "stat".  Signals "multi_and_lex"
+    % if the equivalence class of "op" contains an operator whose status is not
+    % consistent with "stat"; i.e., it has multiset status and "stat" is a
+    % lexicographic status, or vice-versa.  Signals "status_defined" if "op"
+    % already has a different status.  Does not change "reg" if one of these
+    % exceptions results.
+
+    set_status = proc (reg: cvt, op: operator, stat: status)
+		   signals (multi_and_lex, status_defined)
+	check_new_status(up(reg), op, stat)
+	   resignal multi_and_lex, status_defined
+	   except when same: return end
+	begin
+	    i: info := info_map$image(reg.info, op)
+	    i.status := stat
+	    i.npushes := reg.npushes
+	    end except when missing:
+			    p: poly_interp := poly_interp$default(op.arity)
+			    create_info(reg, op, p, stat)
+		       end
+	end set_status
+    
+    
+    % Writes LP commands to recreate the current precedence and status
+    % information in "reg" for the operators in "ops".
+
+    write = proc (reg: cvt, p: printer, ops: op_set, stab: symtab)
+	if op_set$empty(ops) then return end
+	line : int:= p.total_lines
+	printer$text(p, "% Ordering constraints\n\n")
+	precedence$write(reg.prec, p, ops, stab)
+	left: op_arr := op_arr$[]
+	right: op_arr := op_arr$[]
+	multi: op_arr := op_arr$[]
+	for op: operator, inf: info in info_map$elements(reg.info) do
+	    if ~op_set$exists(ops, op) cor op.arity <= 1 then continue end
+	    tagcase inf.status
+	       tag left_to_right: op_arr$addh(left, op)
+	       tag right_to_left: op_arr$addh(right, op)
+	       tag multiset:      op_arr$addh(multi, op)
+	       others:
+	       end
+	    end
+        write_arr_with_ids[operator](p, "register status left-to-right", left, 
+				     stab)
+	write_arr_with_ids[operator](p, "register status right-to-left", right,
+				     stab)
+	write_arr_with_ids[operator](p, "register status multiset", multi, 
+	    			     stab)
+	printer$newline(p)
+	% poly_interp$write(p, ops, up(reg), stab)
+	printer$text(p, "\n")
+	end write
+
+    
+    % Gives "r1" the same state as "r2".
+
+    r_gets_r = proc (r1, r2: cvt)
+	rep$r_gets_r(r1, r2)
+	end r_gets_r
+
+
+    % Returns a copy of "reg".
+
+    copy = proc (reg: cvt) returns (cvt)
+	return(rep$copy(reg))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+	       signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    
+    % (Internal procedure) Enters the polynomial interpretation "pi" and the
+    % status "stat" for "op" in "reg.info".  ASSUMES: "op" is declared.
+
+    create_info = proc (reg: rep, op: operator, pi: poly_interp, stat: status)
+	i: info := info${npushes: reg.npushes, polys: pi, status: stat}
+        info_map$insert(reg.info, op, i)
+	   except when impossible:
+		       fail("registry$%create_info: undeclared operator")
+		  end
+	end create_info
+
+    
+    end registry

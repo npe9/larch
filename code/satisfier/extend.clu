@@ -1,0 +1,165 @@
+#extend
+
+% Introduction:
+% If we have a term with numeric operations, e.g, a num_compound term,
+% then we can consider an algebra of terms under addition and multiplication 
+% on a number (example: in the algebra, the "sum" of vectors t1 and t2, 
+% t1 "+" t2 = (t1 + t2) -- term made by cons t1 and t2
+% with top-level operator +., or 3 "*" t1 = (3 * t1), term made from terms 3
+% and t1 by consing them with top-level op *)
+% Therefore, in algebra term t: (t1 +(t1 + t2))  imposes the following
+% constraints: t = 2 "*" t1 "+" t' /\ t' = t1 "+" t2. We'll call
+% this set of constraints C(t)
+% Let's now consider Isomorphic algebra U of unknowns with isomorphism
+% I: T->U. then, constraints imposed by  terms in T have duals in U.
+% Let's call this set of dual constraints Cu(t)
+
+
+% Assumes uns is the subset of U
+% Yields set Cu(t), for each equation yields together with it the
+% numeric theory, describing properties of + and *.
+% Modifies uns: adds to it all elements of U, involved in Cu(t) 
+% If uns.post contains u, s.t. u = I[t] then signals unkn(u)
+
+extend = iter (uns: unknowns, tsys: theory_system, t: term) 
+	   yields (lin_eq, numeric_theory) signals (overflow, unkn(unknown))
+    so: sort := t.sort
+    is_numeric: bool := true
+    nt: numeric_theory := tsys[so]
+       except when missing: is_numeric := false end
+    if ~is_numeric cor (term_is_num_atomic(nt, t) cand ~term_is_num(t))
+       then for ti: term in term_seq$elements(t.args) do
+		for eq: lin_eq, nt1: numeric_theory in extend(uns, tsys, ti) do
+		    yield(eq, nt1)
+		    end except when unkn (*): end
+		end
+       else signal unkn(uns[t])
+	       except when none:
+			   u: unknown := unknown$create(t)
+			   unknowns$add(uns, u)
+			   if term_is_num_compound(nt, t) then
+			      for eq: lin_eq in ensure_eq(uns, nt, u, t) do
+				  yield(eq, nt)
+				  end
+			      signal unkn(u)
+			    elseif term_is_num(t) then
+			      yield(ensure_eq_num(u, term2rat(t)), nt)
+			    end
+		      end
+       end resignal overflow
+    end extend
+
+% Requires: u.t = t, u \in unkns , t is num_compound, nt.sort = t.sort
+% Effects:  adds new unknowns for all immediate R_compound subterms of t
+%           and all immediate R_atomic subterms of t, that do not have unknowns 
+%           in unkns. Immediate means that subterm is not a subterm of 
+%           R_atomic subterm
+% Yields: set of equation E, s. t. E guarantees, that u = t under Theory R,
+%         given equates(unkns.pre).
+
+ensure_eq = iter (unkns: unknowns, nt: numeric_theory, u: unknown, t: term) 
+	      yields (lin_eq) signals (overflow)
+    own one: rat := rat$one()
+    own zero: rat := rat$zero()
+    op: operator := t.root
+    args: term_seq := t.args
+    uns: un_arr := un_arr$predict(1, term_seq$size(args))
+    for ti: term in term_seq$elements(args) do
+	ui: unknown := unkns[ti] 
+	   except when none:
+		       ui := unknown$create(ti)
+		       unknowns$add(unkns, ui)
+		       if term_is_num_compound(nt, ti) then
+			  for eq: lin_eq in ensure_eq(unkns, nt, ui, ti) do
+			      yield(eq)
+			      end
+			  end
+		       if term_is_num(ti) then
+			  yield(ensure_eq_num(ui, term2rat(ti))) 
+			  end
+		  end
+	un_arr$addh(uns, ui)
+	end resignal overflow
+    if op = nt.add then % yield eq: (u = SUM(uns[i]))
+       cfs: rat_arr := rat_arr$[]
+       for i: int in un_arr$indexes(uns) do rat_arr$addh(cfs, one) end
+       rat_arr$addh(cfs, zero)
+       yield(lin_eq${lhs: u, rhs: prod${cfs: cfs, uns: uns}})
+     elseif op = nt.sub then % yield eq: (u = uns[1] - uns[2])
+       yield(lin_eq${lhs: u, rhs: prod${cfs: rat_arr$[one, -one, zero],
+					uns: uns}})
+     elseif op = nt.minus then % yield: (u = -uns[1])
+       yield(lin_eq${lhs: u, rhs: prod${cfs: rat_arr$[-one, zero], uns: uns}})
+     elseif op = nt.mul then yield(ensure_eq_prod(u, args, uns))
+     elseif op = nt.div then yield(ensure_eq_div(unkns, nt, u, args, uns))
+     end resignal overflow
+       except when none: end
+    end ensure_eq
+
+
+ensure_eq_div = proc (unkns: unknowns, nt: numeric_theory, u: unknown, 
+	              args: term_seq, uns: un_arr) returns (lin_eq)
+		  signals (overflow)
+    own one: rat := rat$one()
+    own zero: rat := rat$zero()
+    own one_term: term := rat2term(nt, rat$one())
+    u1: unknown
+    n: rat
+    begin % if t1  is number
+	n := term2rat(args[1])
+	one_t2: term := term$make_funct(nt.div, term_seq$[one_term, args[2]])
+	u1 := unkns[one_t2] 
+	   except when none: u1 := unknown$create(one_t2)
+			     unknowns$add(unkns, u1)
+		  end
+	end except when not_number: % if t2 is number
+			n := one/term2rat(args[2])
+			u1 := uns[1]
+		   end
+       resignal overflow
+    return(lin_eq${lhs: u, 
+	           rhs: prod${cfs: rat_arr$[n, zero], uns: un_arr$[u1]}})
+    end ensure_eq_div
+	    
+% Requires: size(args) = size(uns) = 2, args[1] is a number , 
+%           or args[2] is a number.(but not both)
+% Returns linear equation eq, s.t. {eq , uns[1] = args[1], uns[2] = args[2]} <=>
+%         u = args[1] * args[2]
+
+ensure_eq_prod = proc(u: unknown, args: term_seq, uns: un_arr) returns (lin_eq)
+		   signals (overflow)
+    own zero: rat := rat$zero()
+    u1: unknown
+    n: rat
+    begin
+	n := term2rat(args[1])
+	u1 := uns[2]
+	end except when not_number:
+			n := term2rat(args[2])
+			u1 := uns[1]
+		   end resignal overflow
+    return(lin_eq${lhs: u, 
+		   rhs: prod${cfs: rat_arr$[n, zero], uns: un_arr$[u1]}})
+    end ensure_eq_prod
+
+
+lin_eq_unparse = proc (eq: lin_eq) returns (string)
+    s: string := "< " || unknown$unparse(eq.lhs)
+    unparse_prod: string := ""
+    prd: prod := eq.rhs
+    for i: int in un_arr$indexes(prd.uns) do
+	unparse_prod := unparse_prod || "+ (" || rat$unparse(prd.cfs[i]) ||
+	                "*" || unknown$unparse(prd.uns[i]) || ")" 
+        end
+    n: int := rat_arr$high(prd.cfs)
+    unparse_prod := unparse_prod || "+" || rat$unparse(prd.cfs[n])
+    return(s || "= " || unparse_prod)
+    end lin_eq_unparse
+
+
+% Requires u.t is a number n
+% Returns eq: u = n
+
+ensure_eq_num = proc (u: unknown, n: rat) returns (lin_eq)	
+    return(lin_eq${lhs: u, rhs: prod${cfs: rat_arr$[n], uns: un_arr$[]}})
+    end ensure_eq_num

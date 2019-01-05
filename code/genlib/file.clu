@@ -1,0 +1,92 @@
+% Gets the name of a file from "io", using "prompt" as a prompt if there is no
+% pending input.  Signals "no_response" if there is no input.  Prints an error
+% message and signals "error" if the input is not a legal file name.  Invokes
+% "help", and prompts for more input, if the user enters a `?'.  Returns the
+% file name with "suffix" appended if the name does not have a suffix.
+
+get_file_name = proc (io: iodev, prompt, suffix: string, help: help_proc)
+		  returns (file_name) signals (error, no_response)
+    help_proc = proctype (iodev)
+    name: string
+    while true do
+	name := trim_tail(iodev$gets(io, prompt, " \t"))
+	if string$empty(name) then signal no_response end
+	if name ~= "?" then break end
+	help(io)
+	end
+    fn: file_name := file_name$parse(name)
+       except when bad_format:
+		   iodev$error(io)
+		   iodev$printl(io, "\nThat is not a valid file name.")
+		   signal error
+	      end
+    % Put on the default suffix, if necessary.
+    if string$empty(fn.suffix) cand ~string$empty(suffix) then
+       fn := file_name$create(fn.dir, fn.name, suffix, fn.other)
+       end
+    return(fn)
+    end get_file_name
+
+    
+% Like "get_file_name", but searches for a file with the given name on the
+% search path "path".  Prints an error message and signals "error" if no such
+% file exists.
+
+get_existing_file_name = proc (io: iodev, prompt, path, suffix: string, 
+				help: help_proc)
+			   returns (file_name) signals (error, no_response)
+    help_proc = proctype (iodev)
+    fn: file_name := get_file_name(io, prompt, suffix, help)
+       resignal error, no_response
+    fstring: string := file_name$unparse(fn)
+    return(find_file_on_path(fn, path))
+       except when error (dirs: string):
+		   iodev$error(io)
+		   iodev$prints(io, "\nThere is no file named ")
+		   if string$empty(dirs)
+		      then iodev$printl(io, quote(fstring) || ".")
+		      else iodev$prints(io, quote(fstring))
+			   iodev$prints(io, " in any of the directories ")
+			   iodev$printl(io, dirs || ".")
+		      end
+    	      signal error
+	      end
+    end get_existing_file_name
+
+
+% Searches for a file named "fn" in the directories named in "path".  Returns
+% the name of the file, if found.  Otherwise signals "error(dirs)", where
+% "dirs" contains a comma-separated list of the quoted names of directories in
+% "path".
+
+find_file_on_path = proc (fn: file_name, path: string) returns (file_name)
+		      signals (error(string))
+    home: string := home_directory$get_name()
+    fstring: string := file_name$unparse(fn)
+    if fstring[1] = '/' then
+       if file_exists(fn) then return(fn) else signal error("") end
+     elseif string$indexs(home, fstring) = 1 then
+       fstring := home_directory$get_location()
+		    || string$rest(fstring, string$size(home)+1)
+       fn := file_name$parse(fstring)
+	  except when bad_format: end
+       if file_exists(fn) then return(fn) else signal error("") end
+     end
+    dir, space, rest: string := string_divide(path, " ")
+    dirs: string := ""
+    while ~string$empty(dir) do
+	if dir[string$size(dir)] ~= '/' then dir := dir || "/" end
+	if ~string$empty(dirs) then dirs := dirs || ", " end
+	dirs := dirs || quote(dir)
+	if dir = "./" then dir := "" end
+	if string$indexs(home, dir) = 1 then
+	   dir := home_directory$get_location()
+		    || string$rest(dir, string$size(home)+1)
+	   end
+	fn1: file_name := file_name$parse(dir || fstring)
+	   except when bad_format: end
+	if file_exists(fn1) then return(fn1) end
+	dir, space, rest := string_divide(rest, " ")
+	end
+    signal error(dirs)
+    end find_file_on_path

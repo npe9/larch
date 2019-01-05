@@ -1,0 +1,41 @@
+\doc{Sample proofs: three theorems about union}
+
+The next three theorems in \dflink{set1.lp}{set1.lp} follow from the principle
+of extensionality.
+\begin{verbatim}
+prove x \union {} = x
+  instantiate y by x \union {} in extensionality
+qed
+\end{verbatim}
+
+The \clink{instantiate} command directs LP to form the substitution instance
+\begin{verbatim}
+\A e (e \in x <=> e \in x \union {}) => x = x \union {}
+\end{verbatim}
+of the fact name \fq{extensionality}.  LP rewrites this formula automatically
+to 
+\begin{verbatim}
+\A e (e \in x <=> e \in x \/ e \in {}) => x = x \union {}
+\end{verbatim}
+using the definition of \fq{\union}, then to
+\begin{verbatim}
+\A e (e \in x <=> e \in x \/ false) => x = x \union {}
+\end{verbatim}
+using the definition of \fq{\in}, and then successively to
+\begin{verbatim}
+\A e (e \in x <=> e \in x) => x = x \union {}
+\A e (true) => x = x \union {}
+true => x = x \union {}
+x = x \union {}
+\end{verbatim}
+using LP's hardwired axioms.  LP orients this final simplification into the
+rewrite rule \f#x \union {} -> x#, which it uses to simplify the conjecture to
+\fq{true}.
+\p
+Two other theorems about union can also be proved by instantiating the
+extensionality axiom.  Both proofs are left as exercises to the reader.
+
+\begin{verbatim}
+prove x \union insert(e, y) = insert(e, x \union y)
+prove ac \union
+\end{verbatim}

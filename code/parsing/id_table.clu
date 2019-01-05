@@ -1,0 +1,73 @@
+#extend
+
+% An "id_table" maps objects of type "identifier" to objects of an arbitrary
+% type "range".  It is implemented as a hash table with "identifier$hash_val"
+% as the hash function and "identifier$same_sym" as the equivalance relation.
+% The operations are a subset of those in "hash_table", except that the hash
+% and equivalence functions do not have to be supplied as arguments.
+
+% By using "identifier$same_sym" as the hash table equivalence relation, this
+% cluster ensures that the unmarked and marked versions of prefix, postfix, and
+% infix identifiers (e.g., "-__", "__-", "__-__", and "-") all map to the same
+% "range" object.
+
+
+id_table = cluster [range: type] is
+	new, insert, image, delete, elements, copy, _gcd, encode, decode
+
+    rep 	= hash_table[identifier, range]
+    id_hash	= identifier$hash_val
+    id_similar	= identifier$same_sym
+
+    new = proc () returns (cvt)
+	return(rep$new())
+	end new
+
+    insert = proc (m: cvt, s: identifier, r: range) signals (exists)
+	rep$insert(m, s, r, id_hash, id_similar)
+	   resignal exists
+	end insert
+
+    image = proc (m: cvt, s: identifier) returns (range) signals (missing)
+	return(rep$image(m, s, id_hash, id_similar))
+	   resignal missing
+	end image
+
+    delete = proc (m: cvt, s: identifier) returns (range) signals (missing)
+	return(rep$delete(m, s, id_hash, id_similar))
+	   resignal missing
+	end delete
+
+    elements = iter (m: cvt) yields (identifier, range)
+	for s: identifier, r: range in rep$elements(m) do
+	    yield(s, r)
+	    end
+	end elements
+
+    copy = proc	(m: cvt) returns (cvt)
+		where range in copy_type
+	return(rep$copy(m, id_hash, id_similar))
+	end copy
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where range in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    % The following do not preserve sharing
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where range has decode: proctype(istream) returns (range)
+    		            signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where range has encode: proctype(range, istream)
+			    signals(not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+	
+
+    end id_table

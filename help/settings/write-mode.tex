@@ -1,0 +1,40 @@
+\doc{The write-mode setting}
+\ref{write-mode-setting}
+The \def{write-mode setting} controls the manner in which the \fq{write}
+command outputs identifiers and terms.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-write-mode-command} ::= \f{set write-mode} \slink{display-mode}{qualification-mode}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set write-mode qualified
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{write-mode} setting controls the output of identifiers and terms by
+the \cflink{write} command in the current proof context.
+\begin{verbatim}
+write-mode         effect
+----------         ------
+qualified          print qualifications for all subterms, identifiers
+unqualified        print no qualifications
+unambiguous        print enough qualifications to enable reparsing
+\end{verbatim}
+The default write-mode is \fq{qualified}, which guarantees that the output can
+be reparsed even in the presence of additional \llink{overload}{overloadings}
+for identifiers.  It is often desirable, however, to set the \fq{write-mode} to
+\fq{unambiguous} to shorten and improve the readability of \fq{.lp} files.  If 
+a problem arises in executing a \fq{.lp} file produced in this fashion (because
+it is being executed in a context that overloads one of its operators), the
+problem can be solved by starting a new copy of LP, executing the \fq{.lp}
+file, and writing it out again in \fq{qualified} mode.
+
+\head{2}{See also}
+\begin{itemize}
+\item \llink{overload}{Overloaded} identifiers
+\item The \setlink{display-mode} setting
+\end{itemize}

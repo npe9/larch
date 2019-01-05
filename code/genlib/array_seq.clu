@@ -1,0 +1,353 @@
+#extend
+
+% This file contains a number of generally-applicable operations on arrays and
+% sequences.
+
+
+% Returns "true" iff "a1" and "a2" are the same size, and the elements of "a1"
+% can be paired with the elements of "a2" in such a manner that for every pair
+% "<e1, e2>", "equiv(e1, e2)" returns "true".
+
+same_elements_arr = proc [t: type] (a1, a2: at, equiv: equiv_proc)
+		      returns (bool)
+    at = array[t]
+    equiv_proc = proctype (t, t) returns (bool)
+
+    size: int := at$size(a1)
+    if size ~= at$size(a2) then return(false) end
+
+    % The value of "used[i]" is "true" iff "a2[i]" has been found to be similar
+    % to some element in "a1".
+    used: bool_arr := bool_arr$fill(1, size, false)
+
+    for e: t in at$elements(a1) do
+	for i: int in at$indexes(a2) do
+	    if used[i] then continue end
+	    if equiv(e, a2[i]) then
+	       used[i] := true
+	       exit found
+	       end
+	    end
+	   except when found: continue end
+	return(false)
+	end
+    return(true)
+    end same_elements_arr
+
+
+% Returns "true" iff "s1" and "s2" are the same size, and the elements of "s1"
+% can be paired with the elements of "s2" in such a manner that for every pair
+% "<e1, e2>", "equiv(e1, e2)" returns "true".
+
+same_elements_seq = proc [t: type] (s1, s2: st, equiv: equiv_proc)
+		      returns (bool)
+    st = sequence[t]
+    equiv_proc = proctype (t, t) returns (bool)
+    return(same_elements_arr[t](st$s2a(s1), st$s2a(s2), equiv))
+    end same_elements_seq
+
+
+% Returns a new array containing the same objects as in "a," but in reverse
+% order.  The low bound of the returned array is one.
+
+reverse_arr = proc [t: type] (a: at) returns (at)
+    at = array[t]
+    result: at := at$predict(1, at$size(a))
+    for e: t in at$elements(a) do at$addl(result, e) end
+    result.low := 1
+    return(result)
+    end reverse_arr
+
+
+% Returns a sequence containing the same objects as in "s," but in reverse
+% order.
+
+reverse_seq = proc [t: type] (s: st) returns (st)
+    st = sequence[t]
+    return(st$a2s(reverse_arr[t](st$s2a(s))))
+    end reverse_seq
+
+
+% Returns "true" iff "a1" is less than "a2", where the two arrays are compared
+% lexicographically.
+
+less_lex_arr = proc [t: type] (a1, a2: at) returns (bool)
+	    where t has lt, equal: proctype (t, t) returns (bool)
+    at = array[t]
+    for i: int in at$indexes(a1) do
+	if a1[i] < a2[i] then return(true)
+	 elseif a1[i] ~= a2[i] then return(false)
+	 end
+	   except when bounds: return(false) end
+	end
+    return(at$size(a1) < at$size(a2))
+    end less_lex_arr
+
+
+% Returns "true" iff "s1" is less than "s2", where the two sequences are
+% compared lexicographically.
+
+less_lex_seq = proc [t: type] (s1, s2: st) returns (bool)
+	    where t has lt, equal: proctype (t, t) returns (bool)
+    st = sequence[t]
+    return(less_lex_arr[t](st$s2a(s1), st$s2a(s2)))
+    end less_lex_seq
+
+
+% Returns the smallest index "i" of "a" such that "comp(a[i], x)" is true.
+
+find_first_arr = proc [t: type] (a: at, x: t, comp: comp_proc) returns (int)
+		   signals (not_found)
+    at = array[t]
+    comp_proc = proctype (t, t) returns (bool)
+    for i: int in at$indexes(a) do
+	if comp(a[i], x) then return(i) end
+	end
+    signal not_found
+    end find_first_arr
+
+
+% Returns the smallest index "i" of "a" such that "comp(a[i], x)" is true.
+
+find_first_seq = proc [t: type] (s: st, x: t, comp: comp_proc) returns (int)
+		   signals (not_found)
+    st = sequence[t]
+    comp_proc = proctype (t, t) returns (bool)
+    return(find_first_arr[t](st$s2a(s), x, comp))
+       resignal not_found
+    end find_first_seq
+
+
+% Returns all indices "i" of "a" such that "comp(a[i], x)" is true.
+
+find_all_arr = proc [t: type] (a: at, x: t, comp: comp_proc) returns (int_seq)
+		 signals (not_found)
+    at = array[t]
+    comp_proc = proctype (t, t) returns (bool)
+    found: int_arr := int_arr$[]
+    for i: int in at$indexes(a) do
+	if comp(a[i], x) then int_arr$addh(found, i) end
+	end
+    return(int_seq$a2s(found))
+    end find_all_arr
+
+
+% Returns all indices "i" of "s" such that "comp(s[i], x)" is true.
+
+find_all_seq = proc [t: type] (s: st, x: t, comp: comp_proc) returns (int_seq)
+		 signals (not_found)
+    st = sequence[t]
+    comp_proc = proctype (t, t) returns (bool)
+    return(find_all_arr[t](st$s2a(s), x, comp))
+       resignal not_found
+    end find_all_seq
+
+
+% Returns "true" if "x" is in "xa".
+
+in_array = proc [t: type] (x: t, xa: at) returns (bool)
+	    where t in equal_type
+    at = array[t]
+    for x1: t in at$elements(xa) do
+	if x = x1 then return(true) end
+	end
+    return(false)
+    end in_array
+
+
+% Returns "true" if "x" is in "xs".
+
+in_seq = proc [t: type] (x: t, xs: st) returns (bool)
+	    where t in equal_type
+    st = sequence[t]
+    for x1: t in st$elements(xs) do
+	if x = x1 then return(true) end
+	end
+    return(false)
+    end in_seq
+
+
+% Returns the smallest "i" such that "x = xs[i]" if such an "i" exists.
+% Returns 0 otherwise.
+
+index_in_seq = proc [t: type] (x: t, xs: st) returns (int)
+	    where t in equal_type
+    st = sequence[t]
+    for i: int in st$indexes(xs) do
+	if x = xs[i] then return(i) end
+	end
+    return(0)
+    end index_in_seq
+
+
+% Returns the smallest "i" such that "x = xa[i]" if such an "i" exists.
+% Returns 0 otherwise.
+
+index_in_array = proc [t: type] (x: t, xa: at) returns (int)
+	    where t in equal_type
+    at = array[t]
+    for i: int in at$indexes(xa) do
+	if x = xa[i] then return(i) end
+	end
+    return(0)
+    end index_in_array
+
+
+% Returns "true" if "s1" is a subsequence of "s2".  "s1" is a subsequence of
+% "s2" if there exists a mapping "m" from the indices of "s1" to those of "s2"
+% with the following properties:  It must preserve the "int$gt" relation (i > j
+% ==> m(i) > m(j)), and "eq(s1[i], s2[m(i)])" returns "true".  Less formally,
+% "s1" can be formed by picking elements of "s2" in order.
+
+is_subseq = proc [t: type] (s1, s2: t_seq, eq: eq_proc) returns (bool)
+    t_seq = sequence[t]
+    eq_proc = proctype (t, t) returns (bool)
+
+    size_of_1: int := t_seq$size(s1)
+    size_of_2: int := t_seq$size(s2)
+    j: int := 1
+    for i: int in t_seq$indexes(s2) do
+	if eq(s2[i], s1[j])
+	   then j := j + 1
+	   else if (size_of_2 - i) < (size_of_1 - j + 1) then return(false) end
+	   end
+	end
+       except when bounds: end
+    return(j > size_of_1)
+    end is_subseq
+
+
+% Returns "true" if "a1" is an initial subarray of "a2".
+
+is_initial_subarray = proc [t: type] (a1, a2: at, eq: eq_proc) returns (bool)
+    at = array[t]
+    eq_proc = proctype (t, t) returns (bool)
+
+    s1: int := at$size(a1)
+    s2: int := at$size(a2)
+    if s2 < s1 then return(false) end
+    i2: int := at$low(a2)
+    for x: t in at$elements(a1) do
+	if ~eq(x, a2[i2]) then return(false) end
+	i2 := i2 + 1
+	end
+    return(true)
+    end is_initial_subarray
+
+
+% Deletes the "n"th element from "a".  Signals "bounds" if there is no such
+% element.
+
+delete_at_arr = proc [t: type] (a: at, n: int) signals (bounds)
+    at = array[t]
+    high: int := at$high(a)
+    if n < at$low(a) cor n > high then signal bounds end
+    for i: int in int$from_to(n, high-1) do
+	a[i] := a[i+1]
+	end
+    at$remh(a)
+    end delete_at_arr
+
+
+% Returns the sequence obtained by deleting the "n"th element from "s".
+% Signals "bounds" if there is no such element.
+
+delete_at_seq = proc [t: type] (s: st, n: int) returns (st) signals (bounds)
+    st = sequence[t]
+    return(st$subseq(s, 1, n-1) || st$subseq(s, n+1, st$size(s)))
+       except when bounds, negative_size: signal bounds end
+    end delete_at_seq
+
+
+% Deletes the elements in "a" that occur at indices in "to_delete".  ASSUMES:
+% "to_delete" is sorted.  Signals "bounds" if "to_delete" contains an invalid
+% index.
+
+delete_elements_arr = proc [t: type] (a: at, to_delete: int_arr) 
+			signals (bounds)
+    at = array[t]
+    if int_arr$empty(to_delete) then return end
+    low: int := at$low(a)
+    if int_arr$bottom(to_delete) < low cor int_arr$top(to_delete) > at$high(a) 
+       then signal bounds end
+    n_filled: int := 0
+    next_delete: int := int_arr$low(to_delete)
+    for i: int in at$indexes(a) do
+	if i = to_delete[next_delete] then
+	   next_delete := next_delete + 1
+	   continue
+	   end
+	   except when bounds: end
+	a[low + n_filled] := a[i]
+	n_filled := n_filled + 1
+	end
+    at$trim(a, low, n_filled)
+    end delete_elements_arr
+
+
+% Deletes and returns the first element "y" in "a" such that "comp(x, y)"
+% returns "true".  Signals "not_found" if there is no such element.
+
+delete_first_arr = proc [t: type] (a: at, x: t, comp: comp_proc) returns (t)
+		     signals (not_found)
+    at = array[t]
+    comp_proc = proctype (t, t) returns (bool)
+    n: int := find_first_arr[t](a, x, comp)
+       resignal not_found
+    y: t := a[n]
+    delete_at_arr[t](a, n)
+    return(y)
+    end delete_first_arr
+
+
+% Deletes all elements "y" in "a" such that "comp(x, y)" returns "true", and
+% returns a sequence containing those deleted elements.
+
+delete_all_arr = proc [t: type] (a: at, x: t, comp: comp_proc) returns (st)
+    at = array[t]
+    st = sequence[t]
+    comp_proc = proctype (t, t) returns (bool)
+    indices: int_seq := find_all_arr[t](a, x, comp)
+    deleted: at := at$[]
+    for i: int in int_seq$elements(indices) do
+	at$addh(deleted, a[i])
+	end
+    delete_elements_arr[t](a, int_seq$s2a(indices))
+    return(st$a2s(deleted))
+    end delete_all_arr
+
+
+% Mutates "a1" to have the same elements as "a2".
+
+make_same_array = proc [t: type] (a1, a2: at)
+    at = array[t]
+    at$trim(a1, at$low(a1), 0)
+    for x: t in at$elements(a2) do at$addh(a1, x) end
+    end make_same_array
+
+
+% Returns that member of "choices" of which "s" is an unambiguous prefix.
+% Signals "none" if there is no such choice.  Signals "ambiguous(matches)" if
+% "s" is a prefix of more than one choice.  ASSUMES: "choices" is sorted and
+% contains no duplicates.
+
+disambiguate = proc (s: string, choices: string_seq) returns (string)
+		 signals (none, ambiguous(str_set))
+    size_of_s: int := string$size(s)
+    matches: str_set := str_set$[]
+    for a: string in string_seq$elements(choices) do
+	if s = a then
+	   return(s)
+	 elseif s = string$substr(a, 1, size_of_s) then
+	   str_set$insert(matches, a)
+	 elseif s < a then
+	   break
+	 end
+	end
+    if str_set$empty(matches) then
+       signal none
+     elseif str_set$size(matches) = 1 then
+       return(str_set$any_element(matches))
+     else signal ambiguous(matches)
+     end
+    end disambiguate

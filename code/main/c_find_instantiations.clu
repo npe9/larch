@@ -1,0 +1,24 @@
+#extend
+
+% Processes the command "find-instantiations <rules> with <rules-equations>".
+
+c_find_instantiations = proc (i: interactive) signals (error)
+    ce1, ce2: class_expression :=
+	query$two_classes(i.symtab, "rewrite rules", "with",
+			  "rewrite rules and formulas")
+       except when none: return
+	      when error: aborted(i.p, "error in names")
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    names1, names2: name_set
+    begin
+	names1 := class_expression$full_eval(ce1, i.sys, i.symtab.classes)
+	names2 := class_expression$full_eval(ce2, i.sys, i.symtab.classes)
+	end except when undefined (cn: class_name):
+			aborted(i.p, "Undefined class name: "|| cn)
+		   end resignal error
+    for fa: fo_arr in system$find_instantiations(i, names1, names2) do
+	prover$make_inferences(i, stabilize_task_mode)
+	if OS_check_interrupt() then break end
+	end except when interrupt: end
+    end c_find_instantiations

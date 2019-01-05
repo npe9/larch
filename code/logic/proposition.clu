@@ -1,0 +1,262 @@
+#extend
+
+% A "proposition" is an annotated fact or conjecture (i.e., an equation,
+% deduction rule, induction rule, operator theory, or rewrite rule).  The
+% components of a proposition are as follows:
+
+% "prop": the fact or conjecture in the proposition
+
+% "active": "true" if the proposition should be used automatically once it is
+% part of the system (i.e., active conjectures become active facts).  Induction
+% rules are always inactive (because they must be invoked explicitly by the
+% "prove" command).  At present, operator theories are always active.
+
+% "immune": "immunity_on" if the proposition should not be subject to reduction
+% or to deduction once it is part of the system (i.e., immune conjectures
+% become immune facts, but can still be reduced during an attempted proof);
+% "immunity_anc" if the proposition should not be subject to reduction or
+% deduction by an ancestor; "immunity_off" if the proposition should be subject
+% to reduction and deduction.  Induction rules and operator theories are always
+% immune.  At present, deduction rules are immune from deduction.
+
+% "inconsistent": "true" if the proposition is known to be inconsistent.  Used
+% to prevent discovering an inconsistency infinitely many times.
+
+% "copy": a copy of the proposition created by "proposition$copy" when the own
+% variable "save_copy" is true and used by "proposition$copy" when the own
+% variable "use_copy" is true to preserve sharing between intersecting sets of
+% propositions
+
+proposition = cluster [ptype: type] is 
+	create, get_prop, get_active, get_immune, get_inconsistent, print, 
+	remove_copy, save_copies, set_active, set_immune, set_inconsistent,
+	set_prop, use_copies, equal, similar, copy, _gcd, decode, encode,
+	begin_coding, end_coding
+    
+    rep = record[prop: ptype, active: bool, immune: immunity, 
+                 inconsistent: bool, copy: maybe_copy,
+		 coded: int]		% 0 xor index in coded prop_arr
+    maybe_copy = oneof[exists: proposition[ptype], none: null]
+
+    prop_arr  = array[proposition[ptype]]
+
+    own save_copy: bool := false
+    own use_copy: bool := false
+
+    own coded: prop_arr := prop_arr$[]
+    own preserve_sharing: bool := false
+    
+    
+    % Creates a new proposition in which "p" has activity "ai.active" and
+    % immunity "ai.immune".
+    
+    create = proc (p: ptype, ai: ai_settings) returns (cvt)
+	return(rep${prop: p, active: ai.active, immune: ai.immune,
+	            inconsistent: false,
+	            copy: maybe_copy$make_none(nil),
+		    coded: 0})
+	end create
+    
+    
+    % Returns the logical expression in "prop".
+    
+    get_prop = proc (prop: cvt) returns (ptype)
+	return(prop.prop)
+	end get_prop
+    
+    
+    % Returns the activity of "prop".
+    
+    get_active = proc (prop: cvt) returns (bool)
+	return(prop.active)
+	end get_active
+    
+    
+    % Returns the immunity of "prop".
+    
+    get_immune = proc (prop: cvt) returns (immunity)
+	return(prop.immune)
+	end get_immune
+    
+    
+    % Returns "true" if "prop" is known to be inconsistent.
+    
+    get_inconsistent = proc (prop: cvt) returns (bool)
+	return(prop.inconsistent)
+	end get_inconsistent
+    
+    
+    % Prints a representation of "prop".
+    
+    print = proc (p: printer, prop: cvt, stab: symtab)
+		where ptype has print: proctype (printer, ptype, symtab)
+	printer$start_block(p)
+	printed: bool := false
+	if prop.immune = immunity_anc then
+	   printer$puts(p, "(i")
+	   printed := true
+	 elseif prop.immune = immunity_on then
+	   printer$puts(p, "(I")
+	   printed := true
+	 end
+	if ~prop.active then
+	   if ~printed then printer$puts(p, "(") end
+	   printer$puts(p, "P")
+	   printed := true
+	   end
+	if printed then printer$text(p, ") ") end
+        ptype$print(p, prop.prop, stab)
+	printer$finish_block(p)
+	end print
+    
+    
+    % Removes the pointer from "prop" to "prop.copy" so that "prop.copy" will
+    % not be marked by the garbage collector as in use just because "prop" is
+    % still in use.
+    
+    remove_copy = proc (prop: cvt)
+	if maybe_copy$is_none(prop.copy) then 
+	   fail("proposition$remove_copy")
+	   end
+        prop.copy := maybe_copy$make_none(nil)
+	end remove_copy
+    
+    
+    % Sets "save_copy" to "b".
+    
+    save_copies = proc (b: bool)
+	save_copy := b
+	end save_copies
+    
+
+    % Sets the activity of "prop" to "b".
+
+    set_active = proc (prop: cvt, b: bool)
+	prop.active := b
+	end set_active
+    
+    
+    % Sets the immunity of "prop" to "i".
+
+    set_immune = proc (prop: cvt, i: immunity)
+	prop.immune := i
+	end set_immune
+    
+    
+    % Sets the inconsistency of "prop" to "b".
+
+    set_inconsistent = proc (prop: cvt, b: bool)
+	prop.inconsistent := b
+	end set_inconsistent
+    
+    
+    % Sets "prop.prop" to "p".
+    
+    set_prop = proc (prop: cvt, p: ptype)
+	prop.prop := p
+	end set_prop
+    
+
+    % Sets "use_copy" to "b".
+    
+    use_copies = proc (b: bool)
+	use_copy := b
+	end use_copies
+    
+
+    % Returns "true" if "prop1" and "prop2" are the same proposition.
+    
+    equal = proc (prop1, prop2: cvt) returns (bool)
+	return(prop1 = prop2)
+	end equal
+    
+    
+    % Returns "true" if "prop1" and "prop2" are similar propositions.
+    
+    similar = proc (prop1, prop2: cvt) returns (bool)
+		where ptype in similar_type
+	return(rep$similar(prop1, prop2))
+	end similar
+    
+    
+    % Returns a copy of "prop".  Returns "prop.copy" if "use_copy" is true;
+    % otherwise returns a new copy of "prop", saving the new copy as
+    % "prop.copy" if "save_copy" is "true".  Assumes "prop.copy" exists iff
+    % "use_copy" is true.
+
+    copy = proc (prop: cvt) returns (cvt) 
+		where ptype in copy_type
+ 	if use_copy then
+	   return(down(maybe_copy$value_exists(prop.copy)))
+	   end except when wrong_tag: 
+	                   fail("proposition$copy: no copy to share") 
+		      end
+	if maybe_copy$is_exists(prop.copy) then 
+	    fail("proposition$copy: copy already exists") 
+	    end
+	prop1: rep := rep$copy(prop)
+	if save_copy then prop.copy := maybe_copy$make_exists(up(prop1)) end
+	return(prop1)
+	end copy
+    
+   
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where ptype in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where ptype has decode: proctype(istream) returns (ptype)
+     		                signals (end_of_file, not_possible(string))
+	if ~preserve_sharing then return(rep$decode(s)) end
+	  resignal end_of_file, not_possible
+	if bool$decode(s)
+	   then ans: rep := rep$decode(s)
+		prop_arr$addh(coded, up(ans))
+		if ans.coded ~= prop_arr$high(coded) then
+		   fail("proposition$decode")
+		   end
+		return(ans)
+	   else return(down(coded[int$decode(s)]))
+	   end
+	  resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where ptype has encode: proctype(ptype, istream)
+				signals(not_possible(string))
+	if ~preserve_sharing then
+	   rep$encode(c, s)
+	     resignal not_possible
+	   return
+	   end
+	if c.coded = 0
+	   then bool$encode(true, s)
+		prop_arr$addh(coded, up(c))
+		c.coded := prop_arr$high(coded)
+		rep$encode(c, s)
+	   else bool$encode(false, s)
+		int$encode(c.coded, s)
+		if c  ~= down(coded[c.coded]) then
+		   fail("proposition$encode")
+		   end
+	   end resignal not_possible
+	end encode
+	
+    begin_coding = proc ()
+	if prop_arr$size(coded) ~= 0 then fail("proposition$begin_coding") end
+	preserve_sharing := true
+	end begin_coding
+
+    end_coding = proc ()
+	preserve_sharing := false
+	for p: proposition[ptype] in prop_arr$elements(coded) do
+	    down(p).coded := 0
+	    end
+	prop_arr$trim(coded, 1, 0)
+	end end_coding
+
+    end proposition

@@ -1,0 +1,25 @@
+     This directory contains sample proofs done with the aid of LP.  Associated
+with each proof are the following files:
+     *.lp	    a file of commands used to perform the proof
+     *.lplog	    a log of the proof (created by "make")
+     *.lpscr        an LP-annotated script of commands for performing the proof
+                    (also created by "make")
+Other files in this directory are as follows.
+     Makefile       helps create *.lplog, .lpscr, Statistics
+     Statistics     statistics about the proofs
+     arbiter.doc    description of arbiter circuit
+
+
+arbiterG	Preservation of invariant by arbiter circuit (global proof)
+arbiterL	Preservation of invariant by arbiter circuit (local proof)
+cpu		Correctness of pipelined cpu implementation
+fib		Equivalence of two definitions of Fibonacci numbers
+list1     	Associativity of "append"; rev(rev(x)) == x
+list2		Ditto, but proved by consistency rather than by induction
+mutex		Mutual exclusion for arbiter circuit (cf. arbiterG, arbiterL)
+ring1		Correctness of ring oscillator (direct proof)
+ring2		Correctness of ring oscillator (proof by contradiction)
+set		Sample theorems about finite sets
+sorting		Correctness of insertion sort
+sum		The sum of the first n positive integers is n(n+1)/2
+

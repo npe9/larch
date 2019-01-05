@@ -1,0 +1,581 @@
+#extend
+
+% A "class_expression" describes a set of statements.
+
+%  class-expression     ::= class-primary (class-infix-op class-primary)*
+%  class-infix-op       ::= "," | "/" | "~"
+%  class-primary        ::= name-range            | class-name
+%                             | "deduction-rules" | "formulas"
+%                             | "induction-rules" | "operator-theories"
+%			      | "rewrite-rules"   | "active"
+%			      | "passive"         | "immune"
+%                             | "nonimmune"       | "ancestor-immune"
+%			      | "contains-match" "(" term ")"
+%                             | "contains-operator" "(" operator ")"
+%                             | "contains-variable" "(" variable ")"
+%                             | class-prefix-op "(" class-expression ")"
+%                             | "copy" "(" class-name ")"
+%                             | "(" [ class-expression ] ")"
+%  class-prefix-op       ::= "ancestors"            | "proper-ancestors"
+%                            "descendants"          | "proper-descendants"
+%                            "eval"
+
+% Restrictions: The class-infix-ops in a class-expression must be the same.
+
+class_expression = cluster is parse, read, definable, eval, partial_eval, 
+                              full_eval, print, unparse, _gcd, decode, encode
+
+    ce_arr = array[class_expression]
+    ce_pair = struct[left, right: class_expression]
+
+    rep = oneof[name_range: name_range, 
+                class_name, copy: class_name,
+                union, intersection: ce_arr,
+		difference: ce_pair,
+		empty: null,
+		anc, prop_anc, desc, prop_desc: class_expression,
+		fa: fact_attribute,
+		eval: class_expression,
+		ns: name_set]
+		
+    full_eval = proc (ce: class_expression, sys: system, ct: class_table)
+		  returns (name_set) signals (undefined(class_name))
+	return(eval(partial_eval(ce, sys, ct), sys, ct))
+	   resignal undefined
+	end full_eval
+    
+		
+    % Returns the set of names represented by "ce" in the environment given by
+    % "sys" and "ct".  Assumes: "ce" is partially evaluated and all
+    % "class_name"s used in "ce" are defined in "ct".
+
+    eval = proc (ce: cvt, sys: system, ct: class_table) returns (name_set)
+        tagcase ce
+	   tag name_range (nr: name_range):
+	       return(eval_name_range(nr, sys))
+	   tag class_name (cn: class_name):
+               return(eval(class_table$look_up(ct, cn), sys, ct))
+		  except when missing: fail("class_expression$eval") end
+	   tag union (ca: ce_arr):
+	       ns: name_set := name_set$[]
+	       for ce1: class_expression in ce_arr$elements(ca) do
+		   ns := name_set$union(ns, eval(ce1, sys, ct))
+		   end
+               return(ns)
+	   tag intersection (ca: ce_arr):
+	       ns: name_set := eval(ca[1], sys, ct)
+               first: bool := true
+	       for ce1: class_expression in ce_arr$elements(ca) do
+                   if first then first := false
+		      else ns := name_set$intersection(ns, eval(ce1, sys, ct))
+		      end
+		   end
+               return(ns)
+	   tag difference (cp: ce_pair):
+               return(name_set$difference(
+			  eval(cp.left, sys, ct),
+			  eval(cp.right, sys, ct)))
+	   tag fa (fa: fact_attribute):
+	       ns: name_set := name_set$[]
+	       for n: name in system$find_names(sys, fa) do
+		   name_set$insert(ns, n)
+		   end
+	       return(ns)
+	   tag empty:
+	       return(name_set$[])
+	   tag anc (ce1: class_expression):
+	       return(name_set$ancestors(eval(ce1, sys, ct), false))
+	   tag prop_anc (ce1: class_expression):
+	       return(name_set$ancestors(eval(ce1, sys, ct), true))
+	   tag desc (ce1: class_expression):
+	       return(eval_descendants(eval(ce1, sys, ct), sys, false))
+	   tag prop_desc(ce1: class_expression):
+	       return(eval_descendants(eval(ce1, sys, ct), sys, true))
+	   tag copy, eval:
+	       fail("class_expression$eval")
+	   tag ns (ns: name_set):
+	       return(ns)
+	   end
+        end eval
+
+	
+    eval_name_range = proc (nr: name_range, sys: system) returns (name_set)
+	ns1: name_set := name_set$[]
+	for n: name in system$find_names(sys, fact_attribute$make_all(nil)) do
+	    if name_range$contains_name(nr, n) then name_set$insert(ns1, n) end
+	    end
+	return(ns1)
+	end eval_name_range
+
+
+    eval_descendants = proc (ns: name_set, sys: system, proper: bool) 
+			 returns (name_set)
+	ns1: name_set := name_set$[]
+	for n: name in system$find_names(sys, fact_attribute$make_all(nil)) do
+	    n0: name := n
+	    if proper then n := n.parent end
+	       except when none: continue end
+	    while true do
+		if name_set$contains_name(ns, n)
+		   then name_set$insert(ns1, n0)
+			break
+		   else n := n.parent
+		   end
+		end except when none, exists: end
+	    end
+	return(ns1)
+	end eval_descendants
+
+
+    % Partially evaluates the class_expression "ce", expanding applications of
+    % "copy" and "eval" in the environment defined by "ct" and "sys".  Signals
+    % "undefined(cn)" if "ce" refers to a class_name "cn" not defined in "ct".
+
+    partial_eval = proc (ce: cvt, sys: system, ct: class_table)
+		     returns (cvt) signals (undefined(class_name))
+	tagcase ce
+	   tag name_range: 
+	       return(down(copy(up(ce))))
+	   tag class_name (cn: class_name):
+	       class_table$look_up(ct, cn) 
+		  except when missing: signal undefined(cn) end
+	       return(down(copy(up(ce))))
+	   tag union (ca: ce_arr):
+	       ca1: ce_arr := ce_arr$[]
+	       for ce1: class_expression in ce_arr$elements(ca) do
+		   ce_arr$addh(ca1, partial_eval(ce1, sys, ct))
+		   end
+	       return(rep$make_union(ca1))
+	   tag intersection (ca: ce_arr):
+	       ca1: ce_arr := ce_arr$[]
+	       for ce1: class_expression in ce_arr$elements(ca) do
+		   ce_arr$addh(ca1, partial_eval(ce1, sys, ct))
+		   end
+	       return(rep$make_intersection(ca1))
+	   tag difference(cp: ce_pair):
+	       cp := ce_pair${left: partial_eval(cp.left, sys, ct),
+			      right: partial_eval(cp.right, sys, ct)}
+	       return(rep$make_difference(cp))
+           tag anc (ce1: class_expression):
+	       return(rep$make_anc(partial_eval(ce1, sys, ct)))
+           tag prop_anc (ce1: class_expression):
+	       return(rep$make_prop_anc(partial_eval(ce1, sys, ct)))
+           tag desc (ce1: class_expression):
+	       return(rep$make_desc(partial_eval(ce1, sys, ct)))
+           tag prop_desc (ce1: class_expression):
+	       return(rep$make_prop_desc(partial_eval(ce1, sys, ct)))
+	   tag empty, fa, ns: 
+	       return(ce)
+	   tag copy (cn: class_name):
+	       return(down(class_table$look_up(ct, cn)))
+		  except when missing: signal undefined(cn) end
+	   tag eval (ce1: class_expression):
+	       % Calling "partial_eval" first makes references to undefined
+	       % class names signal "undefined" instead of making "eval" fail.
+	       return(rep$make_ns(eval(partial_eval(ce1, sys, ct), sys, ct)))
+	   end resignal undefined
+	end partial_eval
+
+
+	        
+    % Returns "true" if defining "cn" to be "ce" in "ct" does not result in
+    % a circularity.  Assumes: "ce" is partially evaluated.
+
+    definable = proc (ce: cvt, cn: class_name, ct: class_table)
+		  returns (bool)
+	tagcase ce
+	   tag name_range, fa, empty, ns:		return(true)
+	   tag class_name (cn1: class_name): 	return(cn1 ~= cn)
+	   tag union, intersection (ca: ce_arr):
+	       for ce1: class_expression in ce_arr$elements(ca) do
+		   if ~definable(ce1, cn, ct) then return(false) end
+		   end
+	       return(true)
+	   tag difference(cp: ce_pair):
+	       return(definable(cp.left, cn, ct) cand 
+		      definable(cp.right, cn, ct))
+	   tag anc, prop_anc, desc, prop_desc (ce1: class_expression):
+	       return(definable(ce1, cn, ct))
+	   tag copy, eval:
+	       fail("class_expression$definable")
+	   end
+	end definable
+
+
+	        
+    % Returns the "class_expression" represented by "s".  Writes a message to
+    % "error", and signals "error", if "s" does not represent a legal
+    % "class_expression".
+
+    parse = proc (s: string, stab: symtab, error: printer)
+	      returns (class_expression) signals (error)
+	scan: scanner := scanner$from_string(s, error)
+	ce: class_expression := read(scan, stab)
+	   resignal error
+	   except when empty: 
+		       scanner$error(scan, "expecting a class expression")
+		       signal error
+		  end
+	scanner$expecting(scan, token$is_eof, "end of class expression")
+	   resignal error
+	return(ce)
+	end parse
+
+
+    % Reads and returns the longest class expression from the head of "scan".
+    % Signals "empty" if the first token in "scan" cannot begin a class
+    % expression.  Writes a message to "scan", and signals "error", if the the
+    % first token in "scan" potentially begins a class expression, but the head
+    % of "scan" does not contain a legal class expression with respect to
+    % "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (cvt) 
+	     signals (error, empty)
+	ce: class_expression := read_primary(scan, stab)
+	   resignal error, empty
+	s: string := scan.nextToken.text
+ 	if s ~= "," cand s ~= conjunct_sym cand s ~= disjunct_sym 
+	     cand s ~= difference_sym
+	   then return(down(ce))
+	   end
+        ces: ce_arr := ce_arr$[ce]
+        while true do
+	    scanner$get(scan)
+	    ce_arr$addh(ces, read_primary(scan, stab))
+	    if scan.nextToken.text ~= s then break end
+	    end resignal error
+	   except when empty:
+		       scanner$error(scan, 
+			             "expecting class expression primary")
+		       signal error
+		  end
+        if s = conjunct_sym then return(rep$make_intersection(ces))
+	 elseif s = disjunct_sym then return(rep$make_union(ces))
+	 else for i: int in int$from_to(2, ce_arr$size(ces)) do
+	          ce := up(rep$make_difference(ce_pair${left: ce, 
+			  				right: ces[i]}))
+	          end
+	      return(down(ce))
+	 end
+	end read
+
+
+    % Reads and returns a class expression primary from the head of "scan".
+    % Signals "empty" if the first token in "scan" cannot begin a class
+    % expression primary.  Writes a message to "scan", and signals "error", if
+    % the the first token in "scan" potentially begins a class expression
+    % primary, but the head of "scan" does not contain a legal class expression
+    % primary with respect to "stab".
+
+    read_primary = proc (scan: scanner, stab: symtab) returns (cvt)
+		     signals (error, empty)
+        tok: token := scan.nextToken
+	s: string := tok.text
+        tagcase tok
+	   tag eof: 
+	       signal empty
+           tag left_paren:
+               scanner$get(scan)
+               result: rep := down(read(scan, stab))
+		  except when empty: result := rep$make_empty(nil) end
+	       scanner$expecting(scan, token$is_right_paren,
+		                 "a right parenthesis")
+	       return(result)
+	   tag simpleOp:
+	       if s[1] = '*' then
+                  return(rep$make_name_range(name_range$read(scan)))
+		elseif s = "$" then
+		  scanner$get(scan)
+		  if ~token$is_simpleId(scan.nextToken) then
+		     scanner$error(scan, "expecting a class name")
+		     signal error
+		     end
+		  s1: string := scan.nextToken.text
+		  scanner$get(scan)
+		  return(rep$make_class_name(s || s1))
+		else signal empty
+		end
+           tag simpleId:
+	       if ~token$is_nameId(tok) then signal empty end
+	       nr: name_range := name_range$read(scan)
+	       n: name := nr.start
+	       if ~name$is_pattern(n) cand ~symtab$is_root_name(stab, s) then
+		  if name$is_root(n) cand ~n.not_keyword
+		     then scanner$push(scan, tok)
+			  return(read_operator(scan, stab))
+		     else scanner$error_at(scan, tok.loc, "unknown name")
+			  signal error
+		     end
+		  end
+	       return(rep$make_name_range(nr))
+	   others: signal empty
+	   end resignal error
+	end read_primary
+
+
+    % (Internal procedure) Assumes: The first token in "scan" is not a root
+    % name in "stab".
+    
+    read_operator = proc (scan: scanner, stab: symtab) returns (rep) 
+		      signals (error)
+        own tab: keyword_table := init_tab()
+	op: string := keyword_table$scan_and_choose(tab, scan, stab)
+	   except when error: signal error
+	          when none:  scanner$error(scan, "unknown name or keyword")
+		              signal error
+	          end
+	% Check for keywords that do not require an argument list.
+	if op = "active" then
+	   return(rep$make_fa(fact_attribute$make_activity(true)))
+	 elseif op = "passive"  then % or op = "inactive"
+	   return(rep$make_fa(fact_attribute$make_activity(false)))
+	 elseif op = "immune" then
+	   return(rep$make_fa(fact_attribute$make_immunity(immunity_on)))
+	 elseif op = "ancestor_immune" then
+	   return(rep$make_fa(fact_attribute$make_immunity(immunity_anc)))
+	 elseif op = "nonimmune" then
+	   return(rep$make_fa(fact_attribute$make_immunity(immunity_off)))
+	 elseif op = "deduction-rules" then
+	   return(rep$make_fa(fact_attribute$make_dr(nil)))
+	 elseif op = "formulas" then
+	   return(rep$make_fa(fact_attribute$make_eq(nil)))
+	 elseif op = "induction-rules" then
+	   return(rep$make_fa(fact_attribute$make_ir(nil)))
+	 elseif op = "operator-theories" then
+	   return(rep$make_fa(fact_attribute$make_ot(nil)))
+	 elseif op = "rewrite-rules" then
+	   return(rep$make_fa(fact_attribute$make_rr(nil)))
+	 end
+	% Check for keywords that require an argument list.
+	scanner$expecting(scan, token$is_left_paren, 
+			  "parenthesized arguments for `" || op || "'")
+	   resignal error
+	if op = "copy" then
+	   if ~token$is_classSym(scan.nextToken) then exit bad end
+	   scanner$get(scan)
+	   if ~token$is_simpleId(scan.nextToken) then exit bad end
+	   cn: class_name := "$" || scanner$get(scan).text
+	   scanner$expecting(scan, token$is_right_paren, "a right parenthesis")
+	   return(rep$make_copy(cn))
+	   end 
+	   except when bad: scanner$error(scan, "expecting a class name")
+	                    signal error
+		  end
+	if op = "contains-operator" then
+	   id: identifier, l: locator := poperator$scan_opId(scan, true, false)
+	   msig: maybe_signature
+	   if token$is_colon(scan.nextToken) 
+	      then scanner$get(scan)
+		   sig: signature := signature$read(scan, stab)
+		   if id.arity ~= sig.arity then
+		      scanner$error_at(scan, l,
+				       "wrong number of __'s in identifier")
+		      signal error
+		      end except when unknown: end
+		   msig := maybe_signature$make(sig)
+	      else msig := maybe_signature$none()
+	      end 
+	   fa: fact_attribute := 
+	       fact_attribute$make_c_o(op_spec${id: id, sig: msig})
+	   scanner$expecting(scan, token$is_right_paren, "a right parenthesis")
+	   return(rep$make_fa(fa))
+	 elseif op = "contains-variable" then
+	   tok: token :=
+	       scanner$expecting(scan, 
+		                 token$is_unreservedSimpleId, "a variable")
+	   id: identifier := identifier$make_simple(tok.text)
+	   msort: maybe_sort
+	   if token$is_colon(scan.nextToken)
+	      then scanner$get(scan)
+	           msort := maybe_sort$make(sort$read(scan, stab))
+	      else msort := maybe_sort$none()
+	      end
+	   fa: fact_attribute := 
+	       fact_attribute$make_c_v(var_spec${id: id, sort: msort})
+	   scanner$expecting(scan, token$is_right_paren, "a right parenthesis")
+	   return(rep$make_fa(fa))
+	 elseif op = "contains-match" then
+	   fa: fact_attribute := fact_attribute$make_c_m(term$read(scan, stab))
+	   scanner$expecting(scan, token$is_right_paren, "a right parenthesis")
+	   return(rep$make_fa(fa))
+	 end resignal error
+        % Now we expect "(" [ class-expression ] ")"
+	ce: class_expression := read(scan, stab)
+	   resignal error
+	   except when empty: ce := up(rep$make_empty(nil)) end
+	scanner$expecting(scan, token$is_right_paren, "a right parenthesis")
+           resignal error
+	if op = "eval" then
+	   return(rep$make_eval(ce))
+	 elseif op = "ancestors" then
+	   return(rep$make_anc(ce))
+	 elseif op = "descendants" then
+	   return(rep$make_desc(ce))
+	 elseif op = "proper-ancestors" then
+	   return(rep$make_prop_anc(ce))
+	 elseif op = "proper-descendants" then
+	   return(rep$make_prop_desc(ce))
+	 else fail("class_expression$read_operator")
+	 end resignal error
+	end read_operator
+
+
+    init_tab = proc () returns (keyword_table)
+	tab: keyword_table :=
+	    keyword_table$["deduction-rules", "formulas", "induction-rules",
+			   "operator-theories", "rewrite-rules",
+			   "active", "passive", "immune", "nonimmune",
+			   "ancestor-immune", "contains-operator",
+			   "contains-variable",
+			   "contains-match",
+			   "ancestors", "proper-ancestors", "descendants",
+			   "proper-descendants", "eval", "copy"]
+	keyword_table$add_synonym(tab, "operator-theory", "operator-theories")
+	keyword_table$add_synonym(tab, "inactive", "passive")
+	return(tab)
+	end init_tab
+
+    
+    print = proc (p: printer, ce: cvt, stab: symtab)
+        tagcase ce
+	   tag name_range (nr: name_range): 
+	       name_range$print(p, nr)
+	   tag class_name (cn: class_name): 
+	       printer$puts(p, cn)
+	   tag union (ca: ce_arr):          
+	       print_infix(p, ca, stab, disjunct_sym)
+	   tag intersection (ca: ce_arr):   
+	       print_infix(p, ca, stab, conjunct_sym)
+	   tag difference (cp: ce_pair):
+	       printer$text(p, "~{~2I")
+	       print(p, cp.left, stab)
+	       printer$text(p, "~1A~{")
+	       printer$puts(p, difference_sym)
+	       printer$puts(p, " ")
+	       print(p, cp.right, stab)
+	       printer$text(p, "~}~}")
+	   tag fa (fa: fact_attribute):     
+	       print_fa(p, fa, stab)
+	   tag empty:
+	   tag anc (ce1: class_expression): 
+	       print_prefix(p, ce1, stab, "ancestors")
+	   tag prop_anc (ce1: class_expression):
+	       print_prefix(p, ce1, stab, "proper-ancestors")
+	   tag desc (ce1: class_expression):
+	       print_prefix(p, ce1, stab, "descendants")
+	   tag prop_desc (ce1: class_expression):
+	       print_prefix(p, ce1, stab, "proper-descendants")
+	   tag copy (cn: class_name):
+	       printer$start_block(p)
+	       printer$text(p, "~{copy(~J")
+	       printer$puts(p, cn)
+	       printer$text(p, ")~}")
+	   tag eval (ce1: class_expression):
+	       print_prefix(p, ce1, stab, "eval")
+	   tag ns (ns: name_set):
+	       name_set$print(p, ns, stab)
+	   end
+	end print
+    
+    print_infix = proc (p: printer, ces: ce_arr, stab: symtab, s: string)
+        printer$text(p, "~{~2I")
+	print(p, ces[1], stab)
+	for n: int in int$from_to(2, ce_arr$size(ces)) do
+	    printer$text(p, "~1A~{")
+	    printer$puts(p, s)
+	    printer$puts(p, " ")
+	    print(p, ces[n], stab)
+	    printer$text(p, "~}")
+	    end
+	printer$text(p, "~}")
+	end print_infix
+    
+    print_fa = proc (p: printer, fa: fact_attribute, stab: symtab)
+	tagcase fa
+	   tag dr:  printer$puts(p, "deduction-rules")
+	   tag eq:  printer$puts(p, "formulas")
+	   tag ir:  printer$puts(p, "induction-rules")
+	   tag ot:  printer$puts(p, "operator-theories")
+	   tag rr:  printer$puts(p, "rewrite-rules")
+	   tag all: printer$puts(p, "*")
+	   tag activity (a: bool):
+	       if a
+		  then printer$puts(p, "active")
+		  else printer$puts(p, "passive")
+		  end
+	   tag immunity (i: immunity):
+	       if i = immunity_on then       printer$puts(p, "immune")
+		elseif i = immunity_off then printer$puts(p, "nonimmune")
+		elseif i = immunity_anc then printer$puts(p, "ancestor-immune")
+		else fail("class_expression$print_fa")
+		end
+	   tag c_o (ops: op_spec):
+	       printer$text(p, "~{contains-operator~2I(~F")
+	       begin
+		   op: operator := operator${id: ops.id, sig: ops.sig.value}
+		   operator$print(p, op, stab)
+		   end except when wrong_tag: identifier$print(p, ops.id) end
+	       printer$text(p, ")~}")
+	   tag c_v (vs: var_spec):
+	       printer$text(p, "~{contains-variable~2I(~F")
+	       begin
+		   v: variable := variable${id: vs.id, sort: vs.sort.value}
+		   variable$print(p, v, stab)
+		   end except when wrong_tag: identifier$print(p, vs.id) end
+	       printer$text(p, ")~}")
+	   tag c_m (t: term):
+	       printer$text(p, "~{contains-match~2I(~F")
+	       term$print(p, t, stab)
+	       printer$text(p, ")~}")
+	   end
+	end print_fa
+    
+    print_prefix = proc (p: printer, ce: class_expression, stab: symtab, 
+	                 s: string)
+	threshhold = 6
+	printer$start_block(p)
+	printer$puts(p, s)
+	if string$size(s) >= threshhold
+	   then printer$text(p, "~2I(~F")
+	   else printer$text(p, "(~J")
+	   end
+	print(p, ce, stab)
+	printer$puts(p, ")")
+        printer$finish_block(p)
+	end print_prefix
+    
+    
+
+    % Returns a string representation of "ce".
+    
+    unparse = proc (ce: class_expression) returns (string)
+        return(unparse_item_with_ids[class_expression](ce))
+	end unparse
+    
+    
+    % Returns "ce", which is immutable.
+
+    copy = proc (ce: cvt) returns (cvt)
+	return(ce)
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end class_expression
+
+

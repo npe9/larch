@@ -1,0 +1,84 @@
+\doc{Interacting with the ordering procedures}
+\ref{interactive-ordering}
+\ref{divide}
+\ref{incompatible}
+
+When the \setlink{automatic-ordering} setting is \fq{off}, LP will prompt users
+to confirm any extensions to the registry when as
+\dlink{registered}{registered} ordering is in use, or to select an action for
+an equation LP is unable to orient.  When presented with a prompt like
+\begin{verbatim}
+The following sets of suggestions will allow the equation to be oriented into
+a rewrite rule:
+
+    Direction   Suggestions
+    ---------   -----------
+1.     ->       a > b
+2.     <-       b > a
+
+What do you want to do with the formula?
+\end{verbatim}
+users can type \fq{?} to see a menu such as
+\begin{verbatim}
+Enter one of the following, or type < ret > to exit.
+  accept[1..2]   interrupt      left-to-right  postpone       suggestions
+  divide         kill           ordering       right-to-left
+\end{verbatim}
+of possible responses, which have the following effects.
+\begin{description}
+\dt \fq{accept} (or a number in the indicated range)
+\dd 
+Confirms the first (or the selected) extension to the registry.  If this action
+is missing from the menu, no extension to the registry will orient the
+equation.
+\p
+\dt \fq{divide}
+\dd
+Causes LP to assert two new equations that imply the original equation.  This
+action is useful when an \def{incompatible} equation such as \fq{x/x = y/y}
+cannot be oriented into a rewrite rule because each side contains a variable
+not present in the other side.  If the user elects to divide this equation, LP
+will ask the user to supply a name for a new operator, for example, \fq{e}; it
+will then declare the operator and assert two equations, \fq{x/x = e} and
+\fq{y/y = e}, both of which can be oriented (by making \fq{/} higher than
+\fq{e}) and which normalize the original equation to an identity.  The 
+resulting system is a \glink{conservative}{conservative extension}
+of the old system.
+\p
+\dt \fq{interrupt}
+\dd
+Interrupts the ordering process and returns LP to the command level.
+\p
+\dt \fq{kill}
+\dd
+Deletes the problematic equation from the system.  This action should be used
+with caution, since it may change the theory associated with the current
+logical system.
+\p
+\dt \fq{left-to-right}
+\dd
+Orients the equation from left to right without extending the registry.  Doing
+this removes any guarantee of termination.
+\p
+\dt \fq{ordering}
+\dd
+Displays the current registry (as does the
+\dflink{../commands/display}{display ordering} command) and prompts the user
+for another response.
+\p
+\dt \fq{postpone}
+\dd
+Defers the attempt to orient this equation.  Whenever another equation is
+successfully oriented, all postponed equations are re-examined, since they may
+have been normalized into something more tractable.
+\p
+\dt \fq{right-to-left}
+\dd
+Orients the equation from right to left without extending the registry.  Doing
+this removes any guarantee of termination.
+\p
+\dt \fq{suggestions}
+\dd
+Redisplays the LP-generated suggestions for extending the registry and prompts
+the user for another response.
+\end{description}

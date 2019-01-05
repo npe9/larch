@@ -1,0 +1,18 @@
+\doc{Substitutions}
+\ref{substitutions}
+
+A \def{substitution} is a mapping from \llink{variable}{variables} to
+\llink{term}{terms} (of the appropriate \llink{sort}{sorts}).  A substitution 
+can be applied to a term as well as to a variable; its effect is to replace
+(simultaneously) each variable in the term by the substitution applied to that
+variable.  More precisely, if \fq{sigma} is a substitution defined on
+variables, then \fq{sigma} extends to terms by setting
+\begin{verbatim}
+sigma(f(t1, ..., tn)) = f(sigma(t1), ..., sigma(tn))
+\end{verbatim}
+A substitution \fq{sigma} is an \def{instance} of a substitution \fq{sigma1} if
+there is a substitution \fq{sigma2} such that 
+\fq{sigma(t) = sigma2(sigma1(t))}.
+\p
+See also \dlink{capture}{captured}.
+

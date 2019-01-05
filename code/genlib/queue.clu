@@ -1,0 +1,171 @@
+#extend
+
+% A "queue" is a list with a first-in, first-out structure.  Elements of type
+% "t" are appended to the end of the queue and removed from the head of the
+% queue.
+
+queue = cluster [t: type] is
+	new, cons, append, delete, head, concat, elements, size, empty, q2s,
+	unparse, same_elements, equal, similar, similar1, copy1, copy
+
+    rep = array[t]
+
+    t_seq = sequence[t]
+
+
+    % Creates and returns a new, empty queue.
+
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+
+
+    % Returns a new queue consisting of the elements in "e", where the elements
+    % are appended in the same order as they appear in "e".  This operation is
+    % provided so that a sequence-like constructor can be used to build a
+    % queue.  This facility is provided by the "#extend" mode of the CLU
+    % compiler.
+
+    cons = proc (e: elem_seq) returns (cvt)
+	elem_seq = sequence[t]
+	return(rep$cons(e))
+	end cons
+
+
+    % Appends "e" onto "q".
+    % Modifies: q
+    % Effects:  q' = q^ |- e
+
+    append = proc (q: cvt, e: t)
+	rep$addh(q, e)
+	end append
+
+
+    % Deletes and returns the element at the head of the queue.  Signals
+    % "empty" if "q" is empty.
+    % Modifies: q
+    % Effects:  q^ = result -| q' \/ (isEmpty(q^) /\ signals = empty)
+
+    delete = proc (q: cvt) returns (t) signals (empty)
+	e: t := rep$reml(q)
+	   except when bounds: signal empty end
+	q.low := 1
+	return(e)
+	end delete
+
+
+    % Returns, but does not delete, the element at the head of the queue.
+    % Signals "empty" if "q" is empty.
+
+    head = proc (q: cvt) returns (t) signals (empty)
+	return(rep$bottom(q))
+	   except when bounds: signal empty end
+	end head
+
+
+    % Returns a new queue that consists of the elements of "q1" followed by the
+    % elements of "q2", in order.
+
+    concat = proc (q1, q2: cvt) returns (cvt)
+	return(t_seq$s2a(t_seq$a2s(q1) || t_seq$a2s(q2)))
+	end concat
+
+
+    % Yields each of the elements of "q" in order from least-recently appended
+    % to most-recently appended.
+
+    elements = iter (q: cvt) yields (t)
+	for e: t in rep$elements(q) do
+	    yield(e)
+	    end
+	end elements
+
+
+    % Returns the number of elements in "q".
+
+    size = proc (q: cvt) returns (int)
+	return(rep$size(q))
+	end size
+
+
+    % Returns "true" iff "q" is empty.
+
+    empty = proc (q: cvt) returns (bool)
+	return(rep$empty(q))
+	end empty
+
+
+    % Returns a sequence consisting of the elements of "q".
+    
+    q2s = proc (q: cvt) returns (t_seq)
+	return(t_seq$a2s(q))
+	end q2s
+    
+
+    % Returns a string representation of "q".
+    
+    unparse = proc (q: cvt) returns (string)
+		where t has unparse: proctype (t) returns (string)
+	s: string := ""
+	for e: t in rep$elements(q) do
+	    if s ~= "" then s := s || "," end
+	    s := s || t$unparse(e)
+	    end
+	return(s)
+	end unparse
+    
+
+    % Returns "true" iff "q1" and "q2" are the same size, and the elements of
+    % "q1" can be paired with the elements of "q2" so that for every such pair
+    % <"e1", "e2">, "equiv(e1, e2)" returns "true".
+
+    same_elements = proc (q1, q2: cvt, equiv: equiv_proc) returns (bool)
+	equiv_proc = proctype (t, t) returns (bool)
+
+	return(same_elements_arr[t](q1, q2, equiv))
+	end same_elements
+
+
+    % Returns "true" iff "q1" and "q2" are the same object.
+
+    equal = proc (q1, q2: cvt) returns (bool)
+	return(q1 = q2)
+	end equal
+
+
+    % Returns "true" iff "q1" and "q2" contain similar elements in the same
+    % order.
+
+    similar = proc (q1, q2: cvt) returns (bool)
+		where t in similar_type
+	return(rep$similar(q1, q2))
+	end similar
+
+
+    % Returns "true" iff "q1" and "q2" contain the same element objects in the
+    % same order.
+
+    similar1 = proc (q1, q2: cvt) returns (bool)
+		where t in equal_type
+	return(rep$similar1(q1, q2))
+	end similar1
+
+
+    % Returns a new queue containing the same element objects as "q", in the
+    % same order.
+
+    copy1 = proc (q: cvt) returns (cvt)
+	return(rep$copy1(q))
+	end copy1
+
+
+    % Returns a new queue containing a copy of each of the elements of "q", in
+    % the same order.
+
+    copy = proc (q: cvt) returns (cvt)
+		where t in copy_type
+	return(rep$copy(q))
+	end copy
+
+
+    end queue

@@ -1,0 +1,66 @@
+
+
+
+   December 20, 1994                                                    LP(l)
+
+
+
+   NAME
+     lp - The Larch Prover (Release 3.1)
+
+   SYNOPSIS
+     lp [ _o_p_t_i_o_n_s ] [ _f_i_l_e...  ]
+
+
+   DESCRIPTION
+
+     The Larch Prover (LP) is an interactive proof assistant for multisorted
+     first-order logic.  It can be used to axiomatize theories and to provide
+     assistance in proving theorems.
+
+   OPTIONS
+
+     -d _d_i_r_e_c_t_o_r_y-_n_a_m_e
+          Specifies a location other than /_u_s_r/_l_o_c_a_l/_l_i_b/_L_P for LP's help
+          files and library of axiomatizations.
+
+     -t   Sets testing mode, in which errors do not terminate execution of
+          command files.
+
+   USAGE
+
+     LP is a command-driven system, which either prompts its user for input
+     or executes commands from files.  By convention, the names of command
+     files end with the suffix ._l_p.  The shell command
+          lp _f_i_l_e_1 ... _f_i_l_e_N
+     causes LP to execute the commands in the files _f_i_l_e_1._l_p, _f_i_l_e_N._l_p, and
+     then to prompt the user for input when those file are exhausted.
+
+     Information about how to use LP can be obtained by typing the LP command
+     ``help _t_o_p_i_c''.  Type ``help LP'' for a general introduction to LP, or
+     ``help ?'' for a list of all _t_o_p_i_c_s on which help is available.  The
+     same information is also available in hypertext format, with
+     /_u_s_r/_l_o_c_a_l/_l_i_b/_L_P/_h_e_l_p/_o_v_e_r_v_i_e_w._h_t_m_l as the home page.
+
+     In most cases when LP expects input, you can type a question mark (?) to
+     obtain a summary of the legal responses.
+
+
+   FILES
+     /usr/local/bin/lp           LP executable
+     /usr/local/lib/LP           LP's library area
+     /usr/local/lib/LP/help      Directory of help messages for LP
+     /usr/local/lib/LP/axioms    Directory of axioms
+
+
+   AUTHORS
+     LP was developed by Stephen J. Garland and John V. Guttag at the MIT
+     Laboratory for Computer Science.
+
+
+
+
+                                                                            1
+
+
+99

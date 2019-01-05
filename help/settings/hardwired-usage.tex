@@ -1,0 +1,35 @@
+\doc{The hardwired-usage setting}
+\ref{hardwired-usage-setting}
+
+The \def{hardwired-usage setting} provides users with limited control over LP's
+use of hardwired rewrite and deduction rules.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-hardwired-usage-command} ::= \f{set hardwired-usage} \slink{../symbols/symbols}{number}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set hardwired-usage 8
+\end{verbatim}
+
+\head{2}{Usage} 
+LP hardwires selected rewrite rules for the \llink{connective}{logical} and
+\llink{conditional}{conditional} operators.  For debugging purposes, the
+\fq{set hardwired-usage} command can be used to turn off some of these
+hardwired rewrite rules in the current proof context.  The following powers of
+2, if they occur in the binary representation of
+\s{number}, turn off the indicated rule.
+\begin{description}
+\dt 2
+\dd Turns off the rewrite rule \fq{x => false -> ~x}
+\dt 4
+\dd Turns off the rewrite rule \fq{x <=> false -> ~x}, but adds the rewrite
+rule \fq{x <=> y <=> ~y -> ~x}.
+\dt 8
+\dd Turns off the rewrite rules with left side \fq{if x then y else z} when
+\fq{y} or \fq{z} is \fq{true} or \fq{false}
+\dt 16
+\dd Turns off the if-simplification metarule
+\end{description}

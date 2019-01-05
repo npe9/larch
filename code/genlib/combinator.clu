@@ -1,0 +1,237 @@
+#extend
+
+% A "combinator" generates all combinations (i.e., not necessarily contiguous
+% subsequences) of items in a sequence.  A "cancel" operation prevents
+% generation of combinations that contain (as a subset) a canceled combination.
+
+combinator = cluster [t: type] is cons, combinations,
+				  combinations_with_remainder,
+				  restricted_combinations, one_size_combs,
+				  one_size_combs_with_remainder,
+				  cancel
+
+    rep = struct[base: t_seq, canceled: int_arr]
+
+    combination = sequence[t]
+    t_seq = sequence[t]
+    t_arr = array[t]
+
+
+    % Returns a new combinator for the sequence "base".  This operation can be
+    % invoked with sequence constructor syntax, as provided by the "#extend"
+    % mode of the CLU compiler.
+
+    cons = proc (base: t_seq) returns (cvt) signals (too_many_combinations)
+	if t_seq$size(base) > 32 then signal too_many_combinations end
+	return(rep${base: base, canceled: int_arr$[]})
+	end cons
+
+
+    % Yields every combination of the items in the base sequence of "c", except
+    % those that contain a canceled combination.  The combinations are yielded
+    % in order from smallest to largest.  Among combinations of one size,
+    % combinations are yielded in increasing lexicographical order of item
+    % positions in the base sequence.  In each yielded combination, items are
+    % in the same relative order as in the base sequence.
+
+    combinations = iter (c: cvt) yields (combination)
+	used: int := 0
+	max: int := t_seq$size(c.base)
+	for count: int in int$from_to(1, max) do
+	    for combo: combination in each_combo(c, used, 1, max, count) do
+		yield(combo)
+		end
+	    end
+	end combinations
+
+
+    % The same as "combinations", with the addition that for each combination
+    % yielded, the complementary combination is also yielded.
+
+    combinations_with_remainder = iter (c: cvt) 
+				    yields (combination, combination)
+	used: int := 0
+	max: int := t_seq$size(c.base)
+	for count: int in int$from_to(1, max) do
+	    for combo1, combo2: combination 
+		  in each_combo_with_remainder(c, used, 1, max, count) do
+		yield(combo1, combo2)
+		end
+	    end
+	end combinations_with_remainder
+
+
+    % Yields every combination of the items in the base sequence of "c" of size
+    % greater than or equal to "min", except those that contain a canceled
+    % combination.  The combinations are yielded in order from smallest to
+    % largest.  Among combinations of one size, combinations are yielded in
+    % increasing lexicographical order of item positions in the base sequence.
+    % In each yielded combination, items are in the same relative order as in
+    % the base sequence.  Signals "bad_min" if "min" is negative or greater
+    % than the number of elements in the base sequence of "c".
+
+    restricted_combinations = iter (c: cvt, min: int) yields (combination)
+				signals (bad_min)
+	max: int := t_seq$size(c.base)
+	if min < 0 cor min > max then signal bad_min end
+	used: int := 0
+	for count: int in int$from_to(min, max) do
+	    for combo: combination in each_combo(c, used, 1, max, count) do
+		yield(combo)
+		end
+	    end
+	end restricted_combinations
+
+
+    % Yields every combination of the items in the base sequence of "c" of size
+    % "n", except those that contain a canceled combination.  The combinations
+    % are yielded in order from smallest to largest.  Combinations are yielded
+    % in increasing lexicographical order of item positions in the base
+    % sequence.  In each yielded combination, items are in the same relative
+    % order as in the base sequence.  Signals "bad_size" if "n" is negative or
+    % greater than the number of elements in the base sequence of "c".
+
+    one_size_combs = iter (c: cvt, n: int) yields (combination)
+		       signals (bad_size)
+	max: int := t_seq$size(c.base)
+	if n < 0 cor n > max then signal bad_size end
+	used: int := 0
+	for combo: combination in each_combo(c, used, 1, max, n) do
+	    yield(combo)
+	    end
+	end one_size_combs
+
+
+    % The same as "one_size_combs", with the addition that for each combination
+    % yielded, the elements not in that combination are also yielded.
+
+    one_size_combs_with_remainder = iter (c: cvt, n: int)
+				      yields (combination, combination)
+				      signals (bad_size)
+	max: int := t_seq$size(c.base)
+	if n < 0 cor n > max then signal bad_size end
+	used: int := 0
+	for combo, remain: combination
+	      in each_combo_with_remainder(c, used, 1, max, n) do
+	    yield(combo, remain)
+	    end
+	end one_size_combs_with_remainder
+
+
+    % Cancels "combo" in "c".  May be called at any time, including during an
+    % invocation of "combinations".
+
+    cancel = proc (c: cvt, combo: combination) signals (bad_combination)
+		where t in equal_type
+	int_arr$addh(c.canceled, combo2int(c.base, combo))
+	   resignal bad_combination
+	end cancel
+
+
+    % (Internal iterator) Yields every combination in "c", except those that
+    % contain a canceled combination, that contains the items in the base
+    % sequence whose corresponding position in "used" is "true", plus "count"
+    % more items taken from the index range "low" to "high" in the base
+    % sequence.  Combinations are yielded in increasing lexicographical order
+    % of item positions in the base sequence.  In each yielded combination,
+    % items are in the same relative order as in the base sequence.
+
+    each_combo = iter (c: rep, used, low, high, count: int)
+		   yields (combination)
+	count := count - 1
+	for i: int in int$from_to(low, high) do
+	    if count > (high - i) then return end
+	    used := i_set1(used, i-1, true)
+	    if ~canceled(c, used) 
+	       then if count = 0
+		       then yield(int2combo(c.base, used))
+		       else for combo: combination
+				  in each_combo(c, used, i + 1, high, count) do
+				yield(combo)
+				end
+		       end
+	       end
+	    used := i_set1(used, i-1, false)
+	    end
+	end each_combo
+
+
+    % Same as "each_combo", with the addition that each iteration yields both
+    % the combination and the elements not in the combination.
+
+    each_combo_with_remainder = iter (c: rep, used, low, high, count: int)
+				  yields (combination, combination)
+	count := count - 1
+	for i: int in int$from_to(low, high) do
+	    if count > (high - i) then return end
+	    used := i_set1(used, i-1, true)
+	    if ~canceled(c, used) 
+	       then if count = 0
+		       then yield(int2combo(c.base, used),
+				  int2combo(c.base, i_not(used)))
+		       else for combo, remain: combination
+				  in each_combo_with_remainder
+					 (c, used, i + 1, high, count) do
+				yield(combo, remain)
+				end
+		       end
+	       end
+	    used := i_set1(used, i-1, false)
+	    end
+	end each_combo_with_remainder
+
+
+    % (Internal procedure)  Returns "true" iff the combination, consisting of
+    % the items in the base sequence whose corresponding position in "ba" is
+    % "true", contains one of the canceled combinations.
+
+    canceled = proc (c: rep, candidate: int) returns (bool)
+	for used: int in int_arr$elements(c.canceled) do
+	    if i_and(candidate, used) = used then return(true) end
+	    end
+	return(false)
+	end canceled
+
+
+    % (Internal procedure)  Returns the combination consisting of the items in
+    % the base sequence of a combinator, whose "pairs" field is "pairs", for
+    % which corresponding position in "ba" is "true".
+
+    int2combo = proc (base: t_seq, comb: int) returns (combination)
+	% To avoid excessive time spent in allocating and garbage collecting
+	% storage, we preserve the storage allocated for "combo" between
+	% invocations rather than simply writing combo: t_arr := t_arr$[].
+	own combo: t_arr := t_arr$predict(1, 32)
+	t_arr$trim(combo, 1, 0)
+	while true do
+	    bit: int := i_last1(comb)
+	    t_arr$addh(combo, base[bit+1])
+	    comb := i_set1(comb, bit, false)
+	    end
+	   except when none, bounds: end
+	return(t_seq$a2s(combo))
+	end int2combo
+
+
+    % Returns the determinant of "combo", with respect to a combinator whose
+    % "pairs" field is "pairs".
+
+    combo2int = proc (base: t_seq, combo: combination)
+		  returns (int) signals (bad_combination)
+		where t in equal_type
+	result: int := 0
+	for item: t in combination$elements(combo) do
+	    for i: int in t_seq$indexes(base) do
+		if item = base[i]
+		   then result := i_set1(result, i-1, true)
+			exit found
+		   end
+		end
+	       except when found: continue end
+	    signal bad_combination
+	    end
+	return(result)
+	end combo2int
+
+
+    end combinator

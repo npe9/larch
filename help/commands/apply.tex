@@ -1,0 +1,40 @@
+\doc{The apply command}
+\ref{apply-command}
+\ref{target}
+
+The \def{apply command} provides manual control over the application of
+(possibly passive) deduction rules to (possibly immune) formulas and rewrite
+rules.  It also provides a means of backward inference for finishing the proof
+of a conjecture.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{apply-command} ::= \f{apply} \slink{../misc/names}{names} \f{to} \s{target}
+\sd{target}        ::= \slink{../misc/names}{names} | \f{conjecture}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+apply passive / deduction-rules to *
+apply setExtensionality to conjecture
+\end{verbatim}
+
+\head{2}{Usage} 
+The first version of the \fq{apply} command applies the named
+\llink{deduction-rule}{deduction rules},
+whether or not they are \dlink{../settings/activity}{active}, to the formulas
+and rewrite rules named as the \s{target}, whether or not they are
+\dlink{../settings/immunity}{immune}.
+\p
+The second version attempts to prove the current conjecture by explicit
+deduction using the named deduction rules.  The attempt succeeds if the current
+conjecture matches a conclusion of a named deduction rule and the hypotheses of
+that deduction rule, under the matching substitution, reduce to \fq{true}.
+For example, if LP's logical system contains the axioms
+\begin{verbatim}
+setAxioms.1:         e \in (x \U y) -> e \in x \/ e \in y
+setExtensionality.1: when \A e (e \in s1 <=> e \in s2) yield s1 = s2
+\end{verbatim}
+then the command \fq{apply setExtensionality to conjecture} finishes the proof
+of the conjecture \fq{x \U x = x}.
+

@@ -1,0 +1,52 @@
+\doc{Naming facts in commands}
+\ref{names}
+\ref{name-pattern}
+\ref{last}
+
+Many LP commands require one or two sets of facts as arguments, which users
+describe in terms of the \dlink{name}{names} and kinds of facts they contain.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{names}          ::= \s{name-primary}+,
+                        | \s{name-primary} (\qf{/} \s{name-primary})+
+                        | \s{name-primary} (\qf{~} \s{name-primary})+
+\sd{name-primary}   ::= \s{name-pattern} | \slink{class}{class} | \qf{(} [ \s{names} ] \qf{)}
+\sd{name-pattern}   ::= \s{prefix-pattern} [ \f{.} ] 
+                        | \s{prefix-pattern} \slink{name}{extension}+ [ \f{:} \s{last} ] [ \f{!} ]
+\sd{prefix-pattern} ::= ( \slink{../symbols/symbols}{simpleId} | \qf{*} )+
+\sd{last}           ::= \slink{../symbols/symbols}{number} | \f{last}
+
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+arith, set.2:last
+*Hyp
+* ~ (nat, set)
+\end{verbatim}
+
+\head{2}{Usage} 
+Subsets of LP's logical system are described by expressions (called \s{names})
+built up from primitive descriptions using operators for union (\qf{,}),
+intersection (\qf{/}), and difference (\qf{~}).  Parentheses specify the
+associativity of these infix operators.  The empty set is named by
+\fq{()}, and the set of all facts in LP's logical system is named by \fq{*}.
+\p
+Primitive \s{names} include \slink{name}{name}s (e.g., \fq{set.2}) and
+\s{name-pattern}s of the following forms, where \fq{N} is a
+\s{name} that may have asterisks embedded in its alphanumeric prefix (e.g., 
+\fq{*} and \f{*Hyp.1}), and where \fq{m} and \fq{n} are positive integers.
+\begin{verbatim}
+Pattern    Facts denoted by pattern
+-------    ------------------------
+N!         those with names that can be obtained from N by replacing the
+           asterisks in N by alphanumeric characters
+N          those denoted by N! and all their descendents
+N.m:n!     those denoted by N.m!, N.m+1!, ..., N.n!
+N.m:n      those denoted by N.m, N.m+1, ..., N.n
+N.m:last!  those denoted N.m!, N.m+1!, ...
+N.m:last   those denoted N.m, N.m+1, ...
+\end{verbatim}
+\p
+See also \slink{class}{class}.

@@ -1,0 +1,43 @@
+			   Sample Uses of Completion
+                           -------------------------
+
+    This directory contains scripts for completing the sample algebraic
+theories in LP/lib.  Associated with each theory are two or three files:
+     _*.lp	     a file of commands used to complete the theory
+     *.lp	     an axiomatization of the theory (in LP/lib)
+     *.lplog         a log of the completion process (created by "make")
+The directory also contains some sample facts about groups that can be proved
+using completion.  Associated with each proof are two files:
+     *.lp	     a file containing the script of the proof
+     *.lplog         a log of the completion process (created by "make")
+Other files in this directory are as follows.
+     Makefile        helps create *.lplog, Statistics
+     Statistics      statistics about the completion process
+
+
+                           --- Algebraic Systems ---
+
+group 		Groups defined by the usual three equations
+group1		Groups defined by one equation
+group2		Groups defined by two equations
+grt 		Groups defined by surjectivity of right and left translations
+l-r		L-R systems
+taussky		Taussky axioms for groups
+
+
+                  --- Algebraic Systems with AC Operators ---
+
+abgrp		Abelian groups
+b-ring		Boolean rings; reduces boolean expressions to a normal form
+c-ring		Commutative rings
+c-ring-u	Commutative rings with unit element
+lattice		Free distributive lattices
+ring		Rings
+ring-u		Rings with unit element
+
+
+			--- Proofs using Completion ---
+
+commutator	Group commutator theorem: if x*x*x = e, then [[y,z],z] = e.
+fibGroup5	The Fibonnaci group F(5) is cyclic.
+groupHomo	Sample theorems about homormorphic images of groups

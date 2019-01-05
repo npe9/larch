@@ -1,0 +1,13 @@
+#extend
+
+% Processes the experimental "zap" command, which attempts to finish a proof by
+% showing that it is impossible to satisfy the ground facts in the system
+% together with (an instantiation of) the negation of the current conjecture.
+
+c_zap = proc (i: interactive) signals (error)
+    check_end_of_line(i.io)
+       resignal error
+    prover$zap(i)
+    end c_zap
+
+

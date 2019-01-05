@@ -1,0 +1,286 @@
+#extend 
+
+% A "numeric_theory" is an immutable object consisting of a sort and a set of
+% arithmetic and comparison operators defined over that sort.  There are three
+% kinds of numeric theories, nat, int, and real, which correspond to the
+% arithmetics of the natural numbers, the integers, and the reals.
+
+
+numeric_theory = cluster is 
+	make_real, make_int, make_nat, is_real, is_nat, is_int, get_sort,
+	get_add, get_sub, get_mul, get_div, get_minus, get_gt, get_lt, get_ge, 
+	get_le, get_equals, get_name, set_name, get_named, implied_theories, 
+	print, equal, similar, copy, _gcd, decode, encode
+			
+    rep = record[sort: sort, 
+    		 kind: theory_kind,
+		 name: name_type,
+		 add, mul, gt, lt, ge, le, equals: operator,
+		 sub, minus, div: maybe_op]
+		 
+    maybe_op    = oneof[op: operator, none: null]
+    no_op       = maybe_op$make_none(nil)
+    theory_kind = oneof[integers, naturals, reals: null]
+    name_type   = oneof[exists: name, none: null]    
+    
+    % Returns a "real" numeric theory with the indicated operators.  Signals
+    % "bad_operator" if some operator does not have an appropriate signature.
+
+    make_real = proc (so: sort, ops: real_ops) returns (cvt)
+		  signals (bad_operator)
+        nt: rep := rep${sort: so, kind: theory_kind$make_reals(nil), 
+			name: name_type$make_none(nil),
+			add: ops.add, mul: ops.mul, gt: ops.gt, lt: ops.lt,
+			ge: ops.ge, le: ops.le, equals: ops.equals,
+			sub: maybe_op$make_op(ops.sub),
+			minus: maybe_op$make_op(ops.minus),
+			div: maybe_op$make_op(ops.div)}
+	check_ops(nt)
+	   resignal bad_operator
+	return(nt)
+	end make_real
+     
+
+    % Returns an "int" numeric theory with the indicated operators.  Signals
+    % "bad_operator" if some operator does not have an appropriate signature.
+
+    make_int = proc (so: sort, ops: int_ops) returns (cvt) 
+		 signals (bad_operator)
+	nt: rep := rep${sort: so, kind: theory_kind$make_integers(nil),
+			name: name_type$make_none(nil),
+			add: ops.add, mul: ops.mul, gt: ops.gt, lt: ops.lt,
+			ge: ops.ge, le: ops.le, equals: ops.equals,
+			sub: maybe_op$make_op(ops.sub),
+			minus: maybe_op$make_op(ops.minus),
+			div: no_op}
+	check_ops(nt)
+	   resignal bad_operator
+	return(nt)
+	end make_int
+
+
+    % Returns a "nat" numeric theory with the indicated operators.  Signals
+    % "bad_operator" if some operator does not have an appropriate signature.
+
+    make_nat = proc (so: sort, ops: nat_ops) returns (cvt)
+		 signals (bad_operator)
+	nt: rep := rep${sort: so, kind: theory_kind$make_naturals(nil),
+			name: name_type$make_none(nil),
+			add: ops.add, mul: ops.mul, gt: ops.gt, lt: ops.lt,
+			ge: ops.ge, le: ops.le, equals: ops.equals,
+			sub: no_op, minus: no_op, div: no_op}
+	check_ops(nt)
+	   resignal bad_operator
+	return(nt)
+	end make_nat
+
+    
+    % Signals "bad_operator" if some operator in "nt" does not have an
+    % appropriate signature.
+    
+    check_ops = proc (nt: rep) signals (bad_operator)
+	so: sort := nt.sort
+        sig: signature := signature${dom: sort_seq$[so, so], rng: so}
+	if nt.add.sig ~= sig cor nt.mul.sig ~= sig 
+	     cor maybe_op$value_op(nt.sub).sig ~= sig
+	     cor maybe_op$value_op(nt.minus).sig ~=
+		 signature${dom: sort_seq$[so], rng: so}
+	     cor maybe_op$value_op(nt.div).sig ~= sig
+	   then signal bad_operator
+	   end except when wrong_tag: end
+	sig := sig_equals(so)
+	if nt.lt.sig ~= sig cor nt.gt.sig ~= sig cor nt.le.sig ~= sig
+	     cor nt.ge.sig ~= sig cor nt.equals.sig ~= sig 
+	   then signal bad_operator
+	   end
+	end check_ops
+
+    
+    % Returns true iff "nt" is a "real" numeric theory.
+
+    is_real = proc (nt: cvt) returns (bool)
+	return(theory_kind$is_reals(nt.kind))
+	end is_real
+
+
+    % Returns true iff "nt" is an "int" numeric theory.
+
+    is_int = proc (nt: cvt) returns (bool)
+	return(theory_kind$is_integers(nt.kind))
+	end is_int
+
+    
+    % Returns true iff "nt" is a "nat" numeric theory.
+
+    is_nat = proc (nt: cvt) returns (bool)
+	return(theory_kind$is_naturals(nt.kind))
+	end is_nat
+
+
+    % Returns the sort on which "nt" is based.
+    
+    get_sort = proc (nt: cvt) returns (sort)
+	return(nt.sort)
+	end get_sort
+    
+    
+    % Returns the addition operator of "nt".
+
+    get_add = proc (nt: cvt) returns (operator)
+	return(nt.add)
+	end get_add
+
+    
+    % Returns the subtraction operator of "nt".  Signals "none" if "nt" does
+    % not have a subtraction operator.
+
+    get_sub = proc (nt: cvt) returns (operator) signals (none)
+	return(maybe_op$value_op(nt.sub)) 
+	   except when wrong_tag: signal none end
+	end get_sub
+
+    
+    % Returns the unary minus operator of "nt".  Signals "none" if "nt" does
+    % not have a unary minus operator.
+
+    get_minus = proc (nt: cvt) returns (operator) signals (none)
+	return(maybe_op$value_op(nt.minus)) 
+	   except when wrong_tag: signal none end
+	end get_minus
+
+
+    % Returns the multiplication operator of "nt".
+
+    get_mul = proc (nt: cvt) returns (operator)
+	return(nt.mul)
+	end get_mul
+    
+
+    % Returns the division operator of "nt".  Signals "none" if "nt" does not
+    % have a division operator.
+
+    get_div = proc (nt: cvt) returns (operator) signals (none)
+	return(maybe_op$value_op(nt.div))
+	   except when wrong_tag: signal none end
+	end get_div
+
+    
+    % Returns the "greater than" operator of "nt".
+
+    get_gt = proc (nt: cvt) returns (operator)
+	return(nt.gt)
+	end get_gt
+
+
+    % Returns the "greater than or equal to" operator of "nt".
+
+    get_ge = proc (nt: cvt) returns (operator)
+	return(nt.ge)
+	end get_ge
+
+
+    % Returns the "less than" operator of "nt".
+
+    get_lt = proc (nt: cvt) returns (operator)
+	return(nt.lt)
+	end get_lt
+
+
+    % Returns the "less than or equal to" operator of "nt".
+
+    get_le = proc (nt: cvt) returns (operator)
+	return(nt.le)
+	end get_le
+
+    
+    % Returns the equality operator of "nt".
+
+    get_equals = proc (nt: cvt) returns (operator)
+	return(nt.equals)
+	end get_equals
+
+
+    % Returns the name of "nt".  Signals "none" if "nt" is not named.
+    
+    get_name = proc (nt: cvt) returns (name) signals (none)
+	return(name_type$value_exists(nt.name))
+	   except when wrong_tag: signal none end
+	end get_name
+    
+    
+    % Sets the name of "nt" to "n".  Signals "impossible" if "nt" is already
+    % named.
+
+    set_name = proc (nt: cvt, n: name) signals (impossible)
+	if name_type$is_exists(nt.name) then signal impossible end
+	nt.name := name_type$make_exists(n)
+	end set_name
+
+
+    % Returns "true" if "nt" is named.
+
+    get_named = proc (nt: cvt) returns (bool)
+	return(name_type$is_exists(nt.name))
+	end get_named
+
+
+    % Yields all operator theories implied by "nt".
+
+    implied_theories = iter (nt: cvt) yields (op_theory)
+	yield(op_theory$make_ac(nt.add))
+	yield(op_theory$make_ac(nt.mul))
+	end implied_theories
+    
+    
+    % Prints "nt".
+    
+    print = proc (p: printer, nt: cvt, stab: symtab)
+	tagcase nt.kind
+	    tag integers: printer$text(p, "Integer(")
+	    tag naturals: printer$text(p, "Natural(")
+	    tag reals:    printer$text(p, "Real(")
+	    end
+	sort$print(p, nt.sort)
+	printer$text(p, ")")
+	end print
+    
+
+    % Returns "true" iff "nt1" and "nt2" represent the same numeric theories.
+    
+    equal = proc (nt1, nt2: numeric_theory) returns (bool)
+	return(similar(nt1, nt2))
+	end equal
+
+    
+    % Returns "true" iff "nt1" and "nt2" represent the same numeric theories.
+
+    similar = proc (nt1, nt2: cvt) returns (bool)
+	return(nt1.sort = nt2.sort cand nt1.kind = nt2.kind
+		 cand nt1.add = nt2.add cand nt1.mul = nt2.mul
+		 cand nt1.gt = nt2.gt cand nt1.lt = nt2.lt
+		 cand nt1.ge = nt2.ge cand nt1.le = nt2.le
+		 cand nt1.equals = nt2.equals cand nt1.sub = nt2.sub
+		 cand nt1.minus = nt2.minus cand nt1.div = nt2.div)
+	end similar
+
+    
+    % Returns "nt", which is immutable.
+    
+    copy = proc (nt: cvt) returns (cvt)
+	return(nt)
+	end copy
+    
+    _gcd = proc (nt: cvt, x: gcd_tab) returns (int)
+	return(rep$_gcd(nt, x))
+	end _gcd
+    
+    decode = proc (s: istream) returns (cvt)
+               signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+    
+    end numeric_theory

@@ -1,0 +1,49 @@
+\doc{Rewrite rules}
+\ref{rewrite-rules}
+\ref{->}
+
+A \def{rewrite rule} is an operational form for a formula.  LP uses rewrite
+rules to \olink{reduce}{rewrite} terms to logically equivalent terms.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{rewrite-rule} ::= \slink{term}{term} \f{->} \slink{term}{term}
+\end{verbatim}
+
+Restrictions: The two \s{term}s in a rewrite rule must have the same sort.  The
+left side of the rule must not be a variable, the logical constant \fq{true},
+or the logical constant \fq{false}.  Every free variable in the right side must
+also occur free in left side.
+
+\head{2}{Examples}
+\begin{verbatim}
+x + 0 -> x
+x <= y -> x < y \/ x = y
+x | y -> \E z (y = x*z)
+0 < 1 -> true
+\end{verbatim}
+
+\head{2}{Usage}
+Users cannot \clink{assert} or \clink{prove} rewrite rules directly.  Instead,
+they must assert or prove \dlink{formula}{formulas}, which LP then
+\dlink{../commands/order}{orients} into rewrite rules.  The logical content
+of a term is the equation that results from replacing \f{->} by \f{=}.
+\p
+LP maintains the invariant that all \dlink{../settings/activity}{active}
+rewrite rules have been applied to all \dlink{../settings/immunity}{nonimmune}
+formulas, rewrite rules, and deduction rules in the system.
+\p
+Some rewrite rules are hardwired into LP to define properties of the
+\dlink{connective}{logical connectives}, the \dlink{conditional}{conditional}
+and \dlink{equality}{equality} operators, and the
+\dlink{quantifier}{quantifiers}.
+\p
+The restriction that the left side of a rewrite rule not be a variable prevents
+``rules'' like \fq{x -> f(x)} from leading to a nonterminating rewriting
+sequence such as \fq{x -> f(x) -> f(f(x)) -> ...}.  The restriction that it not
+be \fq{true} or \fq{false} preserves the meaning of those logical constants.
+The restriction that the right side not introduce a free variable is more
+technical.  It prevents logically equivalent ``rules'' such as
+\fq{f(x) -> f(y)} and \fq{f(u) -> f(v)} from producing different results when
+applied to terms like \fq{y + f(x)}.
+

@@ -1,0 +1,55 @@
+Actions of tex2html
+
+source			replacement/change
+\doc{title}		header for .html page
+\head{N}{title}	       	<hN>title</hN>
+\ref{x}			delete line that begins with this
+\begin{itemize}	       	<ul>
+\end{itemize}		</ul>
+\begin{description}	<dl>
+\end{description}	</dl>
+\begin{verbatim}	<tt><pre><blockquote>   and some magic?
+\end{verbatim}		</tt></pre></blockquote>
+\begin{quote}		<blockquote>
+\end{quote}		</blockquote>
+\item			<li>
+\dt			<dt>
+\dd			<dd>
+
+			replacement with g option
+\[$]			$
+\%			%
+\lt			\&lt;
+\gt			\&gt;
+
+\anchor{x}		<a name="x"></a>
+\clink{x}		<a href="../commands/x.html">x</a>
+\cflink{x}		<a href="../commands/x.html">x</a>
+\dlink{x.lp}{y}		<a href="x.lp">y</a>
+\dlink{x}{y}		<a href="x.html">y</a>
+\dflink{x.lp}{y}	<a href="x">y</a>
+\dflink{x}{y}		<a href="x.html">y</a>
+\glink{x}{y}		<a href="../glossary/x.html">y</a>
+\llink{x}{y}		<a href="../logic/x.html">y</a>
+\olink{x}{y}		<a href="../operation/x.html">y</a>
+\plink{x}{y}		<a href="../proof/x.html">y</a>
+\pflink{x}{y}		<a href="../proof/x.html"><tt>y</tt></a>
+\slink{x}{y}		\&lt;<a href="x.html#y">y</a>\&gt;
+\setlink{x}		<a href="../settings/x.html">x</a>
+\ftp{x}			<a href="ftp://ftp.sds.lcs.mit.edu/pub/Larch/lp/x">x</a>
+
+\s{x}			\&lt;x\&gt;
+\sd{x}			<a name="x"></a>\&lt;x\&gt;
+\v{x}			<var>x</var>
+\def{x}			<em>x</em>
+\f{x}			<tt>x</tt>
+\fq{x}			<tt>x</tt>
+\qf{x}			"<tt>x</tt>"
+
+\f#\([^#]*\)#		<tt>x</tt>
+\fq#\([^#]*\)#		<tt>x</tt>
+\qf#\([^#]*\)#		"<tt>x</tt>"
+\v#\([^#]*\)#		<var>x</var>
+
+\p			<p>
+\br			<br>

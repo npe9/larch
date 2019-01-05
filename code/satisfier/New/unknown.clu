@@ -1,0 +1,79 @@
+#extend
+
+unknown = cluster is make_fresh, make_number, create, get_number, equal, 
+                     get_t, is_mapped, is_number, print, _gcd
+		     
+    rep 	= record[id: string, kind: kind]
+    kind	= oneof[r: rat, t: term, none: null]
+    no_kind	= kind$make_none(nil)
+    
+    own counter: int := 0
+    
+    make_fresh = proc () returns (cvt)
+	counter := counter + 1
+	return(rep${id: "u" || int$unparse(counter), kind: no_kind})
+	end make_fresh
+  
+    make_number = proc (r: rat) returns (cvt)
+	return(rep${id: rat$unparse(r), kind: kind$make_r(r)})
+	end make_number
+    
+    create = proc (t: term) returns (unknown) 
+	return(make_number(term2rat(t)))
+	except when not_number: end
+	counter := counter + 1
+	return(up(rep${id: "u" || int$unparse(counter), 
+		       kind: kind$make_t(t)}))
+	end create
+
+    get_number = proc (u: cvt) returns (rat) signals (not_number)
+        return(kind$value_r(u.kind))
+	   except when wrong_tag: signal not_number end
+	end get_number
+    
+    equal = proc (u1, u2: cvt) returns (bool)
+	return(u1.id = u2.id)
+	end equal
+     
+    get_t = proc (u: cvt) returns (term) signals (none, number(rat))
+	tagcase u.kind
+	    tag r (r: rat):  signal number(r)
+	    tag t (t: term): return(t)
+	    tag none: signal none
+	    end
+	end get_t
+    
+    is_mapped = proc (u: cvt) returns (bool)
+	return(kind$is_t(u.kind))
+	end is_mapped
+    
+    is_number = proc (u: cvt) returns (bool)
+	return(kind$is_r(u.kind))
+	end is_number
+    
+    print = proc (pr: printer, u: cvt)
+	t: string := term$unparse(kind$value_t(u.kind)) 
+	   except when wrong_tag: t := " " end
+	printer$puts(pr, "<")
+	printer$puts(pr, u.id)
+	printer$puts(pr, ", ')
+	printer$puts(pr, t)
+	printer$puts(pr, ">")
+	end print
+    
+
+    dump = proc (u: cvt)
+	pr: printer := tracer$get_printer()
+	print(pr, up(u))
+	printer$newline(pr)
+	end dump
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    
+    end unknown

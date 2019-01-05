@@ -1,0 +1,356 @@
+#extend
+
+% Process the "register" command.
+
+c_register = proc (i: interactive) signals (error)
+    cct = command_table[command]
+    command = proctype (interactive) signals (error)
+    act = struct[name: string, choice: command]
+    act_seq = sequence[act]
+    own ct: cct := cct${help: cct$help, delims: " \t",
+			label: "registry item",
+			as: act_seq$[act${name: "bottom",
+					  choice: register_bottom},
+				     act${name: "height",
+					  choice: register_height},
+				     act${name: "polynomials",
+					  choice: register_polynomials},
+				     act${name: "status",
+					  choice: register_status},
+				     act${name: "top",
+					  choice: register_top}]}
+    cct$choose(ct, "\nInformation for registry: ", i.io)(i)
+       resignal error
+       except when end_of_file, no_response: end
+    end c_register
+
+
+% Gets a list of operators from the user and adds them to the set of bottom
+% operators in "i.sys.reg".  Prints an error message and leaves the registry
+% and symbol table unchanged if the new information conflicts with previously
+% entered registry information.
+
+register_bottom = proc (i: interactive) signals (error)
+    register_extreme_ops(i, "bottom", true)
+       resignal error
+    end register_bottom
+    
+    
+% Does the work for "register_bottom" and "register_top".
+    
+register_extreme_ops = proc (i: interactive, label: string, bottom: bool)
+			 signals (error)
+    opa: op_arr :=  query$operators(label || " operators", i.symtab)
+       except when none: return
+	      when error: aborted(i.p, "illegal list of operators")
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    ops: op_set := op_set$predict(op_arr$size(opa))
+    for op: operator in op_arr$elements(opa) do
+	op_set$insert(ops, op)
+	   except when exists: end
+	end
+    begin
+	system$register_extreme_ops(i.sys, ops, bottom)
+	printer$text(i.p, "\nRegistry extended.\n")
+	return
+	end
+       except
+	  when bottom (op: operator):
+	       printer$error(i.p)
+	       printer$text(i.p, "\nThe operator `")
+	       operator$print(i.p, op, i.symtab)
+	       printer$text(i.p, "' cannot be at the top of the registry ")
+	       printer$text(i.p, "because it is at the bottom.")
+	  when top (op: operator):
+	       printer$error(i.p)
+	       printer$text(i.p, "\nThe operator `")
+	       operator$print(i.p, op, i.symtab)
+	       printer$text(i.p, "' cannot be at the bottom of the ")
+	       printer$text(i.p, "registry because it is at the top.")
+	  end
+    printer$text(i.p, "\n\nThe registry is unchanged.\n")
+    signal error
+    end register_extreme_ops
+
+
+% Gets a list of at least two operators from the user and makes them strictly
+% ordered in "i.sys.reg".  Prints an error message and leaves the registry and
+% symbol table unchanged if the information conflicts with previously entered
+% registry information.  ENHANCE: New syntax, to combine with
+% operator_equivalent.
+
+register_height = proc (i: interactive) signals (error)
+    ticket: int := system$begin_registry_changes(i.sys)
+    prev_ops: op_set
+    prev_rel: string := ""
+    scan: scanner := scanner$from_string("", i.p)
+    for ops: op_set, rel: string in register_height_args(scan, i.symtab) do
+	if prev_rel = "" then
+	   if rel = "" then
+	      system$abort_registry_changes(i.sys, ticket)
+	      aborted(i.p, "missing height relation")
+	      signal error
+	      end
+	 elseif prev_rel = ">=" then
+	   system$register_higher_or_equal(i.sys, prev_ops, ops)
+	 elseif prev_rel = ">" then
+	   system$register_higher(i.sys, prev_ops, ops)
+	 elseif prev_rel = "=" then
+	   system$register_equal(i.sys, ops + prev_ops)
+	 end
+	if rel = "" then
+	   system$commit_registry_changes(i.sys, ticket)
+	   printer$text(i.p, "\nRegistry extended.\n")
+	   return
+	   end
+	prev_ops := ops
+	prev_rel := rel
+	end
+       except
+	  when error:
+	  when inconsistent (op1, op2: operator):
+	       printer$error(i.p)
+	       printer$text(i.p, "\nThe operator `")
+	       operator$print(i.p, op2, i.symtab)
+	       printer$text(i.p, "' is already higher than or equal to `")
+	       operator$print(i.p, op1, i.symtab)
+	       printer$text(i.p, "' in the registry.")
+	  when ordered (op1, op2: operator):
+	       printer$error(i.p)
+	       printer$text(i.p, "\nThe operator `")
+	       operator$print(i.p, op2, i.symtab)
+	       printer$text(i.p, "' is already higher than `")
+	       operator$print(i.p, op1, i.symtab)
+	       printer$text(i.p, "' in the registry.")
+	  when multi_and_lex( op1, op2: operator):
+	       printer$error(i.p)
+	       printer$text(i.p, "\nDeclaring `")
+	       operator$print(i.p, op1, i.symtab)
+	       printer$text(i.p, "' to have the same height as `")
+	       operator$print(i.p, op1, i.symtab)
+	       printer$text(i.p, "' would create an equivalence class ")
+	       printer$text(i.p, "that contains both multiset and ")
+	       printer$text(i.p, "lexicographic statuses.")
+	  when none:
+	       system$abort_registry_changes(i.sys, ticket)
+	       return
+	  when same (op: operator):
+	       printer$error(i.p)
+	       printer$text(i.p, "\n The operator `")
+	       operator$print(i.p, op, i.symtab)
+	       printer$text(i.p, "' cannot be higher than itself.")
+	  end
+    system$abort_registry_changes(i.sys, ticket)
+    aborted(i.p, "the registry is unchanged")
+       resignal error
+    end register_height
+
+
+% Allows the user to change the polynomial interpretation associated with an
+% operator.
+
+register_polynomials = proc (i: interactive) signals (error)
+    scan: scanner := scanner$from_string("", i.p)
+    op: operator, pi: poly_interp := 
+	register_polynomial_args(scan, i.symtab, i.sys)
+       resignal error
+       except when none: return end
+    system$register_polynomials(i.sys, op, pi)
+       except
+	  when in_rule:
+	       printer$error(i.p)
+	       printer$text(i.p, "\nYou can't change the interpretation ")
+	       printer$text(i.p, "of an operator that appears in a ")
+	       printer$text(i.p, "rewrite rule.\n")
+	       signal error
+	       % ENHANCE: Allow this, but check termination attribute.
+	  end
+    end register_polynomials
+
+
+% (Internal procedure) Gets a status and a list of operators from the user.
+% Attempts to assign the status to these operators.  Prints an error message if
+% the given status causes an equivalence class to contain incompatible statuses
+% or if it changes the status of an operator whose status was not originally
+% undefined.
+
+register_status = proc (i: interactive) signals (error)
+    prompt = "Enter a status followed by a list of operators: "
+    status_ct = command_table[status]
+    status_act = struct[name: string, choice: status]
+    sas = sequence[status_act]$[
+	      status_act${name: "left-to-right",
+			  choice: status$make_left_to_right(nil)},
+	      status_act${name: "right-to-left",
+			  choice: status$make_right_to_left(nil)},
+	      status_act${name: "multiset",
+			  choice: status$make_multiset(nil)}]
+    own statct: status_ct := status_ct${help: status_ct$help,
+					delims: " \t",
+					label: "status for operator",
+					as: sas}
+
+    new_stat: status := status_ct$choose(statct, prompt, i.io)
+       resignal error
+       except when end_of_file, no_response: return end
+    ops: op_arr := query$operators("operators", i.symtab)
+       except when none: return
+	      when error: aborted(i.p, "error in operators")
+	      end resignal error
+    error: string := ""
+    bad_op: operator
+    ticket: int := system$begin_registry_changes(i.sys)
+    system$register_status(i.sys, ops, new_stat)
+       except when multi_and_lex (op: operator):
+		   error := "its equivalence class in the registry " ||
+			    "contains an operator with "
+		   if status$is_multiset(new_stat)
+		      then error := error || "a lexicographic status.\n"
+		      else error := error || "multiset status.\n"
+		      end
+		   bad_op := op
+	      when status_defined (op: operator):
+		   error := "it already has a different status.\n"
+		   bad_op := op
+	      end
+    if ~string$empty(error) then
+       system$abort_registry_changes(i.sys, ticket)
+       printer$error(i.p)
+       printer$text(i.p, "\nThe status of `")
+       operator$print(i.p, bad_op, i.symtab)
+       printer$text(i.p, "' cannot be " || unparse_status(new_stat))
+       printer$text(i.p, " because " || error)
+       printer$text(i.p, "\nCommand aborted: no change in any status.\n")
+       signal error
+       end
+    system$commit_registry_changes(i.sys, ticket)
+    end register_status
+
+
+% Returns a string representation of "stat".
+    
+unparse_status = proc (stat: status) returns (string)
+    tagcase stat
+       tag left_to_right: return("left-to-right")
+       tag right_to_left: return("right-to-left")
+       tag multiset:      return("multiset")
+       tag undefined:     return("undefined")
+       end
+    end unparse_status
+   
+
+% Gets a list of operators from the user and adds them to the set of top
+% operators in "i.sys.reg".  Prints an error message and leaves the registry
+% and symbol table unchanged if the new information conflicts with previously
+% entered registry information.
+
+register_top = proc (i: interactive) signals (error)
+    register_extreme_ops(i, "top", false)
+       resignal error
+    end register_top
+
+
+
+% Yields successive sets of operators and registry height symbols for the
+% "register height" command.
+    
+register_height_args = iter (scan: scanner, stab: symtab) 
+			 yields (op_set, string)
+			 signals (error, none)
+    query$get_more(scan, "registry height information", height_syntax)
+       resignal none
+    ops: op_set
+    while true do
+	ops := scan_op_set(scan, stab)
+	if token$is_eof(scan.nextToken) then break end
+	rel: string := scan.nextToken.text
+	if ~(rel = "=" cor rel = ">" cor rel = ">=") then
+	   scanner$error(scan, "expecting `>', `>=', or `='")
+	   signal error
+	   end
+	scanner$get(scan)
+	yield(ops, rel)
+	end resignal error
+    yield(ops, "")
+    end register_height_args
+
+    
+% Interprets the head of "scan" as a nonempty set of operators according to the
+% syntax
+%     op-set ::= operator | "(" operator ( [","] operator )* ")"
+% Writes an error message to the error printer in "scan", and signals "error",
+% if there is an error in an operator, if the set of operators is empty, or if
+% it contains duplicate operators.
+    
+scan_op_set = proc (scan: scanner, stab: symtab) returns (op_set)
+		signals (error)
+    if token$is_left_paren(scan.nextToken)
+       then scanner$get(scan)
+       else return(op_set$[poperator$read_pseudo(scan, stab)])
+       end resignal error
+    ops: op_set := op_set$[]
+    while true do
+	loc: locator := scan.nextToken.loc
+	op_set$insert(ops, poperator$read_pseudo(scan, stab))
+	   except when exists:
+		       scanner$error_at(scan, loc, "duplicate operator")
+		       signal error
+		  end
+	tagcase scan.nextToken
+	   tag comma: scanner$get(scan)
+	   tag right_paren: scanner$get(scan)
+			    return(ops)
+	   tag eof: scanner$error(scan, "expecting a right parenthesis")
+		    signal error
+	   others:
+	   end
+	end resignal error
+    end scan_op_set
+
+
+% Gets an operator and its polynomial intepretation using the multiline input
+% convention (once for the operator and once again, if necessary, for its
+% polynomial intepretation).  Signals "none" if there is no input.  Writes an
+% error message and signals "none" if the operator or its interpretation is
+% illegal.  Otherwise returns the operator and its intepretation.  NOTE: There
+% is no requirement that the number of polynomials equal the current length of
+% the polynomial interpretation.
+
+register_polynomial_args = proc (scan: scanner, stab: symtab, sys: system)
+			     returns(operator, poly_interp)
+			     signals (error, none)
+    msg1 = "an operator followed by its polynomial interpretation"
+    query$get_more(scan, msg1, op_poly_syntax)
+       resignal none
+    p: printer := scan.printer
+    op: operator := poperator$read(scan, stab)
+       except when error:
+		   printer$error(p)
+		   printer$text(p, "\nCommand aborted: bad operator.\n")
+		   signal error
+	      end
+    ot: op_theory := system$lookup_op_theory(sys, op)
+    if ~token$is_eof(scan.nextToken) then
+       % Display old interpretation, get new one
+       % printer$text(p, "\nCurrent Interpretation:\n\n")
+       % poly_interp$display(p, op_set$[op], reg)
+       % printer$newline(p)
+       msg: string
+       tagcase ot
+	  tag ac:          msg := "an associative-commutative"
+	  tag commutative: msg := "a commutative"
+	  tag empty, free: msg := "a"
+	  end
+       msg := msg || " polynomial interpretation"
+       query$get_more(scan, msg, op_poly_syntax)
+       end resignal none
+    pi: poly_interp := poly_interp$read(scan, ot)
+       except when bad_format:
+		   printer$error(p)
+		   printer$text(p, "\nCommand aborted: ")
+		   printer$text(p, "error in polynomials.\n")
+		   signal error
+	      end
+    return(op, pi)
+    end register_polynomial_args

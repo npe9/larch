@@ -1,0 +1,158 @@
+#extend
+
+% A clause is a disjunction of literals.
+
+% A clause is consistent if it is nonempty.
+
+
+clause = cluster is new, cons, insert, insert_unique, empty, equal, is_unit, 
+    	            get_literal, get_size, elements, remove_current_literal, 
+		    print, _gcd
+
+    rep = record[lits: lit_arr, current: int]
+
+    % A(r) = r.lits[1] \/ ... \/ r.lits[r.lits.high]
+    % I(r) = (for all 1 <= i < j <= r.lits.high) (r.lits[1] ~= r.lits[j])
+
+
+    % Returns an empty clause.
+    
+    new = proc () returns (cvt)
+	return(rep${lits: lit_arr$[], current: 0})
+	end new
+    
+
+    % Returns a clause containing the literals in "lits"
+    
+    cons = proc (ls: lit_seq) returns (cvt)
+	lits: lit_arr := lit_seq$s2a(ls)
+	top: int := 1
+	for i: int in int$from_to(2, lit_arr$high(lits)) do
+	    next: literal := lits[i]
+	    for j: int in int$from_to(1, top) do
+		if next = lits[j] then exit duplicate end
+		end except when duplicate: continue end
+	    top := top + 1
+	    if top < i then lits[top] := next end
+	    end
+	lit_arr$trim(lits, 1, top)
+	return(rep${lits: lits, current: 0})
+	end cons
+
+
+    % Modifies: c
+    % Ensures:  c' <=> c^ \/ l
+
+    insert = proc (c: cvt, l: literal)
+	for l1: literal in lit_arr$elements(c.lits) do
+	    if l = l1 then return end
+	    end
+	lit_arr$addh(c.lits, l)
+	end insert
+    
+
+    % Requires: "l" is not in "c^"
+    % Ensures:  c' <=> c^ \/ l
+    
+    insert_unique = proc (c: cvt, l: literal)
+	lit_arr$addh(c.lits, l)
+	end insert_unique
+
+
+
+    % Ensures: result = (c^ is empty)
+    
+    empty = proc (c: cvt) returns (bool)
+	return(lit_arr$empty(c.lits))
+	end empty
+
+
+    % Returns true iff "c1" and "c2" are same objects.
+    
+    equal = proc (c1, c2: cvt) returns (bool)
+	return (c1.lits = c2.lits)
+	end equal
+    
+
+    % Returns true iff "c" is a unit clause.
+
+    is_unit = proc (c: cvt) returns (bool)
+	return(lit_arr$size(c.lits) = 1)
+	end is_unit
+    
+
+    % Returns "l" if "c" consists of single literal "l".  Otherwise signals
+    % "not_unit".
+    
+    get_literal = proc (c: cvt) returns (literal) signals (not_unit)
+	if lit_arr$size(c.lits) = 1 
+	   then return(lit_arr$bottom(c.lits))
+	   else signal not_unit
+	   end
+	end get_literal
+    
+
+    % Returns the number of literals in "c".
+    
+    get_size = proc (c: cvt) returns (int)
+	return(lit_arr$size(c.lits))
+	end get_size
+    
+    
+    % Yields all literals of "c", setting "c.current" to remember which one was
+    % just yielded.
+      
+    elements = iter (c: cvt) yields (literal)
+	c.current := 0
+        while true do
+	    c.current := c.current + 1
+	    yield(c.lits[c.current])
+	    end except when bounds: end
+	end elements
+
+
+    % Modifies: c
+    % Effects:  Removes and returns the current literal from "c".
+
+    remove_current_literal = proc (c: cvt) returns (literal) signals (bounds)
+	l: literal := c.lits[c.current]
+	   resignal bounds
+        c.lits[c.current] := lit_arr$remh(c.lits)
+	   except when bounds: end
+	c.current := c.current - 1
+        return(l)
+	end remove_current_literal
+
+
+    % Prints "c" on "pr".
+    
+    print = proc (pr: printer, c: cvt, stab: symtab)
+	printer$text(pr, "~{~2I")
+	printed: bool := false
+	for l: literal in lit_arr$elements(c.lits) do
+	    if printed then printer$text(pr, "~1A~{\\/~ ") end
+	    literal$print(pr, l, stab)
+	    if printed then printer$text(pr, "~}") end
+	    printed := true
+	    end
+	printer$text(pr, "~}")
+	end print
+
+    
+    % Dumps "c" on the standard output (for debugging).
+    
+    dump = proc (c: cvt)
+	pr: printer := tracer$get_printer()
+	print(pr, up(c), tracer$get_symtab())
+	printer$newline(pr)
+	end dump
+
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    end clause

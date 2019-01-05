@@ -1,0 +1,17 @@
+\doc{Constants}
+\ref{constants}
+
+A \def{constant} is a 0-ary \dlink{operator}{operator}.  An identifier for a
+constant can be either a \slink{../symbols/symbols}{simpleId} (e.g., \f{0} and
+\f{c}) or a \dlink{bracket}{bracketed} operator (e.g., \f#{}# and \f{[]}).  
+\p
+The same identifier can be \dlink{overload}{overloaded} to name two different
+constants, that is, two constants with different sorts.  A \s{simpleId} can
+also be used to name a \dlink{variable}{variable} and a constant, provided the
+variable does not have the same sort as the constant.
+\p
+When LP formulates hypotheses for use in proving subgoals in a proof, it
+generally replaces all free variables in the hypotheses by constants.  LP
+creates identifiers for these constants by appending the letter \fq{c} and, if
+necessary, further digits to obtain an identifier that is not already in use.
+Thus LP may replace the variable \fq{x} by the constants \fq{xc}, \fq{xc1}, ...

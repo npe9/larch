@@ -1,0 +1,120 @@
+#extend
+
+% Processes the "normalize" command.  Normalizes the current conjecture, or
+% each equation, deduction, and rewrite rule (whether or not immune) named by
+% <names1>, using the rewrite rules named by <names2> (whether or not active),
+% the hardwired rewrite rules, and those equations named by <names2> that can
+% be oriented from left to right into rewrite rules.
+    
+c_normalize = proc (i: interactive) signals (error)
+    normalize_work(i, true)
+       resignal error
+    end c_normalize
+    
+    
+% Does the work for "normalize" if "normal" is true and for "reduce" if
+% "normal" is false.
+    
+normalize_work = proc (i: interactive, normal: bool) signals (error)
+    conjecture: bool := false
+    scan: scanner := scanner$from_string("", i.p)
+    ce1, ce2: class_expression, rev: bool := normalize_args(scan, i.symtab)
+       except when none: return
+	      when error: aborted(i.p, "error in names")
+	      when conjecture (ce3: class_expression, rev1: bool):
+		   conjecture := true
+		   ce1 := ce3
+		   rev := rev1
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    ns1, ns2: name_set
+    if conjecture
+       then ns1 := class_expression$full_eval(ce1, i.sys, i.symtab.classes)
+	    prover$reduce_conjecture(i, normal, rev, ns1)
+	       except when error (msg: string): aborted(i.p, msg) end
+       else
+	    ns1 := class_expression$full_eval(ce1, i.sys, i.symtab.classes)
+	    ns2 := class_expression$full_eval(ce2, i.sys, i.symtab.classes)
+	    system$apply_rrs(i.sys, ns1, ns2, i.symtab, normal, rev)
+	       except when no_rrs:
+			   aborted(i.p, "no rewrite rules")
+		      when no_targets:
+			   if normal
+			      then aborted(i.p, "nothing to normalize")
+			      else aborted(i.p, "nothing to rewrite")
+			      end
+		      end
+       end except when undefined (cn: class_name):
+		       aborted(i.p, "Undefined class name: "|| cn)
+		  end resignal error
+    prover$make_inferences(i, stabilize_task_mode)
+       except when interrupt, proved: end
+    end normalize_work
+
+    
+% Gets arguments for the "normalize" and "rewrite" commands using the multiline
+% input convention and the following syntax:
+
+%     <rewrite-args> := ("conjecture" | <class-expression>) 
+%                       [ "with" [ "reversed" ] <class-expression> ]
+
+% Signals "none" if there is no input.  Signals "error" if there is an error.
+% Supplies "*" as the second class-expression if it is omitted.  Signals
+% "conjecture" with the second class-expression if "conjecture" appears instead
+% of the first class-expression.  Otherwise returns the two class-expressions
+% and a boolean value that is true iff the keyword "reversed" was present.
+    
+normalize_args = proc (scan: scanner, stab: symtab)
+		 returns (class_expression, class_expression, bool)
+		 signals (error, conjecture(class_expression, bool), none)
+    own keys1: keyword_table := keyword_table$["conjecture"]
+    own keys2: keyword_table := keyword_table$["reversed"]
+    own all_names: class_expression :=
+	    class_expression$parse("*", stab, printer$nul())
+    query$get_more(scan, "names of facts", name_syntax)
+       resignal none
+    conj: bool := true
+    keyword_table$scan_and_choose(keys1, scan, stab)
+       except when none:  conj := false
+	      when error: signal error
+	      end
+    no_names: bool := false
+    ce1: class_expression := class_expression$read(scan, stab)
+       resignal error
+       except when empty:
+		   if ~conj
+		      then scanner$error(scan, "expecting a name")
+			   signal error
+		      else no_names := true
+		      end
+	      end
+    if ~no_names cand conj then
+       scanner$error(scan, "names not allowed after `conjecture'")
+       signal error
+       end
+    if token$is_eof(scan.nextToken)
+       then if conj
+	       then signal conjecture(all_names, false)
+	       else return(ce1, all_names, false)
+	       end
+       else scanner$expecting_id(scan, "with")
+       end resignal error
+    query$get_more(scan, "names of rewrite rules", name_syntax)
+       resignal none
+    reversed: bool := true
+    keyword_table$scan_and_choose(keys2, scan, stab)
+       except when none:  reversed := false
+	      when error: signal error
+	      end
+    ce2: class_expression := class_expression$read(scan, stab)
+       resignal error
+       except when empty: scanner$error(scan, "expecting a name")
+			  signal error
+	      end
+    check_end_of_scan(scan)
+       resignal error
+    if conj
+       then signal conjecture(ce2, reversed)
+       else return(ce1, ce2, reversed)
+       end
+    end normalize_args

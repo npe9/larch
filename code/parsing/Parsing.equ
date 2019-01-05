@@ -1,0 +1,81 @@
+%%%%%%%%%%%%%%%%%%%%%%  Equates for lp/code/parsing %%%%%%%%%%%%%%%%%%%%%%%%%
+
+% (see also Genlib.equ, Terms.equ)
+
+
+%%%%%%%%%%%%%%%%%%%%  Data types
+
+id_arr	  = array[identifier]
+token_arr = array[token]
+
+id_seq	  = sequence[identifier]
+token_seq = sequence[token]
+
+
+%%%%%%%%%%%%%%%%%%%%  Symbols
+
+symbol = oneof[allSym,		% \A		\forall
+	       andSym,    	% /\ 		\and
+	       badSym,		% illegal token
+	       closeSym,	% \) \> ] }
+	       colon,       	% :
+	       comma,        	% ,
+	       comment, 	% %.*		\comment .*
+	       composeSym,   	% $		\composeSort
+	       eof,          	% end of file
+	       eqSym,		% =		\eq
+	       existsSym, 	% \E		\exists
+	       iffSym,  	% <=>		\iff
+	       impliesSym,	% =>		\implies
+	       left_paren,	% (
+	       mapSym,		% ->		\arrow
+	       markerSym,	% __		\marker
+	       neqSym,		% ~=		\neq
+	       openSym,		% \( \< [ {
+	       orSym,		% \/		\or
+	       right_paren, 	% )
+	       selectSym,	% .		\select
+	       semicolon, 	% ;
+	       simpleId,	% [_'A-Za-z0-9]+
+	       simpleOp, 	% [*+-./<=>~!#&?@|^\:]+ or \simpleId
+	       whitespace: 	% space, tab, newline
+	       null]	   
+
+topInfixPriority = 8
+lowInfixPriority = 4
+
+
+%%%%%%%%%%%%%%%%%%%%  Locators
+
+% Associated with each input symbol is the line in the text where it occurred
+% (the first line is line 1) and the column in that line of its first character
+% (the first character on a line is in column 1).
+
+locator = struct[column: int, line: int]
+loc_arr = array[locator]
+loc_seq = sequence[locator]
+
+
+
+%%%%%%%%%%%%%%%%%%%%  Unparsing
+
+% The "unparse_mode" determines whether identifiers and terms are printed
+% without qualification, with full qualification, with qualification of
+% overloaded identifiers, or with qualification only when needed to enable them
+% to be reparsed unambiguously.  The different "unparse_modes" require
+% different amounts of computation: "unqualified_mode" is fastest,
+% "qualified_mode" is next fastest (it produces more output), and
+% "unambiguous_mode" is most expensive (LP must attempt to parse the output).
+
+unparse_mode	 = struct[name: string, upm: upm]
+upm              = oneof[qualified_upm, unqualified_upm, unambiguous_upm: null]
+qualified_mode   = unparse_mode${name: "qualified", 
+				 upm: upm$make_qualified_upm(nil)}
+unqualified_mode = unparse_mode${name: "unqualified", 
+				 upm: upm$make_unqualified_upm(nil)}
+unambiguous_mode = unparse_mode${name: "unambiguous",
+				 upm: upm$make_unambiguous_upm(nil)}
+unparse_modes    = sequence[unparse_mode]$[qualified_mode, unqualified_mode, 
+                                           unambiguous_mode]
+
+

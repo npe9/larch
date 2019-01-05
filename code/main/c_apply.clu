@@ -1,0 +1,76 @@
+#extend
+
+% Processes the command "apply <names1> to <names2>".  Applies each deduction
+% rule named by <names1> (whether or not active) to each equation and rewrite
+% rule named by <names2> (whether or not immune).
+    
+c_apply = proc (i: interactive) signals (error)
+    scan: scanner := scanner$from_string("", i.p)
+    conj: bool := false
+    ce1, ce2: class_expression := apply_args(scan, i.symtab)
+       except when none: return
+	      when error: aborted(i.p, "error in names")
+	      when conjecture (ce: class_expression):
+	           conj := true
+		   ce1 := ce
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    names1, names2: name_set
+    if conj
+       then f: fact := i.prover.conjecture
+	    names1 := class_expression$full_eval(ce1, i.sys, i.symtab.classes)
+	    prover$apply_drs(i, names1)
+	       except when error (msg: string): aborted(i.p, msg) end
+       else names1 := class_expression$full_eval(ce1, i.sys, i.symtab.classes)
+	    names2 := class_expression$full_eval(ce2, i.sys, i.symtab.classes)
+	    system$apply_drs(i.sys, names1, names2, i.symtab)
+	    prover$make_inferences(i, stabilize_task_mode)
+       end except when undefined (cn: class_name):
+		       aborted(i.p, "Undefined class name: "|| cn)
+		  when no_drs:
+		       aborted(i.p, "no deduction rules to apply")
+		  when none: 
+		       aborted(i.p, "there is no conjecture")
+		  when no_targets:
+		       aborted(i.p, "nothing to apply deduction rules to")
+		  when interrupt, proved:
+		  end resignal error
+    end c_apply
+
+
+% Gets arguments for the "apply" command using the following syntax:
+
+%     <apply-args> := <class-expression>) 
+%                     "to" ( "conjecture" | <class-expression> )
+
+% Signals "none" if there is no input.  Signals "error" if there is an error.
+% Signals "conjecture" with the first class-expression if "conjecture" appears
+% instead of the second class-expression.  Otherwise returns the two
+% class-expressions.
+    
+apply_args = proc (scan: scanner, stab: symtab)
+	       returns (class_expression, class_expression)
+	       signals (error, conjecture(class_expression), none)
+    own keys: keyword_table := keyword_table$["conjecture"]
+    own all_names: class_expression :=
+	    class_expression$parse("*", stab, printer$nul())
+    begin
+	query$get_more(scan, "names of deduction rules", name_syntax)
+	ce1: class_expression := class_expression$read(scan, stab)
+	scanner$expecting_id(scan, "to")
+	query$get_more(scan, "`conjecture' or names of facts", name_syntax)
+	conj: bool := true
+	keyword_table$scan_and_choose(keys, scan, stab)
+	   except when none: conj := false end
+	ce2: class_expression 
+	if ~conj then ce2 := class_expression$read(scan, stab) end
+	check_end_of_scan(scan)
+	if conj
+	   then signal conjecture(ce1)
+	   else return(ce1, ce2)
+	   end
+	end resignal error, none
+       except when empty: scanner$error(scan, "expecting a name")
+			  signal error
+	      end
+    end apply_args

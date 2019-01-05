@@ -1,0 +1,208 @@
+#extend
+
+% The "interactive" cluster interprets user commands.  
+
+interactive = cluster is create, 
+			 get_conditional, set_conditional,
+			 get_debug, set_debug,
+			 get_experimental, set_experimental,
+			 get_history_size, set_history_size,
+			 get_initial_directory, get_io, get_p,
+			 get_prover, set_prover,
+			 get_search_path, set_search_path,
+			 get_symtab, set_symtab,
+			 get_sys, set_sys,
+			 current_symtab, current_system
+	
+    rep = record[history_size: int,	% default size of history
+    		 io: iodev, 		% for obtaining input
+                 p: printer, 		% for displaying output
+		 prover: prover, 	% for managing proofs
+		 search_path: string,	% for finding files
+		 symtab: symtab, 	% for managing identifiers, names
+    	         sys: system]		% for managing facts
+
+
+    own conditional: bool := false
+    own debug_mode: bool := false
+    own experimental: bool := false
+    own initial_directory: string := connected_dir()
+    own the_current_symtab: symtab := symtab$[]
+    own the_current_system: system := system$[]
+    
+    % Returns a new "interactive" that communicates with the user via "io".
+
+    create = proc (io: iodev) returns (cvt)
+	p: printer := printer$create_iodev(io)
+	query$create(io, p)
+	% the_current_symtab := symtab$[]
+	% the_current_system := system$[]
+	tracer$create(p, the_current_symtab)
+	pr: prover := 
+	    prover${symtab: the_current_symtab, system: the_current_system}
+	return(rep${history_size: 0,
+	    	    io: io, 
+	    	    p: p, 
+		    prover: pr,
+		    search_path: setting$value_s(default_lp_path),
+		    symtab: the_current_symtab, 
+		    sys: the_current_system})
+	end create
+
+
+    % Returns "true" if experimental conditional rewriting is activated.
+    
+    get_conditional = proc () returns (bool)
+	return(conditional)
+	end get_conditional
+    
+    
+    % Activates experimental conditional rewriting if "b" is "true".
+    
+    set_conditional = proc (b: bool)
+	conditional := b
+	end set_conditional
+
+    
+    % Returns "true" if debug mode is activated.
+    
+    get_debug = proc () returns (bool)
+	return(debug_mode)
+	end get_debug
+    
+    
+    % Activates debug mode if "b" is "true".
+    
+    set_debug = proc (b: bool)
+	debug_mode := b
+	end set_debug
+    
+
+    % Returns "true" if experimental features are activated.
+    
+    get_experimental = proc () returns (bool)
+	return(experimental)
+	end get_experimental
+    
+    
+    % Activates experimental features if "b" is "true".
+    
+    set_experimental = proc (b: bool)
+	experimental := b
+	end set_experimental
+    
+    
+    % Returns the history size setting.
+    
+    get_history_size = proc (i: cvt) returns (int)
+	return(i.history_size)
+	end get_history_size
+    
+    
+    % Sets the history size setting.
+    
+    set_history_size = proc (i: cvt, n: int)
+	i.history_size := n
+	end set_history_size
+    
+    
+    % Returns the name of the directory from which lp was invoked.
+    
+    get_initial_directory = proc (i: cvt) returns (string)
+	return(initial_directory)
+	end get_initial_directory
+    
+
+    % Returns the iodev "i.io".
+
+    get_io = proc (i: cvt) returns (iodev)
+	return(i.io)
+	end get_io
+    
+    
+    % Returns the printer "i.p".
+    
+    get_p = proc (i: cvt) returns (printer)
+	return(i.p)
+	end get_p
+    
+    
+    % Returns the prover "i.prover".
+
+    get_prover = proc (i: cvt) returns (prover)
+	return(i.prover)
+	end get_prover
+    
+    
+    % Sets the prover "i.prover".
+
+    set_prover = proc (i: cvt, p: prover)
+	i.prover := p
+	end set_prover
+    
+    
+    % Returns "i.search_path".
+    
+    get_search_path = proc (i: cvt) returns (string)
+	return(i.search_path)
+	end get_search_path
+
+
+    % Sets "i.search_path" to "s".
+    
+    set_search_path = proc (i: cvt, s: string)
+	i.search_path := s
+	front_end$report_path()
+	end set_search_path
+
+
+    % Returns symbol table "i.symtab".
+
+    get_symtab = proc (i: cvt) returns (symtab)
+	return(i.symtab)
+	end get_symtab
+
+
+    % Sets "i.symtab" to "stab".
+
+    set_symtab = proc (i: cvt, stab: symtab)
+	the_current_symtab := stab
+	i.symtab := stab
+	tracer$set_symtab(stab)
+	end set_symtab
+
+
+    % Returns the system "i.sys".
+
+    get_sys = proc (i: cvt) returns (system)
+	return(i.sys)
+	end get_sys
+
+
+    % Sets "i.sys" to "sys".
+
+    set_sys = proc (i: cvt, sys: system)
+	the_current_system := sys
+	i.sys := sys
+	end set_sys
+
+
+    % Returns the last symbol table supplied as an argument to "set_symtab".
+    % This procedure is a temporary hack used to extend the implementation of
+    % "term$similar" to handle quantifiers.
+    
+    current_symtab = proc () returns (symtab)
+	return(the_current_symtab)
+	end current_symtab
+    
+    
+    % Returns the last system supplied as an argument to "set_sys".  This
+    % procedure is a temporary hack used to extend the implementation of
+    % "term$similar" to handle quantifiers.
+    
+    current_system = proc () returns (system)
+	return(the_current_system)
+	end current_system
+    
+    
+    end interactive

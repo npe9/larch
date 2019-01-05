@@ -1,0 +1,353 @@
+#extend
+
+% An "equation_system" is a set of annotated equations.  The annotations
+% indicate whether the equation is active and/or immune.  The equations in an
+% equation system are divided into five lists, as follows:
+
+% "new": newly added equations, which may or may not be in normal form with
+% respect to the rewriting system
+
+% "normalized": equations that are either immune or in normal form with respect
+% to the rewriting system, but that need to be checked to see whether they can
+% be used for deduction or ordered into rewrite rules
+
+% "unoriented": equations that are either immune or have been normalized and
+% used for deduction, and that can be oriented into valid rewrite rules, but
+% that cannot be oriented yet using the ordering in the rewriting system.
+% 
+% "incompatible": equations that are either immune or have been normalized and
+% used for deduction, but that cannot be oriented into valid rewrite rules
+% because there would be variables on the right-hand side that do not occur on
+% the left-hand side (equations constrained by the user to be ordered from left
+% to right will fall into this category even if they can be ordered from right
+% to left).
+% 
+% "big": normalized equations that have not been added to the rewriting system,
+% the unoriented equations, or the incompatible equations because they each
+% contain more than "beta" operators and variables.  The value of "beta" is at
+% least that of the largest equation added by "system$add_equation".  It is
+% also updated periodically by "system$%consider_big" via the "increase_beta"
+% operation.
+
+
+equation_system = cluster is
+	new, add, change_activity, change_immunity, 
+	delete, delete_op, delete_subset, display, elements, fetch, 
+	get_big, get_first, get_incompatible, get_new, get_normalized, 
+	get_ops, get_unoriented, increase_beta, is_big, is_empty, lists, 
+	named_subset, recheck_inconsistencies,
+	reduce, size, subsystem_ops, subsystem_vars, write, copy, _gcd,
+	decode, encode
+
+    rep = record[new, normalized, unoriented, incompatible, big: eq_prop_list,
+                 beta: int]
+    axioms = axiom_system[equation, equation_system]
+
+    % The smallest size for an equation that could be considered big.
+    smallest_beta = 2
+
+
+    % Returns an empty "equation_system".
+
+    new = proc () returns (cvt)
+	return(rep${new, normalized, unoriented, incompatible, big: 
+		    eq_prop_list$[],
+		    beta: smallest_beta})
+	end new
+    
+    
+    % Adds "e" as a new equation to "esys" with activity and immunity given by
+    % "ai".  Puts "e" the end of the list of new equations if "last" is true;
+    % otherwise inserts "e" at the beginning of the list.
+
+    add = proc (esys: equation_system, e: equation, ai: ai_settings, 
+	        last: bool)
+	axioms$add(esys, e, ai, last)
+	end add
+
+
+    % Sets the activity of all equations in "esys" named by "ns" to "active".
+
+    change_activity = proc (esys: cvt, ns: name_set, active: bool)
+        if ~ns.has_eqs then return end
+        for eqp: eq_prop in elements(up(esys)) do
+	    if eqp.active ~= active 
+		 cand name_set$contains_eq(ns, eqp.prop) then
+	       eqp.active := active
+	       end
+	    end
+	end change_activity
+
+
+    % Sets the immunity of all equations in "esys" named by "ns" to "immune".
+    % Moves deimmunized equations to "esys.new".
+
+    change_immunity = proc (esys: cvt, ns: name_set, immune: immunity)
+        if ns.has_eqs then axioms$change_immunity(up(esys), ns, immune) end
+	end change_immunity
+
+
+    % Deletes the equation named "n" from "esys".  Signals "missing" if there
+    % is no such equation.
+
+    delete = proc (esys: cvt, n: name) returns (eq_prop) signals (missing)
+	return(axioms$delete(up(esys), n))
+	   resignal missing
+	end delete
+
+
+    % Deletes all equations in "esys" that contain "op".  Signals "missing"
+    % if there are no such equations.
+
+    delete_op = proc (esys: equation_system, op: operator) signals (missing)
+	if eq_prop_list$empty(axioms$delete_op(esys, op)) then 
+	   signal missing
+	   end
+	end delete_op
+
+
+    % Deletes all equations in "esys" named by "ns".  Signals "missing" if
+    % there are no such equations.  Otherwise returns a list of the deleted
+    % equations.
+
+    delete_subset = proc (esys: equation_system, ns: name_set) 
+		      returns (eq_prop_list) signals (missing)
+        if ~ns.has_eqs then signal missing end
+	eqp: eq_prop_list := axioms$delete_subset(esys, ns)
+	if eq_prop_list$empty(eqp) then signal missing end
+	return(eqp)
+	end delete_subset
+
+
+    % Displays all equations in "esys" named by "ns".
+    
+    display = proc (p: printer, esys: cvt, ns: name_set, stab: symtab)
+		signals (interrupt)
+	if ~ns.has_eqs then return end
+	axioms$display(p, up(esys), "Formulas", ns, stab)
+	   resignal interrupt
+	end display
+    
+    
+    % Yields the annotated equations in "esys".
+
+    elements = iter (esys: equation_system) yields (eq_prop)
+	for eqp: eq_prop in axioms$elements(esys) do yield(eqp) end
+	end elements
+
+
+    % Returns the annotated equation named "n" from "esys".  Signals "missing"
+    % if there is no such equation.
+
+    fetch = proc (esys: cvt, n: name) returns (eq_prop) signals (missing)
+	return(axioms$fetch(up(esys), n))
+	   resignal missing
+	end fetch
+
+
+    % Returns the list of big equations in "esys".
+
+    get_big = proc (esys: cvt) returns (eq_prop_list)
+	return(esys.big)
+	end get_big
+
+
+    % Returns the first equation in "esys".  Signals "none" if "esys" is empty.
+
+    get_first = proc (esys: cvt) returns (equation) signals (none)
+	return(eq_prop_list$first(esys.new).prop)
+	   except when empty: end
+	return(eq_prop_list$first(esys.normalized).prop)
+	   except when empty: end
+	return(eq_prop_list$first(esys.unoriented).prop)
+	   except when empty: end
+	return(eq_prop_list$first(esys.incompatible).prop)
+	   except when empty: end
+	return(eq_prop_list$first(esys.big).prop)
+	   except when empty: signal none end
+	end get_first
+
+
+    % Returns the list of incompatible equations in "esys".
+
+    get_incompatible = proc (esys: cvt) returns (eq_prop_list)
+	return(esys.incompatible)
+	end get_incompatible
+
+
+    % Returns the list of new equations in "esys".
+
+    get_new = proc (esys: cvt) returns (eq_prop_list)
+	return(esys.new)
+	end get_new
+
+
+    % Returns the list of normalized equations in "esys".
+
+    get_normalized = proc (esys: cvt) returns (eq_prop_list)
+	return(esys.normalized)
+	end get_normalized
+
+
+    % Returns the set of operators in "esys".
+
+    get_ops = proc (esys: equation_system) returns (op_set)
+	return(axioms$get_ops(esys))
+	end get_ops
+
+
+    % Returns the list of unoriented equations in "esys".
+
+    get_unoriented = proc (esys: cvt) returns (eq_prop_list)
+	return(esys.unoriented)
+	end get_unoriented
+
+
+    % If "sz" is greater than the previous value of "beta" for "esys", sets the
+    % "beta" of "esys" to be "sz".
+
+    increase_beta = proc (esys: cvt, sz: int)
+	esys.beta := int$max(esys.beta, sz)
+	end increase_beta
+
+
+    % Returns "true" iff "e" would be a big equation, were it added to "esys".
+
+    is_big = proc (esys: cvt, e: equation) returns (bool)
+	return(equation$size(e) > esys.beta)
+	end is_big
+
+
+    % Returns "true" iff "esys" has no equations in it.
+
+    is_empty = proc (esys: equation_system) returns (bool)
+	return(size(esys) = 0)
+	end is_empty
+
+
+    % Yields the lists of the "new", "normalized", "unoriented",
+    % "incompatible", and "big" equations of "esys", in that order.
+
+    lists = iter (esys: cvt) yields (eq_prop_list)
+	yield(esys.new)
+	yield(esys.normalized)
+	yield(esys.unoriented)
+	yield(esys.incompatible)
+	yield(esys.big)
+	end lists
+
+    
+    % Returns a sequence containing all equations in "esys" with names in
+    % "ns".
+    
+    named_subset = proc (esys: cvt, ns: name_set) returns (eq_seq)
+        if ~ns.has_eqs then return(eq_seq$[]) end
+	return(axioms$named_subset(up(esys), ns))
+	end named_subset
+
+
+    % Moves all equations in "esys.unoriented" and "esys.incompatible" that
+    % have an operator in "ops" at the root of their lhs or rhs to
+    % "esys.normalized".
+    
+    recheck_inconsistencies = proc (esys: cvt, ops: op_set)
+	recheck_work(esys.unoriented, esys.normalized, ops)
+	recheck_work(esys.incompatible, esys.normalized, ops)
+	end recheck_inconsistencies
+
+    recheck_work = proc (source, dest: eq_prop_list, ops: op_set)
+	for eqp: eq_prop in eq_prop_list$elements(source) do
+	    if op_set$exists(ops, eqp.prop.left.root)
+		 cor op_set$exists(ops, eqp.prop.right.root) then
+	       eq_prop_list$move_current_to_end(source, dest)
+	       end except when wrong_tag: end
+	    end
+	end recheck_work
+
+    
+    % Moves all equations in "esys - esys.new" that are reducible by "rsys" to
+    % "esys.new".
+    
+    reduce = proc (esys: cvt, rsys: rewriting_system, osys: op_system,
+		   stab: symtab)
+	reduce_list(esys.normalized, esys.new, rsys, osys, stab)
+	reduce_list(esys.unoriented, esys.new, rsys, osys, stab)
+	reduce_list(esys.incompatible, esys.new, rsys, osys, stab)
+	reduce_list(esys.big, esys.new, rsys, osys, stab)
+	end reduce
+    
+
+    % (Internal procedure) Reduces all nonimmune equations in "source" with
+    % respect to "rsys".  Traces changed equations and moves them to "dest".
+
+    reduce_list = proc (source, dest: eq_prop_list, rsys: rewriting_system, 
+	    		osys: op_system, stab: symtab)
+	for eqp: eq_prop in eq_prop_list$elements(source) do
+	    if eqp.immune = immunity_on then continue end
+	    e: equation := equation$reduce(eqp.prop, rsys, osys, stab,
+		 			   eqp.immune = immunity_anc)
+	       except when already_normal_form: continue end
+	    tracer$reduced_eq(eqp.prop, e)
+	    eqp.prop := e
+	    eq_prop_list$move_current_to_end(source, dest)
+	    end
+	end reduce_list
+
+
+    % Returns the number of equations in "esys".
+
+    size = proc (esys: equation_system) returns (int)
+	return(axioms$size(esys))
+	end size
+
+
+    % Returns the set of operators occurring in equations in "esys" with names
+    % in "ns" (irrespective of the value of "ns.has_eqs").
+    
+    subsystem_ops = proc (esys: cvt, ns: name_set) returns (op_set)
+        return(axioms$subsystem_ops(up(esys), ns))
+	end subsystem_ops
+    
+    
+    % Returns the set of variables occurring in equations in "esys" named by
+    % "ns" (irrespective of the value of "ns.has_eqs").
+    
+    subsystem_vars = proc (esys: cvt, ns: name_set) returns (var_set)
+        return(axioms$subsystem_vars(up(esys), ns))
+	end subsystem_vars
+    
+    
+    % Writes commands to re-read all equations in "esys" named by "ns".
+    
+    write = proc (p: printer, esys: cvt, ns: name_set, stab: symtab,
+	    	  ai: ai_settings)
+	if ~ns.has_eqs then return end
+	axioms$write(p, up(esys), "Formulas", ns, stab, ai)
+	end write
+    
+    
+    % Returns a copy of "esys".
+
+    copy = proc (esys: cvt) returns (cvt)
+	return(rep$copy(esys))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+    
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end equation_system

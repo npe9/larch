@@ -1,0 +1,58 @@
+\doc{The dsmpos ordering}
+\ref{dsmpos-ordering}
+\ref{noeq-dsmpos-ordering}
+
+The \def{dsmpos ordering} is a \dlink{registered}{registered ordering} used to
+orient formulas into rewrite rules.  It defines a well founded partial order on
+terms from a partial order on operators, given by \dlink{height}{height}
+constraints, and from \dlink{status}{status} constraints.  When no
+\llink{operator-theory}{associative-commutative operators} or quantifiers are 
+present, the rewrite relation of the set of rewrite rules produced by the
+dsmpos ordering is embedded in this well founded partial order on terms and
+hence is guaranteed to terminate.
+\p
+The \fq{dsmpos} ordering computes complete sets of minimal extensions to LP's
+registry when necessary to orient a formula.  The \fq{noeq-dsmpos} is the same
+ordering, except that it does not suggest assigning equal heights to two
+operators; as a result, it is faster, but less powerful than \fq{dsmpos}.
+\p
+Let \v{s} and \v{t} be two terms, with \v{s = f(s1, ..., sm)} and 
+\v{t = g(t1, ..., tn)}.  Then \v{s >= t} in the \fq{dsmpos} ordering iff
+\begin{itemize}
+\item \v{si >= t} for some \v{i}, or
+\item \v{f > g} (i.e., \v{f} is higher than \v{g} in the registry) and 
+\v{s > ti} for all \v{i}, or
+\item 
+either \v{f} and \v{g} have the same height in the registry, or \v{f >= g}
+and \v{s > ti} for all \v{i}, and in either case
+\begin{itemize}
+\item
+if both \v{f} and \v{g} can have multiset status, then the multiset 
+\v#{s1, ..., sm}# is greater than or equal to the multiset \v#{t1, ..., tn}#,
+or  
+\item
+if both \v{f} and \v{g} can have lexicographic status, then \v{s > ti} for all
+\v{i} and the sequence \v{< s1, ..., sm >} is lexicographically greater than or
+equal to the sequence \v{< t1, ..., tn >}.
+\end{itemize}
+\end{itemize}
+
+Here \v{M1} is greater than or equal to \v{M2} as a multiset iff \v{M2} has the
+same elements, though possibly with different multiplicities, as 
+\v{(M1 - X) U Y}, where \v{X} and \v{Y} are multisets such that for any \v{y} 
+in \v{Y} there is an \v{x} in \v{X} with \v{x > y}.
+\p
+The \fq{dsmpos} ordering is based on the recursive path ordering with status
+due to Dershowitz, Kamin, and Levy.  The definition of the ordering \f{>=} is
+due to Forgaard.  The generation of suggestions is due to Detlefs and Forgaard.
+\p
+LP uses the following modification of the \fq{dsmpos} ordering to orient
+equations that contain quantifiers.  It replaces each quantifier (over a sort
+\fq{S}) in an equation by a pseudo-operator with signature
+\fq{S, Bool -> Bool}, and it replaces each bound variable by the constant 
+\fq{true}; in this way, it converts each subterm of the form \fq{\E x P(x)} or 
+\fq{\A x P(x)} in an equation into a subterm \fq{\E(true, P(true))} or 
+\fq{\A(true, P(true))}.  (In general, the resulting term does not 
+sort check.)  Then LP tries to orient the transformed equation with the aid of
+registry suggestions for the pseudo-operators.  It it succeeds, it orients the
+original equation in the same direction as its transformation.

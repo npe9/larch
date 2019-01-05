@@ -1,0 +1,107 @@
+# extend
+
+% A "quantifier" is an immutable object representing either a universal
+% quantifier or an existential quantifer over a single variable.
+
+quantifier = cluster is make_universal, make_existential, change_var,
+			get_is_universal, get_is_existential, get_var, 
+			get_renamed_var, get_pseudo_op,	lt, equal, similar,
+			copy, _gcd, decode, encode
+    
+    rep = record[var: variable, 
+		 universal: bool,
+		 renamed_var: operator,
+		 pseudo_op: operator]
+    
+    make_universal = proc (v: variable, stab: symtab) returns (cvt)
+	return(rep${var: v, 
+	            universal: true, 
+		    renamed_var: operator$v2c(v),
+		    pseudo_op: op_forall(v.sort, stab)})
+	end make_universal
+
+    make_existential = proc (v: variable, stab: symtab) returns (cvt)
+	return(rep${var: v, 
+	            universal: false, 
+		    renamed_var: operator$v2c(v),
+		    pseudo_op: op_exists(v.sort, stab)})
+	end make_existential
+
+    change_var = proc (q: cvt, v: variable) returns (cvt) signals (sort_error)
+	if v.sort ~= q.var.sort then signal sort_error end
+	return(rep${var: v, 
+	            universal: q.universal,
+		    renamed_var: operator$v2c(v),
+		    pseudo_op: q.pseudo_op})
+	end change_var
+
+    get_is_universal = proc (q: cvt) returns (bool)
+	return(q.universal)
+	end get_is_universal
+    
+    get_is_existential = proc (q: cvt) returns (bool)
+	return(~q.universal)
+	end get_is_existential
+    
+    get_var = proc (q: cvt) returns (variable)
+	return(q.var)
+	end get_var
+
+    get_pseudo_op = proc (q: cvt) returns (operator)
+	return(q.pseudo_op)
+	end get_pseudo_op
+
+    get_renamed_var = proc (q: cvt) returns (operator)
+	return(q.renamed_var)
+	end get_renamed_var
+
+    lt = proc (q1, q2: cvt) returns (bool)
+	if q1.universal
+	   then if ~q2.universal then return(true) end
+	   else if q2.universal then return(true) end
+	   end
+	return(q1.var < q2.var)
+	end lt
+
+    equal = proc (q1, q2: cvt) returns (bool)
+	if q1 = q2 then return(true) end
+	return(q1.universal = q2.universal cand q1.var = q2.var)
+	end equal
+    
+    similar = proc (q1, q2: cvt) returns (bool)
+	if q1 = q2 then return(true) end
+	return(q1.universal = q2.universal cand q1.var = q2.var)
+	end similar
+    
+    copy = proc (q: cvt) returns (cvt)
+	return(q)
+	end copy
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	begin
+	  v: variable := variable$decode(s)
+	  return(rep${var: v,
+		      universal: bool$decode(s),
+		      renamed_var: operator$v2c(v),
+		      pseudo_op: operator$decode(s)})
+	  end resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	begin
+	   variable$encode(c.var, s)
+	   bool$encode(c.universal, s)
+	   operator$encode(c.pseudo_op, s)
+	  end resignal not_possible
+	end encode
+	
+
+    end quantifier

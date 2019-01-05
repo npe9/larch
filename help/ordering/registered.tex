@@ -1,0 +1,25 @@
+\doc{Registered orderings}
+\ref{registered-ordering}
+\ref{suggestions}
+
+LP provides two \def{registered orderings}, the 
+\dlink{dsmpos}{dsmpos and noeq-dsmpos orderings}, which are based on 
+LP-suggested partial orderings of operators and which guarantee termination of
+the set of rewrite rules when no
+\llink{operator-theory}{associative-commutative} operators are present.  Most
+users rely on these orderings to orient all formulas.  In striking contrast to
+the \dlink{brute-force}{brute-force} orderings, they hardly ever cause
+difficulties by producing a nonterminating set of rewrite rules.
+\p
+Registered orderings use information in a \def{registry} to orient formulas
+into rewrite rules.  There are two kinds of information in a registry:
+\dlink{height}{height} information and \dlink{status}{status} information.
+\p
+When the current registry does not contain enough information to orient a
+formula, LP will generate minimal sets of extensions to the registry, called
+\def{suggestions}, that permit the formula to be oriented.  If the
+\setlink{automatic-registry} setting is \fq{on}, LP picks one of these 
+extensions to orient a formula without user interaction; it does not try all
+extensions.  If the setting is \fq{off}, LP will \dlink{interactive}{interact}
+with the user, who must pick the desired extension.
+

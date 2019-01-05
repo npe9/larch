@@ -1,0 +1,40 @@
+\doc{The execute command}
+\ref{execute-command}
+\ref{execute-silently}
+\ref{file}
+\ref{execution}
+\ref{executes}
+\ref{executing}
+
+The \def{execute command} causes LP to execute commands from a specified file.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{execute-command} ::= ( \f{execute} | \f{execute-silently} ) \s{file}
+\sd{file}            ::= \slink{../symbols/symbols}{blank-free-string}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+execute myProof
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{execute} command causes LP to execute the commands in the file named
+\s{file}\f{.lp} (unless \s{file} contains a period, in which case LP does not
+supply the suffix \f{.lp}) on the current LP 
+\dlink{../settings/lp-path}{search path}.  The \fq{execute} command is 
+ordinarily used to execute commands from a file that was created by the
+\dflink{../commands/set}{set script} or \cflink{write} commands, but any text
+file may be specified.
+\p
+Further \fq{execute} commands may occur in \fq{.lp} files, but recursive 
+\fq{.lp} files are not allowed.  Once a \fq{.lp} file has been exhausted, LP 
+resumes accepting input from the previous \fq{.lp} file or from the user if no
+other file is being executed.  If LP encounters an error while executing a
+file, or if the user \olink{interrupt}{interrupts} LP, LP takes subsequent
+input from the terminal.
+\p
+The \fq{execute-silently} command is just like \fq{execute}, except that it
+produces no output.
+

@@ -1,0 +1,451 @@
+#extend
+
+% An "op_theory" is an axiom that associates a hardwired set of equations and
+% deduction rules with an operator or set of operators.  At present, the
+% following "op_theories" are known to LP:
+
+% The empty theory for "op":
+%      no equations, deduction rules.
+
+% The commutative theory for "op":
+%      op(x, y) == op(y, x)
+
+% The ac (associative-commutative) theory for "op":
+%      op(x, op(y, z)) == op(op(x, y), z)
+%      op(x, y) == op(y, x)
+
+% The free theory for "op_1", ..., "op_n":
+%      when op_i(x1, ..., xm) == op_i(y1, ..., ym) yield x1 == y1, ..., xm = ym
+%      when op_i(x1, ..., xm) == op_j(y1, ..., yk) yield true == false
+%	 (where i ~= j)
+%      when op_i(t1, ..., tm) == x yield true == false
+%	 (where the variable x occurs in one of t1, ..., tn and each subterm
+%	  properly containing this occurrence of x has some op_j as its root)
+
+% Terms are matched and unified modulo the equations in the "op_theories" of
+% their operators.  Equations are checked for inconsistencies modulo the
+% deduction rules in the "op_theories" of the top operators on the two sides of
+% the equation.
+
+% Operationally, an "op_theory" identifies the procedures that will be used to
+% embed, flatten, match, overlap, reduce, and unify terms with top operators in
+% that theory.  Procedures for handling free operators are built into LP.
+
+% Whenever a new operator theory "X" is added to LP, two operations must to be
+% added to the "rewriting_system" cluster: an "extension_X" and a "reduce_X"
+% operation.  The arguments of "reduce_X" are a term "t", a rewriting_system
+% "rsys", an op_system "osys", and a symtab "stab"; "reduce_X" returns a 
+% reduction of of "t"
+% w.r.t. "rsys", assuming that the top operator of "t" has theory X.  The
+% "extension_X" operation should do for theory X what "extension_ac" does for
+% the AC theory: return extra rewrite rules for use in computing critical
+% pairs.  The operations "extension_X" and "reduce_X" are invoked only from
+% within the "rewriting_system" cluster; they must be listed in the header of
+% that cluster, however, so that they may be referenced by an "op_theory".
+
+% An "op_theory" is essentially immutable.  However, an unnamed "op_theory" can
+% be assigned a name.
+
+op_theory = cluster is 
+	make_ac, make_commutative, make_empty, make_free, make_qfr,
+	is_ac, is_commutative, is_empty, is_free, is_qfr,
+	get_named, get_name, set_name, get_theory_name,
+	get_embed, get_extension, get_flatten, get_match, get_op, get_ops,
+	get_overlap_subs, get_reduce, get_unify, get_vars, 
+	inconsistent, print, read, subsumes, unparse, 
+	copy, equal, similar, _gcd, decode, encode
+		       
+
+    % The rep contains an "id" for the theory of "op" (or of "ops" in the case
+    % of the free theory), rather than the theory itself, because the theory
+    % contains procedure types and is not gc-dumpable.  The "name" in the rep
+    % is that of the axiom asserting that "op" has the theory specified by
+    % "id", not the name of the theory.
+     
+    rep = record[id: op_theory_id, name: name_type, op: operator, ops: op_set]
+ 
+    name_type  		= variant[exists: name, none: null]
+    op_theory_id    	= int
+    ac_theory_id    	= 1
+    c_theory_id     	= 2
+    empty_theory_id 	= 3
+    free_theory_id  	= 4
+    qfr_theory_id       = 5
+ 
+    theories_init = theory_seq$[ac_theory, c_theory, empty_theory,
+				free_theory, qfr_theory]
+    theory_seq		= sequence[theory]
+    theory		= struct[embed: embed_proc,
+				 extension: extension_proc,
+				 flatten: flatten_proc,
+				 match: match_iter,
+				 overlap_subs: overlap_subs_iter,
+				 reduce: reduce_proc,
+				 theory_name: string,
+				 unify: unify_iter]
+
+    embed_proc 		= proctype (term, term, op_system) 
+			    returns (term) signals (no_match)
+
+    extension_proc 	= proctype (rewriting_system, rewrite_rule,
+	    			    op_system, symtab)
+			    returns (rewrite_rule) signals (none)
+
+    flatten_proc	= proctype (term) returns (term)
+			    signals (already_flattened)
+
+    match_iter 		= itertype (term, term, op_system, symtab) 
+			    yields (substitution) signals (no_match)
+
+    overlap_subs_iter 	= itertype (term, term, term, op_system, symtab)
+			    yields (substitution, term)
+
+    reduce_proc 	= proctype (term, rewriting_system, op_system, symtab, 
+                                    name)
+			    returns (term) signals (not_reduced)
+
+    unify_iter 		= itertype (term, term, op_system, symtab, var_gen)
+			    yields (substitution) signals (not_unifiable)
+
+    % Specific theories...
+
+    ac_theory 		= theory${embed: embed_ac,
+				  extension: rewriting_system$extension_ac,
+				  flatten: flatten_ac,
+				  match: match_ac,
+				  overlap_subs: overlap_ac_subs,
+				  reduce: rewriting_system$reduce_ac,
+				  theory_name: "ac",
+				  unify: ac_unify}
+
+
+    c_theory 		= theory${embed: embed_c,
+				  extension: rewriting_system$extension_empty,
+				  flatten: flatten_c,
+				  match: match_c,
+				  overlap_subs: overlap_empty_subs,
+				  reduce: rewriting_system$reduce_c,
+				  theory_name: "commutative",
+				  unify: c_unify}
+
+    empty_theory 	= theory${embed: embed_empty,
+				  extension: rewriting_system$extension_empty,
+				  flatten: flatten_empty,
+				  match: match_empty,
+				  overlap_subs: overlap_empty_subs,
+				  reduce: rewriting_system$reduce_empty,
+				  theory_name: "empty",
+				  unify: empty_unify}
+
+    free_theory 	= theory${embed: embed_empty,
+				  extension: rewriting_system$extension_empty,
+				  flatten: flatten_empty,
+				  match: match_empty,
+				  overlap_subs: overlap_empty_subs,
+				  reduce: rewriting_system$reduce_empty,
+				  theory_name: "free",
+				  unify: empty_unify}
+    qfr_theory 		= theory${embed: embed_empty,
+				  extension: rewriting_system$extension_empty,
+				  flatten: flatten_empty,
+				  match: match_quant,
+				  overlap_subs: overlap_empty_subs,
+				  reduce: rewriting_system$reduce_quant,
+				  theory_name: "quantifier",
+				  unify: quant_unify}
+
+
+    % Theories is an own rather than an equate because the latter kills pclu
+    % performance.
+
+    own theories: theory_seq := theories_init
+
+
+    % Returns an unnamed "op_theory" asserting that "op" is AC.  Signals
+    % "wrong_arity" if "op.arity" is not 2.  Signals "bad_domain" if the 
+    % domains sorts of "op" are not the same.  Signals "bad_range" if the range
+    % sort of "op" is not the same as its domain sorts.
+    
+    make_ac = proc (op: operator) returns (cvt) 
+	        signals (bad_domain, bad_range, wrong_arity)
+	if op.arity ~= 2 then signal wrong_arity end
+	if op.dom[1] ~= op.dom[2] then signal bad_domain end
+	if op.dom[1] ~= op.rng then signal bad_range end
+	return(rep${id: ac_theory_id, name: name_type$make_none(nil), op: op,
+	            ops: op_set$[op]})
+	end make_ac
+ 
+ 
+    % Returns an unnamed "op_theory" asserting that "op" is commutative.
+    % Signals "wrong_arity" if "op.arity" is not 2.  Signals "bad_domain" if
+    % the domains sorts of "op" are not the same.
+    
+    make_commutative = proc (op: operator) returns (cvt) 
+		         signals (bad_domain, wrong_arity)
+	if op.arity ~= 2 then signal wrong_arity end
+	if op.dom[1] ~= op.dom[2] then signal bad_domain end
+	return(rep${id: c_theory_id, name: name_type$make_none(nil), op: op,
+	            ops: op_set$[op]})
+	end make_commutative
+ 
+ 
+    % Returns an unnamed "op_theory" asserting that "op" has the empty theory.
+
+    make_empty = proc (op: operator) returns (cvt)
+	return(rep${id: empty_theory_id, name: name_type$make_none(nil), 
+	            op: op, ops: op_set$[op]})
+	end make_empty
+ 
+ 
+    % Returns an unnamed "op_theory" asserting that "ops" are free with respect
+    % to one another.  Signals "impossible" if "ops" is empty, or if two
+    % operators in "ops" have different range sorts.
+
+    make_free = proc (ops: op_set) returns (cvt) signals (impossible)
+	op: operator := op_set$any_element(ops)
+	   except when empty: signal impossible end
+        for op1: operator in op_set$elements(ops) do
+	    if op1.rng ~= op.rng then signal impossible end
+	    end
+	return(rep${id: free_theory_id, name: name_type$make_none(nil), 
+	            op: op, ops: op_set$copy(ops)})
+	end make_free
+ 
+ 
+    % Returns an unnamed "op_theory" for a quantifier pseudo-operator.
+    % Signals "impossible" if "op" is not a quantifier pseudo-operator.
+
+    make_qfr = proc (op: operator) returns (cvt) signals (impossible)
+        if ~is_quantifier(op) then signal impossible end
+        return(rep${id: qfr_theory_id, name: name_type$make_none(nil),
+                    op: op, ops: op_set$[op]})
+        end make_qfr
+
+
+    % Returns "true" if "ot.op" is AC.
+
+    is_ac = proc (ot: cvt) returns (bool)
+	return(ot.id = ac_theory_id)
+	end is_ac
+ 
+    
+    % Returns "true" if "ot.op" is commutative.
+
+    is_commutative = proc (ot: cvt) returns (bool)
+	return(ot.id = c_theory_id)
+	end is_commutative
+ 
+    
+    % Returns "true" if "ot.op" has the empty theory.
+
+    is_empty = proc (ot: cvt) returns (bool)
+	return(ot.id = empty_theory_id)
+	end is_empty
+ 
+    
+    % Returns "true" if "ot.ops" are free.
+
+    is_free = proc (ot: cvt) returns (bool)
+	return(ot.id = free_theory_id)
+	end is_free
+ 
+ 
+    % Returns "true" if "ot.op" is a pseudo-quantifier.
+
+    is_qfr = proc (ot: cvt) returns (bool)
+	return(ot.id = qfr_theory_id)
+	end is_qfr
+ 
+ 
+    % Returns "true" if "ot" is named.
+
+    get_named = proc (ot: cvt) returns (bool)
+	return(name_type$is_exists(ot.name))
+	end get_named
+
+
+    % Returns the name of "ot".  Signals "none" if "ot" is not named.
+
+    get_name = proc (ot: cvt) returns (name) signals (none)
+	return(name_type$value_exists(ot.name))
+	   except when wrong_tag: signal none end
+	end get_name
+
+
+    % Sets the name of "ot" to "n".  Signals "impossible" if "ot" is already
+    % named.
+
+    set_name = proc (ot: cvt, n: name) signals (impossible)
+	if name_type$is_exists(ot.name) then signal impossible end
+	ot.name := name_type$make_exists(n)
+	end set_name
+
+
+    % Returns the name of the operator theory asserted by "ot".
+    
+    get_theory_name = proc (ot: cvt) returns (string)
+	return(theories[ot.id].theory_name)
+	end get_theory_name
+ 
+
+    % Returns the procedure to use to embed a term with a root operator that
+    % has the theory "ot" in another term (cf. embed.clu).
+    
+    get_embed = proc (ot: cvt) returns (embed_proc)
+	return(theories[ot.id].embed)
+	end get_embed
+ 
+
+    % Returns the procedure to use to compute extensions of rewrite rules with
+    % a root operator on the left-hand side that has the theory "ot" (cf.
+    % rewriting_system.clu).
+    
+    get_extension = proc (ot: cvt) returns (extension_proc)
+	return(theories[ot.id].extension)
+	end get_extension
+ 
+
+    % Returns the procedure to use to flatten terms with a root operator that
+    % has the theory "ot" (cf. flatten.clu).
+    
+    get_flatten = proc (ot: cvt) returns (flatten_proc)
+	return(theories[ot.id].flatten)
+	end get_flatten
+ 
+
+    % Returns the iterator to use to match terms with a root operator that
+    % has the theory "ot" (cf. match.clu).
+    
+    get_match = proc (ot: cvt) returns (match_iter)
+	return(theories[ot.id].match)
+	end get_match
+ 
+
+    % Returns "ot.op".
+    
+    get_op = proc (ot: cvt) returns (operator)
+	return(ot.op)
+	end get_op
+
+    
+    % Returns "ot.ops".  ASSUMES: Callers do not modify this set.
+    
+    get_ops = proc (ot: cvt) returns (op_set)
+	return(ot.ops)
+	end get_ops
+
+    
+    % Returns the iterator to use to overlap terms with a root operator that
+    % has the theory "ot" (cf. critical.clu).
+    
+    get_overlap_subs = proc (ot: cvt) returns (overlap_subs_iter)
+	return(theories[ot.id].overlap_subs)
+	end get_overlap_subs
+ 
+
+    % Returns the procedure to use to reduce terms with a root operator that
+    % has the theory "ot" (cf. rewriting_systsem.clu).
+    
+    get_reduce = proc (ot: cvt) returns (reduce_proc)
+	return(theories[ot.id].reduce)
+	end get_reduce
+ 
+
+    % Returns the iterator to use to unify terms with a root operator that
+    % has the theory "ot".
+    
+    get_unify = proc (ot: cvt) returns (unify_iter)
+	return(theories[ot.id].unify)
+	end get_unify
+    
+    
+    % Returns an empty "var_set".
+    
+    get_vars = proc (ot: cvt) returns (var_set)
+	return(var_set$[])
+	end get_vars
+    
+
+    % Returns "true" if "ot1" and "ot2" are inconsistent.
+   
+    inconsistent = proc (ot1, ot2: op_theory) returns (bool)
+	return((is_free(ot1) cand (is_ac(ot2) cor is_commutative(ot2)))
+		 cor (is_free(ot2) cand (is_ac(ot1) cor is_commutative(ot1))))
+	end inconsistent
+    
+    
+    % Prettyprints "ot" on "p".
+    
+    print = proc (p: printer, ot: op_theory, stab: symtab)
+	pop_theory$print(p, ot, stab)
+	end print
+    
+    
+    % Reads and returns an operator theory from the head of "scan".  Writes a
+    % message to "scan", and signals "error", if the head of "scan" does not
+    % represent a valid theory for an operator in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (op_theory) 
+	     signals (error)
+	return(pop_theory$read(scan, stab))
+	   resignal error
+	end read
+
+   
+    % Returns "true" if "ot1" implies "ot2".
+    % ENHANCE: take care of free operators.
+    
+    subsumes = proc (ot1, ot2: op_theory) returns (bool)
+	return(ot1 = ot2 cor is_empty(ot2)
+		 cor is_ac(ot1) cand is_commutative(ot2))
+	end subsumes
+    
+    
+    % Returns a string denoting "ot" suitable for printing on the terminal.
+    % Qualifies the operator if the current "display_mode" is "qualified_mode";
+    % otherwise does not.
+    
+    unparse = proc (ot: op_theory) returns (string)
+	return(unparse_item_with_ids[op_theory](ot))
+	end unparse
+
+
+    % Returns "ot", which is immutable.
+    
+    copy = proc (ot: cvt) returns (cvt)
+	return(ot)
+	end copy
+    
+    
+    % Returns "true" if "ot1" and "ot2" are the same axiom.
+    
+    equal = proc (ot1, ot2: cvt) returns (bool)
+	return(ot1.id = ot2.id cand ot1.op = ot2.op)
+	end equal
+    
+
+    % Returns "true" if "ot1" and "ot2" are the same axiom.
+    
+    similar = proc (ot1, ot2: cvt) returns (bool)
+	return(ot1.id = ot2.id cand ot1.op = ot2.op)
+	end similar
+    
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end op_theory

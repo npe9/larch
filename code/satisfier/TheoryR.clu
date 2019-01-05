@@ -1,0 +1,859 @@
+#extend
+
+% An object ThR of type TheoryR consists of 
+% (a) a set C of terms having the form "ti op tj", where "op" is in 
+%     {=, <, <=, >, >=} and "ti", "tj" are terms of sort "rat", and
+% (b) a set T of terms of sort "rat" such that
+%     -- all subterms of sort "rat" of a term in T are also in T
+%     -- all terms of sort "rat" in C are in T
+
+% ThR.C is closed  under equivalence:
+% (1) if t1 = t2 is in ThR.C, then so is t2 = t1.
+% (2) ti = ti is in ThR.C for all ti in ThR.T.
+% (3) if t1 = t2 and t2 = t3 are in ThR.C, then so is t1 = t3.
+
+% ThR is closed under Theory R:
+%     if t1, t2 are in T , and ThR.C => t1 = t2 (under Theory R)
+%     then t1 = t2 is in ThR.C
+
+% A term "t" is said to be relevant to TheoryR if it has the form (a) above.
+
+% THRClosure(C, T) is the smallest set of terms C1 containing C such that
+% if t is in C1, then all of its rat-subterms are in T, and
+% if TheoryR |= C2 => t1 = t2, then "t1 = t2" is in C2.
+% 
+% A term relevant to TheoryR is said to be multiplicative if it relates
+% rat-valued terms ti, tj, such that ti.root ~= +, tj.root ~= +.
+
+% FIX:  This is not what the code says.  Is the code or the comment correct?
+
+% TheoryR can undo changes,
+% There are 2 functions defined, save and undo, that obey  axioms:
+%     undo(save(Th)) = Th
+%     undo(assert(Th, l)) = undo(Th)
+
+% Invariant: ThR is always consistent with respect to Theory R.
+%            (Theory of rat numbers under addition).
+
+
+TheoryR = cluster is new, add_subterms, relevant, is_int_ge, equality,
+                     multiplicative, assert, model, canonize, canonize_term, 
+		     save, undo, _gcd
+
+    rep = record[tab: tableau, uns: unknowns, assign: lit_set]
+
+    % Representation invariants:
+    %   all unknowns from r.tab are in r.uns
+    % If \E u1, u2 s.t. r.uns[u1]= t1, r.uns[u2] = t2 then
+    % {(t1 > t2) U literals(r)} is satisfiable iff
+    % {u1 - u2 > 0 U constraints(r.tab)} is satisfiable  
+    % r.assign does not contain redundant literal.
+    % r.assign is the basis of literals(r) (complete, non-redundant
+    % subset)
+    % r.tab is feasible, r.tab is minimal.
+
+    % literals(r) is the union of
+    % { lit(t1 = t2): row_constraints(tab) => r.uns[t1] = r.uns[t2]} 
+    % { lit(t1 > t2): (for some u in r.uns) 
+    %		      u is positively restricted in r.tab and
+    %                 row_constraints(rtab) => u = r.uns[t1] - r.uns[t2]}
+    % (and similarly for other inequalities)
+    
+    % A(r) : ThR.C = literals(r)
+    %        ThR.T = Terms(r.uns)
+
+    
+    own zero: rat  := rat$zero()
+    own one:  rat  := rat$one()
+    
+  
+    % Returns new, empty TheoryR
+    
+    new = proc () returns (cvt)
+	return(rep${uns: unknowns$[], tab: tableau$[], assign: lit_set$[]})
+	end new
+    
+    
+    % Modifies Th. 
+    % Effects: Th'.T = Th^.T U rat_subterms(t)
+    %          Th'.C = ThRClosure(Th^.C, T'.T)
+    %          Yields literals "t1 = t2" in Th'.C ~ ThR^.C
+    %          Signals overflow, if arithmetic overflow occurs
+    
+    add_subterms = iter (Th: cvt, tsys: theory_system, t: term) 
+		     yields (literal) signals (overflow)
+        for eq: lin_eq, nt: numeric_theory in extend(Th.uns, tsys, t) do
+	    l: literal
+	    if numeric_theory$is_nat(nt) 
+	       then for l in add_eq_nonneg(Th, tsys, eq) do yield(l) end
+	       else for l in add_eq(Th.tab, tsys, eq) do yield(l) end
+	       end
+	    end resignal overflow
+	   except when contradiction: fail("TheoryR$add_subterms")
+	          when unknown (u: unknown): 
+		       nt: numeric_theory:= tsys[t.sort]
+		       if numeric_theory$is_nat(nt) 
+			    cand ~tableau$is_nonneg(Th.tab, u) then
+			  fail("TheoryR$add_subterms")
+			  end
+		  end 
+	end add_subterms
+
+
+    % Internal: adds eq to tab, yields consequent equalities
+    % Requires: nt.sort = eq.lhs.term.sort
+    
+    add_eq = iter (tab: tableau, tsys: theory_system, eq: lin_eq) 
+	       yields (literal)
+	for col: int in tableau$add_eq(tab, eq) do end
+	   except when exists (u1: unknown):
+		       yield(make_eq_lit(tsys, eq.lhs, u1))
+		  when row_num (*):
+		  end
+	   except when none: end
+	end add_eq
+    
+    
+    % Internal: adds eq to Th.tab. resticts all new unknown in tab to be
+    % nonnegative
+
+    add_eq_nonneg = iter (Th: rep, tsys: theory_system, eq: lin_eq) 
+		      yields (literal) signals (contradiction)
+        for col: int in tableau$add_eq(Th.tab, eq) do
+	    tableau$make_nonneg_col(Th.tab, col)
+	    end
+	   except when exists (u1: unknown):
+		       yield(make_eq_lit(tsys, eq.lhs, u1))
+		  when row_num (r: int):
+		       for l: literal in add_ge_row(Th, tsys, r) do
+			   yield(l)
+			   end except when redundant: end
+			  resignal contradiction
+		  end
+	   except when none: end
+        end add_eq_nonneg
+
+    
+    % Returns true iff l is relevant to TheoryR
+    % Note: non-equalities are not considered relevant
+    
+    relevant = proc (tsys: theory_system, l: literal) returns (bool)
+	op: operator := l.root
+	if op.rng ~= Bool_sort() cor term_seq$size(l.args) ~= 2 then
+	   return(false) 
+	   end
+	so: sort := l.args[1].sort
+	nt: numeric_theory := tsys[so]
+	   except when missing: return(false) end
+	if op = nt.gt cor op = nt.ge cor op = nt.lt cor op = nt.le then
+	   return(true) 
+	   end
+        return(op = nt.equals cand (l.sense cor numeric_theory$is_nat(nt) cor
+				    numeric_theory$is_int(nt)))
+	end relevant
+    
+    
+    % Effects: if l ~ i >= j, and i, j are either integer or natural in tsys
+    %          then returns l1 = i >= j together with numeric_theory of i, j.
+    % Signals none otherwise
+    
+    is_int_ge = proc (l: literal, tsys: theory_system) 
+		  returns (literal, numeric_theory) signals (none)
+        l1: literal, nt: numeric_theory := relevant_numeric(tsys, l)
+	   except when not_relevant: signal none end
+        if l1.root ~= nt.ge 
+	     cor ~(numeric_theory$is_int(nt) cor numeric_theory$is_nat(nt))
+	   then signal none 
+	   end
+	return(l1, nt)
+        end is_int_ge	
+    
+    
+    % Requires: l is an inequality literal [t1 (ordering op) t2] of sort nt.sort
+    % Effects:  returns a literal t1 = t2
+    
+    equality = proc (nt: numeric_theory, l: literal) returns (literal)
+	return(literal$term2lit(term$make_funct(nt.equals, l.args), true))
+	end equality
+    
+    
+    %Internal
+    
+    relevant_numeric = proc (tsys: theory_system, l: literal) 
+			 returns (literal, numeric_theory)
+			 signals (not_relevant)
+       	op: operator := l.root
+	if op.rng ~= bool_sort() cor term_seq$size(l.args) ~= 2 then
+	   signal not_relevant 
+	   end
+	so: sort := l.args[1].sort
+	nt: numeric_theory := tsys[so]
+	   except when missing: signal not_relevant end
+	if (op = nt.gt cor op = nt.ge cor op = nt.lt cor op = nt.le) 
+	     cand ~l.sense then
+	   l := negate(nt, l.negation)
+	   end
+	op := l.root
+	if op = nt.ge cor op = nt.gt then return(l, nt) end
+	args: term_seq := term_seq$[l.args[2], l.args[1]]
+        if op = nt.le then
+	   return(literal$term2lit(term$make_funct(nt.ge, args), true), nt)
+	 elseif op = nt.lt then
+	   return(literal$term2lit(term$make_funct(nt.gt, args), true), nt)
+	 elseif op = nt.equals then return(l, nt) 
+	 end
+	signal not_relevant
+	end relevant_numeric
+    
+    
+    % Returns true iff l is an equality between two multiplicative terms.
+    % Signals not_relevant if l is not relevant to TheoryR
+	   
+    multiplicative = proc (tsys: theory_system, l: literal) returns (bool) 
+		       signals (not_relevant)
+        l1: literal, nt: numeric_theory := relevant_numeric(tsys, l)
+	   resignal not_relevant
+	return(term_is_multiplicative(nt, l.args[1]) cand 
+	       term_is_multiplicative(nt, l.args[2]) )
+        end multiplicative
+	
+    
+    % Modifies: Th. Th'.T = Th^.T U rat_subterms(l)
+    %           Th'.C = ThRClosure(Th^.C + l, Th'.T) 
+    % Yields: literals "t1 = t2" in Th'.C ~ (Th^.C + l)
+    % Signals contradiction and does not modify Th.C iff Th^.C + l is 
+    %         not consistent. (complete)
+    % Signals overflow, if arithmetic overflow occurs
+    
+    assert = iter (Th: cvt, tsys: theory_system, l: literal) yields (literal)
+	       signals (contradiction, overflow)
+
+	nt: numeric_theory
+	lit: literal
+	begin
+	    l, nt := relevant_numeric(tsys, l)
+	    % Now, top level operator of l is either gt or ge or equals, and
+	    % if ~l.sence then op = equals.
+	    op: operator := l.root
+	    arg1: term := l.args[1]
+	    arg2: term := l.args[2]
+	    u1, u2: unknown
+	    cfs: rat_arr := rat_arr$[one, -one, zero]
+	    cfs21: rat_arr := rat_arr$[-one, one, zero]
+	    for lit in get_unknown(Th, tsys, arg1) do yield(lit) end
+	       except when unkn (u: unknown): u1 := u end
+	    for lit in get_unknown(Th, tsys, arg2) do yield(lit) end
+	       except when unkn (u: unknown): u2 := u end
+	    uns: un_arr := un_arr$[u1, u2] 
+	    rhs: prod := prod${cfs: cfs, uns: uns}
+	    rhs21: prod := prod${cfs: cfs21, uns: uns}
+	    u: unknown := unknown$make_fresh()
+	    eq: lin_eq := lin_eq${lhs: u, rhs: rhs}
+	    eq21: lin_eq := lin_eq${lhs: u, rhs: rhs21}
+	    if ~l.sense then
+	       if op ~= nt.equals then fail("ThR$assert") end
+               if contradicts_gt(Th, eq) then  
+		  for c: int in tableau$add_eq(Th.tab, eq21) do end
+		     except when exists (u3: unknown): u := u3
+			    when row_num (*):
+			    end
+		  if numeric_theory$is_real(nt)
+		     then add_gt(Th, u) 
+		     else for lit in add_ge_1(Th, tsys, u) do yield(lit) end
+		     end
+		elseif contradicts_gt(Th, eq21) then
+		  for c: int in tableau$add_eq(Th.tab, eq) do end
+		     except when exists (u3: unknown): u := u3
+			    when row_num (*):
+			    end
+		  if numeric_theory$is_real(nt)
+		     then add_gt(Th, u)
+		     else for lit in add_ge_1(Th, tsys, u) do yield(lit) end
+		     end
+		end except when redundant: end
+	       end
+	    for c: int in tableau$add_eq(Th.tab, eq) do end
+	       except when exists (u3: unknown): u := u3
+		      when row_num (*):
+		      end
+	    if op = nt.gt then
+	       redund: bool := false	
+	       add_gt(Th, u) 
+		  except when redundant: redund := true end
+	       if numeric_theory$is_nat(nt) cor numeric_theory$is_int(nt) then
+		  for lit in add_ge_1(Th, tsys, u) do yield(lit) end
+		  end
+	       if redund then exit redundant end
+	     elseif op = nt.ge then
+	       for lit in add_ge(Th, tsys, u) do yield(lit) end
+	     elseif op = nt.equals cand l.sense then
+	       for lit in make_0(Th, tsys, u) do yield(lit) end
+	     end resignal overflow
+	    lit_set$insert_unique(Th.assign, l)
+	    end except when redundant: end
+	   except when not_relevant: end
+	   resignal contradiction
+	end assert
+
+    
+    % adds constraint u>= 1 to the Th
+    
+    add_ge_1= iter (Th: rep, tsys: theory_system, u: unknown) yields (literal)
+		signals (contradiction)
+	cfs: rat_arr := rat_arr$[one, -one]
+	uns: un_arr := un_arr$[u]
+	rhs: prod := prod${cfs: cfs, uns: uns}
+	u_lhs: unknown
+	begin
+	    u_lhs := unknown$make_fresh()
+	    for c: int in tableau$add_eq(Th.tab, lin_eq${lhs: u_lhs, rhs: rhs})
+	      do end
+	    end except when exists (u3: unknown): u_lhs := u3
+		       when row_num (*):
+		       end
+        for l: literal in add_ge(Th, tsys, u_lhs) do yield(l) end
+	   resignal contradiction
+	   except when redundant: end
+	end add_ge_1
+    
+    
+    % Internal
+    % Effects: rerurns true iff eq.rhs > 0 contradicts Up(Th)
+    
+    contradicts_gt = proc (Th: rep, eq: lin_eq) returns (bool)
+	TheoryR$save(up(Th))
+	u: unknown := eq.lhs
+	for c: int in tableau$add_eq(Th.tab, eq) do end
+	   except when exists (u3: unknown): u := u3
+	          when row_num (*): end
+	add_gt(Th, u) except when contradiction: TheoryR$undo(up(Th))
+						 return(true)
+			     when redundant:
+			     end
+	TheoryR$undo(up(Th))
+	return(false)
+	end contradicts_gt
+        
+    
+    % Returns literal l1 = canonize(l)
+    % Signals Tautology if l1 is tautology, like 3>0
+    % Signals contradiction if l1 is contradictory, like 3 < 0.
+    
+    canonize = proc (tsys: theory_system, l: literal) returns (literal)
+		 signals (tautology, contradiction)
+	begin
+	    nt: numeric_theory
+	    l, nt := relevant_numeric(tsys, l)
+	    if ~l.sense then
+	       return(negate(nt, canonize(tsys, l.negation)))
+	       end
+	       except when tautology:     signal contradiction
+		      when contradiction: signal tautology
+		      end
+	    op: operator := l.root
+	    args: term_seq := l.args
+	    expr: term_expr
+	    if op = nt.equals cor op = nt.gt cor op = nt.ge then
+	       expr := diff2expr(nt, args[1], args[2]) 
+	       end
+	    new_atoms: term_arr := term_arr$[]
+	    for ti: term in term_expr$atoms(expr) do
+		term_arr$addh(new_atoms, canonize_term(tsys, ti))
+		end
+	    expr := term_expr${coeffs: expr.coeffs,
+			       atoms: term_seq$a2s(new_atoms)}
+	    return(expr2lit(nt, op, expr)) 
+	       resignal tautology, contradiction
+	    end except when not_relevant: end
+	if relevant(tsys, l.negation) % means l: t1 ~= t2
+	   then return(canonize(tsys, l.negation).negation) end
+	   except when tautology:     signal contradiction
+		  when contradiction: signal tautology
+		  end
+	return(literal$create(canonize_term(tsys, literal$lit2term(l))))
+	end canonize
+    
+    
+    % Returns term t1 such that t = t1 under theory R, and
+    % all  R_compound subterms of t1 are in canonical form.
+    
+    canonize_term = proc (tsys: theory_system, t: term) returns (term)
+	if term_seq$size(t.args) = 0 then return(t) end
+	so: sort := t.sort
+	begin
+	    nt: numeric_theory := tsys[so]
+	    if term_is_num_compound(nt, t) then
+	       expr: term_expr := term2expr(nt, t)
+	       new_atoms: term_arr := term_arr$[]
+	       for ti: term in term_expr$atoms(expr) do
+		   term_arr$addh(new_atoms, canonize_term(tsys, ti))
+		   end
+	       expr := term_expr${coeffs: expr.coeffs,
+				  atoms: term_seq$a2s(new_atoms)}
+	       return(expr2term(nt, expr))
+	       end
+	    end except when missing: end
+	f: operator := t.root
+	args: term_seq := t.args
+	new_args: term_arr := term_arr$[]
+	same: bool := true
+	for ti: term in term_seq$elements(args) do
+	    ti_new: term := canonize_term(tsys, ti)
+	    if ti ~= ti_new then same := false end
+	    term_arr$addh(new_args, ti_new)
+	    end
+	if same then return(t) end
+	return(term$make_funct_without_checking(f, term_seq$a2s(new_args)))
+	end canonize_term
+
+    
+    % Yields a sequence of nonredundant literals that is satisfiable iff Th.C
+    % is satisfiable.
+    
+    model = iter (Th: cvt) yields (literal)
+	for li: literal in lit_set$elements(Th.assign) do yield(li) end
+	end model
+
+    
+    % Modifies Th. Th' = save(Th^)
+    
+    save = proc (Th: cvt)
+	tableau$save(Th.tab)
+	unknowns$save(Th.uns)
+	lit_set$save(Th.assign)
+	end save
+
+    
+    % Modifies Th. Th' = undo(Th^)
+    % Signals empty if undo(Th) is not defined(There was no save)
+    
+    undo = proc (Th: cvt) signals (empty)
+	tableau$undo(Th.tab) resignal empty
+	unknowns$undo(Th.uns)resignal empty
+	lit_set$undo(Th.assign) resignal empty
+	end undo
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+    
+    
+    % internal iterator
+    % Requires: I(Th^), t is of sort rat
+    % Modifies: Th.tab, Th.unknowns
+    % Effects: Th'.unknowns includes new unknowns, for all R_compound
+    %          subterms of t, and their immediate R_atomic subterms;
+    %          It also includes unknown for t;
+    %          I(Th')
+    % Yields all mutually non redundant literals li, s.t.
+    %          li \in literals(Th'), 
+    %          li ~\in literals(Th^)
+    % Signals with unknown for t
+    
+    get_unknown = iter (Th: rep, tsys: theory_system, t: term) yields (literal)
+		    signals (unkn(unknown), overflow)
+	signal unkn(Th.uns[t]) except when none: end
+	l: literal
+	for eq: lin_eq, nt: numeric_theory in extend(Th.uns, tsys, t) do
+	    if numeric_theory$is_nat(nt) 
+	       then for l in add_eq_nonneg(Th, tsys, eq) do yield(l) end
+	       else for l in add_eq(Th.tab, tsys, eq) do yield(l) end
+	       end
+	    end resignal overflow, unkn
+	   except when contradiction: fail("theoryR$get_unknown") end
+	u: unknown := unknown$create(t)
+	unknowns$add(Th.uns, u)
+	col: int := tableau$add_col_var(Th.tab, u)
+	if numeric_theory$is_nat(tsys[t.sort]) then
+	   tableau$make_nonneg_col(Th.tab, col) 
+	   end except when missing: 
+			   fail("TheoryR$get_unknown: not numeric sort")
+		      end
+	signal unkn(u)
+	end get_unknown
+
+    
+    % Internal procedure   n
+    % Requires: I(Th^), u \in Th^.uns
+    % Modifies Th 
+    % Effects: I(Th')
+    %          is_positive(Th'.tab, u)
+    %          Signals Contradiction iff constraints(Th'.tab)&(u>0) is not
+    %                  satisfiable (in this case Th is not modified. 
+    %          Signals redundant if constraints(Th'.tab)=>(u>0)
+    %                  NOTE: in this case Th can be modified
+     
+    add_gt = proc(Th: rep, u: unknown) 
+	       signals (contradiction, overflow, redundant)
+	if tableau$is_pos(Th.tab, u) then signal redundant end
+	begin
+	    row_num: int := tableau$make_own_row(Th.tab, u)
+	       except when unsufficient (col_num: int):
+			   tableau$make_pos(Th.tab, u)
+			   return
+		      end
+	    min_sgn: sign := simplex$get_min_sign_in_row(Th.tab, row_num)
+	    if sign$is_positive(min_sgn) then
+	       tableau$make_pos(Th.tab, u)
+	       signal redundant
+	       end
+	    max_sgn: sign := simplex$get_max_sign(Th.tab, row_num)
+	    if ~sign$is_positive(max_sgn) then signal contradiction end
+	    tableau$make_pos(Th.tab, u)
+	    end resignal overflow
+	end add_gt
+    
+    
+    % Internal proc
+    % Requires: u \in Th^.uns, I(Th^)
+    % Modifies: Th
+    % Effects: is_nonneg(Th'.tab, u), I(Th')
+    % Yields literals "t1 = t2" in literals(Th') ~ literals(Th^)
+    % Signals: Contradiction iff constraints(Th^.tab) & (u >= 0) 
+    %          is inconsistent.(In this case Th is not modified);
+    %          Redundant constraints(Th^.tab) => u >= 0(Th can be modified);
+    %          Overflow iff arithm. overflow occurs
+
+   
+    add_ge = iter (Th: rep, tsys: theory_system, u: unknown) yields (literal)
+	       signals (contradiction, overflow, redundant)
+	if tableau$is_restricted(Th.tab, u) then signal redundant end
+	begin
+	    row_num: int := tableau$make_own_row(Th.tab, u)
+	    for l: literal in add_ge_row(Th, tsys, row_num) do yield(l) end
+	       resignal contradiction, overflow, redundant
+	    end
+	   except when unsufficient (col_num: int):
+		       %impossible to pivot in row => col(u) = all zeros
+		       tableau$make_nonneg(Th.tab, u)
+		  end
+	end add_ge
+    
+    
+    % Requires: owner of ge is not restricted, row_num specifies a row in
+    % Th.tab.  Like add_ge, but restricts owner of row_num
+    
+    add_ge_row = iter(Th: rep, tsys: theory_system, row_num: int)
+		   yields (literal)
+		   signals (contradiction, overflow, redundant)
+	begin
+	    min_sgn: sign := simplex$get_min_sign_in_row(Th.tab, row_num)
+	    if sign$is_positive(min_sgn) then
+	       tableau$make_nonneg_row(Th.tab, row_num)
+	       signal redundant
+	       end
+	    u: unknown := tableau$owner_row(Th.tab, row_num)
+	    max_sgn: sign := simplex$get_max_sign(Th.tab, row_num)
+	    if sign$is_zero(max_sgn) then
+	       for u1, u2: unknown in tableau$kill_row(Th.tab, row_num) do
+		   yield(make_eq_lit(tsys, u1, u2))
+		      except when none: continue end
+		      resignal contradiction
+		   end except when impossible: signal contradiction end
+	       end
+	    if sign$is_negative(max_sgn)
+	       then signal contradiction
+	       else tableau$make_nonneg(Th.tab, u)
+	       end
+	    if ~sign$is_negative(min_sgn) then signal redundant end
+	    end resignal overflow
+	end add_ge_row
+		
+    
+    % internal
+    % Returns a literal representing the equality "u1.t = u2.t".
+    % Signals contradiction if one u1, u2 is mapped to not integer value
+    % Signals none if one of u1, u2 is not mapped to term
+    
+    make_eq_lit = proc (tsys: theory_system, u1, u2: unknown)
+		    returns (literal) signals (none, contradiction)
+	if unknown$is_number(u1) cand unknown$is_number(u2) then
+	   fail("theoryR$make_eq_lit") 
+	   end
+	if ~((unknown$is_number(u1) cor unknown$is_mapped(u1)) cand
+	     (unknown$is_number(u2) cor unknown$is_mapped(u2)))
+	   then signal none 
+	   end
+        so: sort
+	if unknown$is_mapped(u1) 
+	   then so := u1.t.sort
+	   else so := u2.t.sort 
+	   end resignal none
+        nt: numeric_theory := tsys[so]
+	t1: term := u1.t
+	   except when number (r: rat): t1 := rat2term(nt, r)
+		  when impossible: signal contradiction
+		  end
+	t2: term := u2.t
+	   except when number (r: rat): t2 := rat2term(nt, r)
+		  when impossible: signal contradiction
+		  end
+	return(literal$make_equality(t1, t2))
+	end make_eq_lit
+    
+    
+    % Internal
+    % REquires: u \in Th^.uns, I(Th^)
+    % Modifies: Th
+    % Effects: constraints(Th'.tab) => u = 0 ; I(Th')
+    % Yields literals "t1 = t2" in literals(Th') ~ literals(Th^)
+    % Signals: Contradiction iff constraints(Th^.tab) & (u = 0) 
+    %          is inconsistent.(In this case Th is not modified);
+    %          Redundant constraints(Th^.tab) => u = 0(Th can be modified);
+    %          Overflow iff arithm. overflow occurs
+    
+    make_0 = iter (Th: rep, tsys: theory_system, u: unknown) yields (literal)
+	       signals (contradiction,overflow, redundant)
+	%%%possible optimisation: should first check if u is restricted
+	%%% and if it is, no need to compute maximum, can compute
+	%%% only minimum
+	  
+	if tableau$is_pos(Th.tab, u) then signal contradiction end
+	if tableau$is_0(Th.tab, u) then signal redundant end
+	begin
+	    row_num: int := tableau$make_own_row(Th.tab, u)
+	    max_sgn: sign := simplex$get_max_sign_in_row(Th.tab, row_num)
+	    if sign$is_negative(max_sgn) then signal contradiction end
+	    if sign$is_zero(max_sgn) then
+	       for u1, u2: unknown in tableau$kill_row(Th.tab, row_num) do
+		   yield(make_eq_lit(tsys, u1, u2))
+		      except when none: continue end
+		      resignal contradiction
+		   end except when impossible: signal contradiction end
+	       %%%need to exit: after this loop variable is already zero
+	       %%%should not do anything!!!
+	       exit done
+	       end
+	    min_sgn: sign := simplex$get_min_sign(Th.tab, row_num)
+	    if sign$is_positive(min_sgn) then signal contradiction end
+	    if sign$is_zero(min_sgn) then
+	       for u1, u2: unknown in tableau$kill_row(Th.tab, row_num) do
+		   yield(make_eq_lit(tsys, u1, u2))
+		      except when none: continue end
+		      resignal contradiction
+		   end except when impossible: signal contradiction end
+	       %%%need to exit: after this loop variable is already zero
+	       %%%should not do anything!!!
+	       exit done
+	       end
+	   
+	    col_num: int := tableau$make_own_col(Th.tab, u)
+	    for u1, u2: unknown in tableau$kill_column(Th.tab, col_num) do
+	      	yield(make_eq_lit(tsys, u1, u2))
+		   except when none: continue end
+		   resignal contradiction
+		end except when impossible: signal contradiction end
+	    end
+	   except when done:
+		  when unsufficient (col_num: int):
+		       for u1, u2: unknown in
+			   tableau$kill_column(Th.tab, col_num) do end
+		  end
+	   resignal overflow
+	end make_0
+
+
+    % Internal procedure
+    % Requires l is relevant to theory R
+    % Returns literal l1 = ~l under theory R, such that
+    % if l is not equality l1 does not have negation in it
+    % (example: negate(t1 < t2) = (t1 >= t2))
+    
+    negate = proc (nt: numeric_theory, l: literal) returns (literal)
+	if ~l.sense then return(l.negation) end
+	op: operator := operator_R_negate(nt, l.root)
+	if op = nt.equals then return(l.negation) end
+	return(literal$term2lit(term$make_funct(op, l.args), l.sense))
+	end negate
+    
+    
+    % Internal procedure
+    % Requires: operator is rat comparator
+    %           returns negation of op
+    % example: returns < given >=.
+    % If op is not a rat comparator or equality, returns op.
+    
+    operator_R_negate = proc (nt: numeric_theory, op: operator) returns (operator)
+	if op = nt.gt then return(nt.le)
+	 elseif op = nt.ge then return(nt.lt)
+	 elseif op = nt.lt then return(nt.ge)
+	 elseif op = nt.le then return(nt.gt)
+	 end
+	return(op)
+	end operator_R_negate
+ 
+    	
+    % Internal procedure
+    % Requires t1.sort = t2.sort = nt.sort
+    % Returns Term expression, which is equivalent to t1-t2 under theory R
+    
+    diff2expr = proc (nt: numeric_theory, t1, t2: term) returns (term_expr)
+	return(term2expr(nt, t1) - term2expr(nt, t2))
+	end diff2expr
+
+
+    % Requires: t is of sort rat, t is evaluated:
+    %           all numerical subtrees are evaluated,
+    %           all R_compound subterms with top-level mult are binary.
+    % Returns expression e, such that e = t under theoryR
+    % And Atoms(e) are R_atomic terms. Clearly, there is only
+    % one expression, which satisfies conditions.
+
+    term2expr = proc (nt: numeric_theory, t: term) returns (term_expr)
+	one_term: term := rat2term(nt, one)
+	return(term_expr${coeffs: rat_seq$[term2rat(t)], atoms: term_seq$[]})
+	   except when not_number: end
+	if term_is_num_atomic(nt, t) then
+	   return(term_expr${coeffs: rat_seq$[one, zero], atoms: term_seq$[t]})
+	   end
+	% term is num_compound
+	op: operator := t.root
+	args: term_seq := t.args
+	if op = nt.add then
+	   exp: term_expr := term2expr(nt, args[1])
+	   for i: int in int$from_to(2, term_seq$size(args)) do
+	       exp := exp + term2expr(nt, args[i])
+	       end
+	   return(exp)
+	   end
+	if op = nt.sub then
+	   return(term2expr(nt, args[1]) - term2expr(nt, args[2]))
+	   end except when none: end
+	if op = nt.mul then
+	   n: rat
+	   arg: term
+	   begin
+	       n := term2rat(args[1])
+	       arg := args[2]
+	       end except when not_number: n := term2rat(args[2])
+					   arg := args[1]
+			  end
+	   return(term_expr$constant_multiple(n, term2expr(nt, arg)))
+	   end
+	if op = nt.div then
+	   n: rat
+	   arg: term
+	   begin
+	       n := one/term2rat(args[2])
+	       arg := args[1]
+	       end
+	      except when not_number:
+			  n := term2rat(args[1])
+			  args1: term_seq := term_seq$[one_term, args[2]]
+			  arg := term$make_funct_without_checking(op, args1)
+		     end
+	   return(term_expr$constant_multiple(n, term2expr(nt, arg)))
+	   end except when none: end
+	if op = nt.minus then
+	   return(term_expr$constant_multiple(-one, term2expr(nt, args[1])))
+	   end except when none: end
+	end term2expr
+    
+    % internal
+    % Requires: Atoms(expr) consists only from R-atomic terms.
+    % Returns term t such that t = expr under theory R and t is in 
+    % canonical form
+
+    expr2term = proc (nt: numeric_theory, expr: term_expr) returns (term)
+	zero_term: term := rat2term(nt, zero)
+	t: term := rat2term(nt, expr.constant_term)
+	for numi: rat, ti: term in term_expr$summands(expr) do
+	    t1: term
+	    if numi = zero then continue end
+	    if numi = one then t1 := ti
+	     elseif numi = -one then
+	       t1 := term$make_funct_without_checking(nt.minus, term_seq$[ti])
+	     else numi_t: term := rat2term(nt, numi)
+		  t1 := term$make_funct_without_checking(nt.mul,
+							 term_seq$[numi_t,ti])
+	     end
+	    if t = zero_term then
+	       t := t1
+	       continue
+	       end
+	    op: operator := nt.add
+	    if t1.root = nt.minus then
+	       op := nt.sub
+	       t1 := t1.args[1]
+	       end except when none: end
+	    t := term$make_funct_without_checking(op, term_seq$[t, t1])
+	    end except when none: fail("ThR$expr2term") end
+	return(t)
+	end expr2term
+
+    
+    % (Internal procedure)
+    % Requires: "op" is one of >, >=, or =
+    % Ensures:  result is a literal in canonical form representing "expr op 0"
+    %           Signals tautology if the result is tautological, e.g., 3 > 0
+    %           Signals contradiction if l is contradictory, e.g., 3 < 0.
+    
+    expr2lit = proc (nt: numeric_theory, op: operator, expr: term_expr)
+		 returns (literal) signals (tautology, contradiction)
+	if term_expr$is_constant(expr) then
+	   last: rat := expr.constant_term
+	   if last < zero
+		cor (last = zero cand op = nt.gt)
+		cor (last ~= zero cand op = nt.equals)
+	      then signal contradiction
+	      else signal tautology
+	      end
+	   end
+	den_lcm, num_gcd: int
+	first: bool := true
+	for r: rat in rat_seq$elements(expr.coeffs) do
+	    num, den: int := rat$rat2ints(r)
+	    if first
+	       then den_lcm := den
+		    num_gcd := int$abs(num)
+		    first := false
+	       else den_lcm := lcm(den_lcm, den)
+		    num_gcd := gcd(num_gcd, int$abs(num))
+	       end except when zero_divide: end	% Can happen for constant term
+	    end
+	r: rat := rat${num: den_lcm, den: num_gcd}
+	expr := term_expr$constant_multiple(r, expr)
+	t_pos, t_neg: term := separate_parts(nt, expr)
+	return(literal$term2lit(term2(op, t_pos, t_neg), true))
+	end expr2lit
+
+    
+    % (Internal procedure) Returns two terms "pos" and "neg" representing
+    % either zero or expressions with positive coefficients such that "expr" is
+    % equivalent to "pos - neg".
+    
+    separate_parts = proc (nt: numeric_theory, expr: term_expr)
+		       returns (term, term)
+	make_term = term$make_funct_without_checking
+	zero_term: term := rat2term(nt, zero)
+	pos, neg: term
+	const: rat := expr.constant_term
+	if const >= zero
+	   then pos := rat2term(nt, const)
+		neg := zero_term
+	   else pos := zero_term
+		neg := rat2term(nt, -const)
+	   end
+	for r: rat, t: term in term_expr$summands(expr) do
+	    r1: rat := rat$abs(r)
+	    if r1 ~= one then
+	       t := make_term(nt.mul, term_seq$[rat2term(nt, r1), t])
+	       end
+	    if r >= zero
+	       then if pos = zero_term
+		       then pos := t
+		       else pos := make_term(nt.add, term_seq$[pos, t])
+		       end
+	       else if neg = zero_term
+		       then neg := t
+		       else neg := make_term(nt.add, term_seq$[neg, t])
+		       end
+	       end
+	    end
+	return(pos, neg)
+	end separate_parts
+
+    end TheoryR

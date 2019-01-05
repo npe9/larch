@@ -1,0 +1,25 @@
+\doc{Abbreviations for commands}
+\ref{abbreviations}
+
+LP allows users to abbreviate a command with an unambiguous prefix of that
+command.  For example, the \fq{declare} command can be abbreviated to \fq{dec},
+but not to \fq{de} because \fq{de} is also a prefix of the \fq{delete} command.
+\p
+LP also allows users to abbreviate certain command arguments with unambiguous
+prefixes.  When the argument can be a hyphenated word, it is enough to supply
+unambiguous prefixes of the hyphenated components.  Examples:
+\begin{verbatim}
+Command                              Abbreviation
+-------                              ------------
+declare operators 0, 1: -> Nat       dec op 0, 1: -> Nat
+display rewrite-rules                dis r-r
+\end{verbatim}
+When an argument to a command can contain reserved words (such as
+\fq{formulas}) and \dlink{name}{names} of facts, abbreviations used for 
+reserved words must not conflict with any \setlink{name-prefix} established by
+the \cflink{set} command.  For example, \fq{disp form} is a legal abbreviation
+for the command \fq{display formulas} unless the user has previously entered
+the command \fq{set name form}, in which case LP interprets \fq{disp form} as
+a request to display all facts whose name begins with the prefix \fq{form}
+rather than to display all facts that are formulas.
+

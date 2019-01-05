@@ -1,0 +1,610 @@
+#extend
+
+% An "induction_rule" provides an axiom scheme for use in proofs by induction.
+% There are two kinds of induction schemes: well-founded induction and
+% structural induction.
+
+% A well-founded induction rule "ir" is determined by a single binary relation
+% "R", both of whose arguments have a common sort, "ir.sort".  Such a rule is
+% logically equivalent to the scheme
+%     \A x ( \A y (R(y, x) => P(x)) => P(x) ) => \A x P(x)
+% where "P" is an arbitrary formula.  To prove a formula "P" by well-founded
+% induction over a variable "x" using this scheme, LP requires the user to
+% prove "P(xc)" as a subgoal using "\A y (R(x, xc) => P(x))" as an additional
+% hypothesis.
+
+% A structural induction rule "ir" is determined by a set of functions, known
+% as generators, which have a common range sort, "ir.sort".  These generators
+% are divided into the set "ir.basis_ops" of basis generators, which have no
+% arguments of sort "ir.sort", and the set "ir.inductive_ops" ofinductive
+% generators, which have at least one argument of that sort.  Each structural
+% induction rule must contain at least one basis generator.  A "free"
+% structural induction rule, in addition to providing an axioms scheme, also
+% provides a set of axioms asserting that the generates produce distinct
+% values.
+
+% To prove a formula "P" by induction of depth "d" over a variable "v" using
+% the structural induction rule "ir", LP proceeds as follows.
+    
+% Definition 1.  An "ir"-ground("base") term for "P", where "base" is a set of
+% constants of sort "ir.sort", is a term of sort "ir.sort" in which all
+% operators are either in "base" or in "ir.inductive", no variable has sort
+% "ir.sort", no variable occurs more than once, and no variable occurs in "P".
+
+% Definition 2.  An "ir"-ground term for "P" is an "ir"-ground("ir.basis_ops")
+% term for "P".
+
+% Definition 3.  The depth of a term is 0 if the term consists of a variable;
+% otherwise it is one more than the maximum depth of its arguments.
+
+% Definition 4.  Suppose "base" is {c1, ..., cn}.  An "ir"-ground("base") term
+% is canonical if it contains exactly one occurrence of each of "c1", ..., "ck"
+% for some "k" <= "n".
+
+% The basis step in an inductive proof with depth "d" of "P" using "ir"
+% involves proving all formulas of the form "P(v gets t)" where "t" is an
+% "ir"-ground term for "P" of depth at most "d".
+
+% The induction step in the proof introduces a set "base" of new constants
+% "c1:->s", ..., "cn:->s", where "n" is the maximum number of arguments of sort
+% "ir.sort" in a generator in "ir.inductive" raised to the power "d".  The
+% induction step involves proving all formulas of the form "P(v gets t)", where
+% "t" is a canonical "ir"-ground("base") term for "P" of depth "d+1".  These
+% proofs use the formulas in the system together with a set of induction
+% hypotheses that contains all formulas of the form "P(v gets t)", where "t" is
+% an "ir"-ground("base") term for "P" of depth at most "d".  When "d" is 1, the
+% induction hypotheses include all formulas of the form "P(v gets c)", where
+% "c" is in "base"; and the induction step involves proving all formulas of the
+% form "P(v gets t)", where "t" is a canonical "ir"-ground("base") term for "P"
+% of depth 2.
+
+
+%      Examples		 Terms to substitute when formulating the
+% Generators  Level   Basis Step    Induction Hypotheses  Induction Step
+%
+% 0, s		1     0		    c			  s(c)
+%
+% 0, s		2     0, s(0)	    c, s(c)		  s(s(c))
+%
+% 0, 1, +	1     0, 1	    c1, c2		  c1 + c2
+%
+% 0, 1, +	2     0, 1,	    c1, c2, c3, c4,	  c1 + (c2 + c3),
+%		      0+0, 0+1,	    c1+c1, c1+c2, ...	  (c1 + c2) + c3,
+%		      1+0, 1+1	    c2+c1, c2+c2, ...	  (c1 + c2) + (c3 + c4)
+%				    c3+c1, c3+c2, ...
+%				    c4+c1, c4+c2, ...
+%
+% e, insert	1     e		    c			  insert(x, c)
+%
+% e, insert	2     e,	    c, insert(x, c)	  insert(x,insert(y,c))
+%		      insert(x, e)
+
+
+
+induction_rule = cluster is 
+	make_structural, make_wf, get_named, get_name, set_name, get_basis_ops,
+	get_inductive_ops, get_n_constants, get_ops, get_relation, get_sort, 
+	get_vars, free_facts, is_free_structural, is_structural, is_wf, 
+	basis_terms, induction_constants, induction_hyp_terms, 
+	induction_eq_terms, parse, read, print, subsumes, unparse, 
+	ground_terms, equal, copy, _gcd, decode, encode
+
+    rep = record[kind: induction_kind, name: name_type, sort: sort]
+    
+    induction_kind = oneof[structural: struct_ind, wf: operator]
+    struct_ind     = record[all_ops, basis_ops, inductive_ops: op_set,
+			    free: bool, n_constants: int]
+    name_type      = variant[exists: name, none: null]
+    
+    % "n_constants" is the number of constants needed for the induction step
+    % in a proof by structural induction of depth 1.
+    % NOTE: If zero, there is no induction step.
+
+    
+    % Returns an unnamed structural "induction_rule" containing "ops" as
+    % generators.  Signals "no_basis_ops" if there are no basis generators in
+    % "ops".  Signals "ill_sorted" if two operators in "ops" have different
+    % range sorts.
+
+    make_structural = proc (ops: op_set, free: bool) returns (cvt) 
+			signals (ill_sorted, no_basis_ops)
+	so: sort := op_set$any_element(ops).rng
+	   except when empty: signal no_basis_ops end
+        basis: op_set := op_set$[]
+	inductive: op_set := op_set$[]
+	n_constants: int := 0
+	for op: operator in op_set$elements(ops) do
+	    if op.rng ~= so then signal ill_sorted end
+	    % Count the number of arguments of "op" of sort "op.rng".
+	    local_arity: int := 0
+	    for ds: sort in sort_seq$elements(op.dom) do
+		if ds = op.rng then local_arity := local_arity + 1 end
+		end
+	    if local_arity = 0
+	       then op_set$insert_unique(basis, op)
+	       else op_set$insert_unique(inductive, op)
+		    n_constants := int$max(n_constants, local_arity)
+	       end
+	    end
+	if op_set$empty(basis) then signal no_basis_ops end
+	si: struct_ind := struct_ind${all_ops: basis + inductive,
+				      basis_ops: basis,
+				      free: free,
+				      inductive_ops: inductive,
+				      n_constants: n_constants}
+	return(rep${kind: induction_kind$make_structural(si),
+		    name: name_type$make_none(nil),
+		    sort: so})
+	end make_structural
+
+    
+    % Returns an unnamed well-founded "induction_rule" based on "op".
+    % Signals "bad_signature" if "op.sig" does not have the form "S,S->Bool"
+    % for some sort "S".
+
+    make_wf = proc (op: operator) returns (cvt) signals (bad_signature)
+        if op.rng ~= bool_sort() cor op.arity ~= 2 cor op.dom[1] ~= op.dom[2] 
+	   then signal bad_signature
+	   end
+	return(rep${kind: induction_kind$make_wf(op),
+		    name: name_type$make_none(nil),
+		    sort: op.dom[1]})
+	end make_wf
+
+
+    % Returns "true" if "ir" is named.
+
+    get_named = proc (ir: cvt) returns (bool)
+	return(name_type$is_exists(ir.name))
+	end get_named
+
+
+    % Returns the name of "ir".  Signals "none" if "ir" is not named.
+
+    get_name = proc (ir: cvt) returns (name) signals (none)
+	return(name_type$value_exists(ir.name))
+	   except when wrong_tag: signal none end
+	end get_name
+
+
+    % Sets the name of "ir" to "n".  Signals "impossible" if "ir" is already
+    % named.
+
+    set_name = proc (ir: cvt, n: name) signals (impossible)
+	if name_type$is_exists(ir.name) then signal impossible end
+	ir.name := name_type$make_exists(n)
+	end set_name
+
+
+    % Returns the set of basis operators in "ir".  Signals "wrong_tag" if "ir"
+    % is not a structural induction rule.
+    
+    get_basis_ops = proc (ir: cvt) returns (op_set) signals (wrong_tag)
+	si: struct_ind := induction_kind$value_structural(ir.kind)
+	   resignal wrong_tag
+	return(op_set$copy(si.basis_ops))
+	end get_basis_ops
+
+
+    % Returns the set of inductive operators in "ir".  Signals "wrong_tag" if
+    % "ir" is not a structural induction rule.
+    
+    get_inductive_ops = proc (ir: cvt) returns (op_set) signals (wrong_tag)
+	si: struct_ind := induction_kind$value_structural(ir.kind)
+	   resignal wrong_tag
+	return(op_set$copy(si.inductive_ops))
+	end get_inductive_ops
+
+
+    % Returns "ir.n_constants". Signals "wrong_tag" if "ir" is not a structural
+    % induction rule.
+    
+    get_n_constants = proc (ir: cvt) returns (int) signals (wrong_tag)
+	si: struct_ind := induction_kind$value_structural(ir.kind)
+	   resignal wrong_tag
+	return(si.n_constants)
+	end get_n_constants
+    
+
+    % Returns the set of all operators in "ir".
+    
+    get_ops = proc (ir: cvt) returns (op_set)
+	tagcase ir.kind
+	   tag structural (si: struct_ind): return(si.all_ops)
+	   tag wf (op: operator): return(op_set$[op])
+	   end
+	end get_ops
+    
+    
+    % Returns the relation in a well-founded induction rule "ir".  Signals
+    % "wrong_tag" if "ir" is not a well-founded induction rule.
+    
+    get_relation = proc (ir: cvt) returns (operator) signals (wrong_tag)
+	return(induction_kind$value_wf(ir.kind))
+	   resignal wrong_tag
+	end get_relation
+    
+    
+    % Returns the sort of "ir".
+    
+    get_sort = proc (ir: cvt) returns (sort)
+	return(ir.sort)
+	end get_sort
+    
+
+    % Returns the empty set of variables.  NOTE: This procedure exists only for
+    % type compatibility with other axiom types.
+    
+    get_vars = proc (ir: cvt) returns (var_set)
+	return(var_set$[])
+	end get_vars
+
+
+    % Yields a sequence of formulas of the form "f(x, ...) ~= g(y, ...)",
+    % where "f" and "g" are generators of "ir".  Signals "not_free" if "ir" is
+    % not a free structural induction rule.
+    
+    free_facts = iter (ir: cvt, stab: symtab) yields (formula) 
+		   signals (not_free)
+	generators: op_arr
+	tagcase ir.kind
+	   tag structural (si: struct_ind): 
+	       if si.free
+		  then generators := op_set$s2arr(si.all_ops)
+		  else signal not_free
+		  end
+	   tag wf: signal not_free
+	   end
+	so: sort := ir.sort
+	for i: int in op_arr$indexes(generators) do
+	    op1: operator := generators[i]
+	    avoid: var_set := var_set$predict(op1.arity)
+	    t1: term 
+	    if op1.arity = 0 
+	       then t1 := term0(op1)
+	       else t1 := generator_term(op1, avoid, stab)
+		    t2: term := generator_term(op1, t1.vars, stab)
+		    fo: formula := one_one_formula(t1, t2, stab)
+		    fo.name := symtab$new_subname(stab, up(ir).name)
+		       except when none: end
+		    yield(fo)
+	       end
+	    for j: int in int$from_to(i+1, op_arr$size(generators)) do
+		t2: term := generator_term(generators[j], t1.vars, stab)
+		t: term := term2(op_neq(so, stab), t1, t2)
+	        fo: formula := formula$create(t)
+		fo.name := symtab$new_subname(stab, up(ir).name)
+		   except when none: end
+		yield(fo)
+		end
+	    end
+	
+	end free_facts
+    
+    
+    % Returns "free" if "ir" is a free structural induction rule.
+    
+    is_free_structural = proc (ir: cvt) returns (bool)
+	return(induction_kind$value_structural(ir.kind).free)
+	   except when wrong_tag: return(false) end
+	end is_free_structural
+    
+    
+    % Returns "true" if "ir" is a structural induction rule.
+    
+    is_structural = proc (ir: cvt) returns (bool)
+	return(induction_kind$is_structural(ir.kind))
+	end is_structural
+    
+    
+    % Returns "true" if "ir" is a well founded induction rule.
+    
+    is_wf = proc (ir: cvt) returns (bool)
+	return(induction_kind$is_wf(ir.kind))
+	end is_wf
+    
+    
+    % Yields the terms that must be substituted for "ii.var" in "eq" in the
+    % basis step of a proof by induction of "eq" with depth "ii.depth" using
+    % "ir.rule".  Signals "wrong_tag" if "ii.rule" is not a structural
+    % induction rule.
+    
+    basis_terms = iter (ii: induction_info, eq: equation, stab: symtab) 
+		    yields (term) signals (wrong_tag)
+	si: struct_ind := induction_kind$value_structural(down(ii.rule).kind)
+	   resignal wrong_tag
+	for t: term, used: op_set 
+	      in ground_terms(si.all_ops, ii.depth,
+			      false, false, eq.vars, stab) do
+	    yield(t)
+	    end
+	end basis_terms
+    
+    
+    % Returns a set of new constants for use in the induction step of an
+    % inductive proof of depth "ii.depth" on a variable "ii.var" using
+    % "ii.rule".  ASSUMES: "avoid" contains all operators appearing in an axiom
+    % or in the equation to be proved.  WARNING: We do not assume that "avoid"
+    % contains all operators appearing in other conjectures.  Hence, if one of
+    % those conjectures is proved, we must be careful about adding it during
+    % the course of the current proof by induction.  Signals "wrong_tag" if
+    % "ir" is not a structural induction rule.
+    
+    induction_constants = proc (ii: induction_info, avoid: op_set,
+	    			stab: symtab) 
+			    returns (op_set) signals (wrong_tag)
+	n: int := ii.rule.n_constants ** ii.depth
+	   resignal wrong_tag
+	base: op_set := op_set$[]
+	for i: int in int$from_to(1, n) do
+	    op: operator := operator$from_variable(ii.var, avoid + base, stab)
+	    op_set$insert_unique(base, op)
+	    end
+	return(base)
+	end induction_constants
+
+ 
+    % Yields the terms that must be substituted for "ii.var" in "eq" to form
+    % the induction hypotheses for an inductive proof of "eq" of depth
+    % "ii.depth" on the variable "ii.var" using "ii.rule".  ASSUMES: "base" is
+    % the set of operators returned by "induction_constants".  Signals
+    % "wrong_tag" if "ir" is not a structural induction rule.
+
+    induction_hyp_terms = iter (ii: induction_info, base: op_set, 
+	    			eq: equation, stab: symtab) 
+			    yields (term) signals (wrong_tag)
+	ops: op_set := base + ii.rule.inductive_ops
+	   resignal wrong_tag
+	for t: term, used: op_set 
+	      in ground_terms(ops, ii.depth, false, false, eq.vars, stab) do
+	    yield(t)
+	    end
+	end induction_hyp_terms
+
+    
+    % Yields the terms that must be substituted for "v" in the induction step
+    % of a proof by induction of "eq" with depth "d" using "ir".  ASSUMES:
+    % "base" is the set of operators returned by "induction_constants".
+    % Signals "wrong_tag" if "ir" is not a structural induction rule.
+
+    induction_eq_terms = iter (ii: induction_info, base: op_set, eq: equation, 
+	    		       stab: symtab) 
+			   yields (term) signals (wrong_tag)
+	ops: op_set := base + ii.rule.inductive_ops
+	   resignal wrong_tag
+	for t: term, used: op_set 
+	      in ground_terms(ops, ii.depth+1, true, true, eq.vars, stab) do
+	    yield(t)
+	    end
+	end induction_eq_terms
+    
+    
+    % Parses "s" and returned the corresponding induction rule.  Writes a
+    % message to "error", and signals "error", if "s" does not represent an
+    % induction rule constructed from operators in "stab".
+
+    parse = proc (s: string, stab: symtab, error: printer) 
+	      returns (induction_rule) signals (error)
+	return(parse_item_with_ids[induction_rule]
+		   ("induction rule", s, stab, error))
+	   resignal error
+	end parse
+    
+    
+    % Reads and returns an induction rule from the head of "scan".  Writes a
+    % message to "scan", and signals "error", if the head of "scan" does not
+    % contain a valid induction rule constructed from operators in "stab".
+    
+    read = proc (scan: scanner, stab: symtab) returns (induction_rule)
+	     signals (error)
+	return(pinduction_rule$read(scan, stab))
+	   resignal error
+	end read
+    
+    
+    % Prettyprints "ir" on "p".
+
+    print = proc (p: printer, ir: induction_rule, stab: symtab)
+	pinduction_rule$print(p, ir, stab)
+	end print
+    
+    
+    % Returns "true" if "ir1" implies "ir2".  Signals "inconsistent" if "ir2"
+    % is a free structural rule and the generators of "ir1" are a proper subset
+    % of "ir2", then the two induction rules are inconsistent.
+    
+    subsumes = proc (ir1, ir2: cvt) returns (bool) signals (inconsistent)
+	if ir1.sort ~= ir2.sort then return(false) end
+	tagcase ir1.kind
+	   tag structural (si1: struct_ind):
+	       si2: struct_ind := induction_kind$value_structural(ir2.kind)
+	       if op_set$is_subset(si1.basis_ops, si2.basis_ops)
+		    cand op_set$is_subset(si1.inductive_ops, si2.inductive_ops)
+		  then if si2.free
+		          then if op_set$size(si1.basis_ops) =
+				  op_set$size(si2.basis_ops)
+				    cand op_set$size(si1.inductive_ops)
+					   = op_set$size(si2.inductive_ops)
+				  then return(si1.free)
+				  else signal inconsistent
+				  end
+			  else return(true)
+			  end
+		  else return(false)
+		  end
+	   tag wf (op1: operator):
+	       return(op1 = induction_kind$value_wf(ir2.kind))
+	   end except when wrong_tag: return(false) end
+	end subsumes
+    
+
+    % Returns a string denoting "ir" suitable for printing on the terminal.
+    % Qualifies all operators if the current "display_mode" is
+    % "qualified_mode"; otherwise omits all qualifications.
+    
+    unparse = proc (ir: induction_rule) returns (string)
+	return(unparse_item_with_ids[induction_rule](ir))
+	end unparse
+
+
+    % Returns "true" if "ir1" and "ir2" are the same induction rule.
+    
+    equal = proc (ir1, ir2: cvt) returns (bool)
+	if ir1.sort ~= ir2.sort then return(false) end
+	tagcase ir1.kind
+	   tag structural (si1: struct_ind):
+	       si2: struct_ind := induction_kind$value_structural(ir2.kind)
+	       return(si1.free = si2.free cand si1.basis_ops = si2.basis_ops
+			cand si1.inductive_ops = si2.inductive_ops)
+	   tag wf (op1: operator):
+	       return(op1 = induction_kind$value_wf(ir2.kind))
+	   end except when wrong_tag: return(false) end
+	end equal
+
+
+    % Returns "ir", which is immutable.
+    
+    copy = proc (ir: cvt) returns (cvt)
+	return(ir)
+	end copy
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    
+    % (Internal procedure) Returns a term of the form "op(v1, ..., vn)", where
+    % "v1", ..., "vn" are variables not in "avoid".
+
+    generator_term = proc (op: operator, avoid: var_set, stab: symtab)
+		       returns (term)
+	args: term_arr := term_arr$predict(1, op.arity)
+	avoid := var_set$copy1(avoid)
+	symtab$begin_changes(stab)
+	for so: sort in sort_seq$elements(op.dom) do
+	    v: variable := variable$different(so, avoid, stab)
+	    var_set$insert_unique(avoid, v)
+	    term_arr$addh(args, term$make_var(v))
+	    end
+	symtab$commit_changes(stab)
+	return(term$make_funct(op, term_seq$a2s(args)))
+	end generator_term
+
+    
+    % (Internal procedure)  Returns the formula
+    %    t1 = t2 <=> x1 = y1 /\ ... /\ xn = yn
+    % when "t1" is "op(x1, ..., xn)" and "t2" is "op(y1, ..., yn)".
+    % Assumes: "t1.root = t2.root".
+
+    one_one_formula = proc (t1, t2: term, stab: symtab) returns (formula)
+	left: term := term2(op_equals(t1.sort, stab), t1, t2)
+	args1: term_seq := t1.args
+	args2: term_seq := t2.args
+	args: term_arr := term_arr$predict(1, term_seq$size(args1))
+	for i: int in term_seq$indexes(args1) do
+	    term_arr$addh(args, term2(op_equals(args1[i].sort, stab),
+		    		      args1[i], args2[i]))
+	    end
+	right: term
+	if term_arr$size(args) = 1
+	   then right := args[1]
+	   else right := term$make_funct(op_and(), term_seq$a2s(args))
+	   end
+	return(formula$create(term2(op_iff(), left, right)))
+	end one_one_formula
+    
+    % (Internal iterator) ASSUMES: all operators in "ops" have range sort
+    % "ir.sort" for some induction rule "ir" with "ir.inductive_ops" a subset
+    % of "ops" and "s.rng" = "ir.sort".  Yields all argument lists "args" for
+    % an operator with signature "s" such that
+    % (1) each argument of sort "s.rng" is an "ir"-ground("ops") of depth at 
+    %     most "depth",
+    % (2) if "strict" is "true", then at least one argument of sort "s.rng" has
+    %     depth equal to "depth",
+    % (3) "args" has no variables in "avoid", and
+    % (4) "args" is canonical if "canon" is "true".
+    % Also yields a set of operators that is empty if "canon" is "false" and
+    % contains the 0-ary operators that occur in both "ops" and "args" if
+    % "canon" is "true".
+
+    ground_args = iter (ops: op_set, s: signature, depth: int, 
+			canon, strict: bool, avoid: var_set, stab: symtab)
+		    yields (term_seq, op_set)
+	if s.arity = 0 then
+	   if ~strict cor depth = 0 then yield(term_seq$[], op_set$[]) end
+	   return
+	   end
+        so: sort := s.dom[1]
+        s1: signature := signature${dom: sort_seq$reml(s.dom), rng: s.rng}
+	if so = s.rng
+	   then need_depth: bool := strict cand s.arity = 1
+	        for t: term, used1: op_set 
+		      in ground_terms(ops, depth, canon, need_depth,
+				      avoid, stab) do
+		    strict1: bool := strict cand t.depth < depth
+		    avoid1: var_set := avoid + t.fvars
+		    for args: term_seq, used2: op_set
+			  in ground_args(ops - used1, s1, depth, canon,
+					 strict1, avoid1, stab) do
+			yield(term_seq$[t] || args, used1 + used2)
+			end
+		    end
+	   else t: term := term$make_var(variable$different(so, avoid, stab))
+		avoid1: var_set := avoid + t.fvars
+		for args: term_seq, used: op_set 
+		      in ground_args(ops, s1, depth, canon, strict, 
+			  	     avoid1, stab) do
+		    yield(term_seq$[t] || args, used)
+		    end
+	   end
+
+	end ground_args
+
+
+    % (Internal iterator) ASSUMES: all operators in "ops" have range sort
+    % "ir.sort" for some induction rule "ir" with "ir.inductive_ops" a subset
+    % of "ops".  Yields all "ir"-ground("ops") terms "t" such that
+    % (1) the depth of "t" is at most "depth" if "strict" is "false",
+    % (2) the depth of "t" is equal to "depth" if "strict" is "true",
+    % (3) "t" has no variables in "avoid", and
+    % (4) "t" is canonical if "canon" is "true".
+    % Also yields a set of operators that is empty if "canon" is "false" and
+    % contains the 0-ary operators that occur in both "ops" and "t" if "canon"
+    % is "true".
+
+    ground_terms = iter (ops: op_set, depth: int, canon, strict: bool, 
+			 avoid: var_set, stab: symtab)
+		     yields (term, op_set)
+	if depth < 1 then return end
+	seen_canonical_constant: bool := false
+	for op: operator in op_set$elements(ops) do
+	    if canon cand op.arity = 0 then
+	       if seen_canonical_constant
+		  then continue
+		  else seen_canonical_constant := true
+		  end
+	       end
+	    for args: term_seq, used: op_set
+		  in ground_args(ops, op.sig, depth-1, canon, strict,
+				 avoid, stab) do
+		if canon cand op.arity = 0 then op_set$insert(used, op) end
+		yield(term$make_funct(op, args), used)
+		end
+	    end
+	end ground_terms
+    
+    
+    end induction_rule

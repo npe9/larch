@@ -1,0 +1,33 @@
+    get_lit_with_plunge = proc (gsys: rep, tsys: theory_system)
+			    returns (literal)
+			    signals (none, contradiction, overflow)
+
+	found: bool := false
+	best_lit: literal
+	size: int := gsys.prop.remaining_size
+
+
+       % FIX: Have this yield only positive literals?
+       % FIX: Keep list of forced literals.  Assert them, then repeat
+       %      computation of best literal.
+       % NOTE: current code tries negations twice if there is a contradiction.
+	for l: literal in TheoryB$remaining(gsys.prop) do
+
+	    save(up(gsys))
+	    assert(up(gsys), tsys, l)
+	       except when contradiction:
+
+			   undo(up(gsys))
+			   save(up(gsys))
+			   assert(up(gsys), tsys, l.negation)
+			   resignal contradiction
+		      end
+	    if size > gsys.prop.remaining_size then
+	       found := true
+	       best_lit := l
+	       size := gsys.prop.remaining_size
+	       end
+	    undo(up(gsys))
+	    end resignal overflow
+	if found then return(best_lit) else signal none end
+	end get_lit_with_plunge

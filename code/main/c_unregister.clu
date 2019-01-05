@@ -1,0 +1,84 @@
+#extend
+
+% Processes the "unregister" command.
+    
+c_unregister = proc (i: interactive) signals (error)
+    cct = command_table[command]
+    command = proctype (interactive) signals (error)
+    act = struct[name: string, choice: command]
+    act_seq = sequence[act]
+    own ct: cct := cct${help: cct$help, delims: " \t", label: "item",
+			as: act_seq$[act${name: "bottom",
+					  choice: unregister_bottom},
+				     act${name: "registry",
+					  choice: unregister_registry},
+				     act${name: "top",
+					  choice: unregister_top}]}
+    cct$choose(ct, "Information to delete from registry: ", i.io)(i)
+       resignal error
+       except when no_response, end_of_file: end
+    end c_unregister
+    
+    
+% Allows the user to remove operators from the bottom of the registry.
+    
+unregister_bottom = proc (i: interactive) signals (error)
+    unregister_extreme_ops(i, "bottom")
+       resignal error
+    end unregister_bottom
+    
+    
+% Does the work for "unregister_bottom" and "unregister_top".
+    
+unregister_extreme_ops = proc (i: interactive, label: string) signals (error)
+    opa: op_arr :=  query$operators(label || " operators", i.symtab)
+       except when none:  return
+	      when error: aborted(i.p, "illegal list of operators")
+	      end resignal error
+    ops: op_arr := op_arr$[]
+    for op: operator in op_arr$elements(opa) do
+	system$delete_extreme_op(i.sys, op)
+	   except when missing: op_arr$addh(ops, op) end
+	end
+    if op_arr$empty(ops) then return end
+    printer$text(i.p, "\nThe operator")
+    if op_arr$size(ops) = 1
+       then printer$text(i.p, " `")
+	    operator$print(i.p, ops[1], i.symtab)
+	    printer$text(i.p, "' was ")
+       else printer$text(i.p, "s ")
+	    printed: bool := false
+	    for op: operator in op_arr$elements(ops) do
+		if printed then printer$text(i.p, ", ") end
+		printer$puts(i.p, "`")
+		operator$print(i.p, op, i.symtab)
+		printer$puts(i.p, "'")
+		end
+	    printer$text(i.p, " were ")
+       end
+    printer$text(i.p, "not at the " || label || " of the registry.\n")
+    end unregister_extreme_ops
+
+
+% Allows the user to delete all information in the registry.
+    
+unregister_registry = proc (i: interactive) signals (error)
+    check_end_of_line(i.io)
+       resignal error
+    system$reset_registry(i.sys)
+       except when lost_termination:
+		   printer$text(i.p, "\nTermination of the rewrite rules ")
+		   printer$text(i.p, "is no longer guaranteed because ")
+		   printer$text(i.p, "you deleted the registry.\n")
+	      end
+    end unregister_registry
+
+
+% Allows the user to remove operators from the top of the registry.
+    
+unregister_top = proc (i: interactive) signals (error)
+    unregister_extreme_ops(i, "top")
+       resignal error
+    end unregister_top
+    
+    

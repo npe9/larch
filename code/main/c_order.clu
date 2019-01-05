@@ -1,0 +1,37 @@
+#extend
+
+% Processes the "order" command by attempting to orient the named equations in
+% "i.sys" into a set of rewrite rules that have been reduced to normal form.
+% If the current ordering is a termination ordering, this set of rules will be
+% terminating.  Reports if the resulting rewriting system may not terminate, if
+% the user interrupts the process, if it is not possible to order the
+% equations, if an inconsistency is detected, or if a conjecture has been
+% proved.  Continues proving conjectures if one has been proved.
+
+c_order = proc (i: interactive) signals (error)
+    own keys: keyword_table := keyword_table$[]
+    msg: string := "names of formulas to orient"
+    key: string, ns: name_set := query$one_name_set(i, msg, keys, true)
+       except when none: return
+	      when no_names (key1: string): key := key1
+					    ns := name_set$universal()
+	      when error: aborted(i.p, "error in names")
+	      end resignal error
+    neqs, nrrs, ndrs: int := system$size(i.sys)
+    if neqs = 0 then
+       printer$text(i.p, "\nFormulas already oriented.  The rewriting system ")
+       if i.sys.terminates
+	  then printer$text(i.p, "is guaranteed to terminate.\n")
+	  else printer$text(i.p, "is NOT guaranteed to terminate.\n")
+	  end
+       return
+       end
+    if tracer$get_level() > 2 then
+       printer$text(i.p, "\nStarting to orient formulas.\n")
+       end
+    i.sys.toOrder := ns
+    prover$make_inferences(i, order_task_mode)
+       except when interrupt, proved: end
+    end c_order
+    
+    

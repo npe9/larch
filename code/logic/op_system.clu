@@ -1,0 +1,305 @@
+#extend
+
+% An operator system assigns operator theories (i.e., the AC, commutative, and
+% free theories) to operators.
+
+op_system = cluster is 
+	new, add, delete, delete_op, delete_subset, display,
+	elements, fetch, free_wrt, get_new, get_ops, lists, lookup_theory, 
+	lookup_theory_quickly, size, subsystem_ops, write, copy, _gcd,
+	decode, encode
+	
+    % The rep contains a list of nonempty operator theories, as well as a map
+    % from operators to a set of theories mentioning that operator and a set of
+    % operators with respect to which the operator is free.
+
+    rep = record[new: ot_prop_list, theories: ot_map]
+    ot_map = keyed_mapping[operator, ot_info]
+    ot_info = record[th: otp_set, free: op_set]
+    otp_set = set[ot_prop]
+    axioms = axiom_system[op_theory, op_system]
+    
+    % Rep invariant: Let oti = ot_map(osys.theories, op).  Then
+    % oti.th is nonemtpy
+    % if oti.th has more than one member, then all members are free theories
+    % oti.free = U{ot.ops: ot \in oti.th}
+    
+    
+    own dummy_ac_ot: op_theory := op_theory$make_ac(op_and())
+    own dummy_c_ot: op_theory := op_theory$make_commutative(op_and())
+    own dummy_empty_ot: op_theory := op_theory$make_empty(op_not())
+    own dummy_free_ot: op_theory := op_theory$make_free(op_set$[op_not()])
+    own dummy_qfr_ot: op_theory := op_theory$make_qfr(op_bool_forall())
+
+    
+    % Returns a new assignment of theories to operators in which the empty
+    % theory is assigned to all operators.
+
+    new = proc () returns (cvt)
+	osys: rep := rep${new: ot_prop_list$[], theories: ot_map$[]}
+	for ot: op_theory in ot_seq$elements(hardwired_op_theories()) do
+	    add(up(osys), ot)
+	    end
+	osys.new := ot_prop_list$[]
+	return(osys)
+	end new
+
+    
+    % Annotates "ot" and adds it to "osys".  Signals "inconsistent(ot1)" if
+    % "ot" is inconsistent with "ot1" in "osys".  Uses the "tracer" to report
+    % when "ot" is subsumed by some "ot1" in "osys" or when it subsumes some
+    % "ots" in "osys", which were deleted from "osys".  Signals "subsumed" if
+    % "ot" is subsumed.  ASSUMES: "ot" is not the empty or quantifier theory.
+    
+    add = proc (osys: cvt, ot: op_theory) 
+	    signals (inconsistent(op_theory), subsumed)
+	own ai: ai_settings := ai_settings${active: true, immune: immunity_off}
+	if op_theory$is_empty(ot) then fail("op_system$add") end
+	otp: ot_prop := ot_prop$create(ot, ai)
+	if op_theory$is_free(ot)
+	   then free: op_set := op_set$copy(ot.ops)
+		oti: ot_info := ot_info${th: otp_set$[otp], free: free}
+		for op1: operator in op_set$elements(ot.ops) do
+		    ot1: op_theory := lookup_theory(up(osys), ot.op)
+		    tagcase ot1
+		       tag ac, commutative: signal inconsistent(ot1)
+		       tag empty, qfr: 
+		       tag free: if op_set$is_subset(free, 
+			                             free_wrt(up(osys), op1))
+			            then % ENHANCE: report subsumption
+				    end
+		       end
+		    end
+		% ENHANCE: Take better care of subsumptions.
+		for op1: operator in op_set$elements(ot.ops) do
+		    oti := ot_map$image(osys.theories, op1)
+		       except when missing:
+				   ot_map$insert(osys.theories, op1, oti)
+				   continue
+			      end
+		    otp_set$insert(oti.th, otp)
+		    op_set$merge(oti.free, free)
+		    end
+	   else ot1: op_theory := lookup_theory(up(osys), ot.op)
+		if op_theory$subsumes(ot1, ot) then
+		   tracer$subsumes_ot(ot1, ot)
+		   signal subsumed
+		   end
+		if op_theory$is_commutative(ot1) cand op_theory$is_ac(ot) then
+		   delete(up(osys), ot1.name)
+		      except others: fail("op_system$add") end
+		   % The only hardwired commutative operators are =:S,S->Bool 
+		   % for S ~= Bool, which cannot be ac.
+		   tracer$subsumes_ot(ot, ot1)
+		   end
+	        oti: ot_info := ot_info${th: otp_set$[otp], free: op_set$[]}
+	        ot_map$insert(osys.theories, ot.op, oti)
+	   end
+	axioms$add(up(osys), ot, ai, true)
+	end add
+
+    
+    % Deletes the operator theory named "n" from "osys".  Signals "missing" if
+    % there is no such operator theory.
+
+    delete = proc (osys: cvt, n: name) returns (ot_prop) signals (missing)
+	otp: ot_prop := axioms$delete(up(osys), n)
+	   resignal missing
+	if ~op_theory$is_free(otp.prop) then
+	   ot_map$delete(osys.theories, otp.prop.op)
+	   return(otp)
+	   end
+	for op: operator in op_set$elements(otp.prop.ops) do
+	    oti: ot_info := ot_map$image(osys.theories, op)
+	    otp_set$delete(oti.th, otp)
+	    if otp_set$empty(oti.th)
+	       then ot_map$delete(osys.theories, op)
+	       else oti.free := op_set$[]
+		    for otp1: ot_prop in otp_set$elements(oti.th) do
+			op_set$merge(oti.free, otp1.prop.ops)
+			end
+	       end
+	    end
+	return(otp)
+	end delete
+
+
+    % Deletes all operator theories in "osys" that mention "op".  Signals
+    % "missing" if there are no such operator theories.
+
+    delete_op = proc (osys: op_system, op: operator) signals (missing)
+	otpl: ot_prop_list := axioms$delete_op(osys, op)
+	if ot_prop_list$empty(otpl) then signal missing end
+	for otp: ot_prop in ot_prop_list$elements(otpl) do
+	    ot_map$delete(down(osys).theories, otp.prop.op)
+	    end
+	end delete_op
+
+
+    % Deletes all operator theories in "osys" named by "ns".  Signals "missing"
+    % if there are no such theories.  Otherwise returns the set of operators
+    % that no longer have ac or commutative theories.
+
+    delete_subset = proc (osys: op_system, ns: name_set) 
+	              returns (op_set) signals (missing)
+        if ~ns.has_ots then signal missing end
+	otpl: ot_prop_list := axioms$delete_subset(osys, ns)
+	if ot_prop_list$empty(otpl) then signal missing end
+	ops: op_set := op_set$[]
+	for otp: ot_prop in ot_prop_list$elements(otpl) do
+	    ot_map$delete(down(osys).theories, otp.prop.op)
+	    if ~op_theory$is_free(otp.prop) then 
+	       op_set$insert_unique(ops, otp.prop.op)
+	       end
+	    end
+	return(ops)
+	end delete_subset
+
+
+    % Displays all operator theories in "osys" named by "ns".
+    
+    display = proc (p: printer, osys: cvt, ns: name_set, stab: symtab)
+		signals (interrupt)
+	if ~ns.has_ots then return end
+	axioms$display(p, up(osys), "Operator theories", ns, stab)
+	   resignal interrupt
+	end display
+    
+    
+    % Yields the annotated operator theories in "osys".
+
+    elements = iter (osys: op_system) yields (ot_prop)
+	for otp: ot_prop in axioms$elements(osys) do yield(otp) end
+	end elements
+
+
+    % Returns the annotated operator theory named "n" from "osys".  Signals
+    % "missing" if there is no such theory.
+
+    fetch = proc (osys: cvt, n: name) returns (ot_prop) signals (missing)
+	return(axioms$fetch(up(osys), n))
+	   resignal missing
+	end fetch
+
+
+    % Returns the set of all operators that "op" is free with respect to.
+    % ASSUMES: Callers do not modify this set.
+    
+    free_wrt = proc (osys: cvt, op: operator) returns (op_set)
+	own empty: op_set := op_set$[]
+	return(ot_map$image(osys.theories, op).free)
+	   except when missing: return(empty) end
+	end free_wrt
+
+    
+    % Returns the list of all operator theories in "osys".
+
+    get_new = proc (osys: cvt) returns (ot_prop_list)
+	return(osys.new)
+	end get_new
+
+
+    % Returns the set of non-hardwired operators in "osys".
+
+    get_ops = proc (osys: op_system) returns (op_set)
+	return(axioms$get_ops(osys))
+	end get_ops
+
+
+    % Yields the list of all operator theories in "osys".
+
+    lists = iter (osys: cvt) yields (ot_prop_list)
+	yield(osys.new)
+	end lists
+
+    
+    % Returns the operator theory associated with "op" in "osys" (or one such
+    % theory if "op" has multiple free theories).
+
+    lookup_theory = proc (osys: cvt, op: operator) returns (op_theory)
+	if is_op_equals(op) then
+	   ot: op_theory
+	   if op.dom[1] = bool_sort()
+	      then ot := op_theory$make_ac(op)
+		   ot.name := equals_ac_name()
+	      else ot := op_theory$make_commutative(op)
+		   ot.name := equals_commutative_name()
+	      end
+	   return(ot)
+	 elseif is_quantifier(op) then
+	   return(op_theory$make_qfr(op))
+	 end
+	return(otp_set$any_element(ot_map$image(osys.theories, op).th).prop)
+	   except when missing: end
+	return(op_theory$make_empty(op))
+	end lookup_theory
+    
+    
+    % Returns an operator theory "ot" such that "ot.theory_name" is the same as
+    % "lookup(osys, op).theory_name".  In general, "ot.op" will not equal "op",
+    % and "ot.name" is not defined.
+    
+    lookup_theory_quickly = proc (osys: cvt, op: operator) returns (op_theory)
+	if op.key = 0 then return(dummy_empty_ot) end
+	if is_op_equals(op) then 
+	   if op.dom[1] = bool_sort()
+	      then return(dummy_ac_ot)
+	      else return(dummy_c_ot)
+	      end
+	 elseif is_quantifier(op) then
+	   return(dummy_qfr_ot)
+	 end
+	return(otp_set$any_element(ot_map$image(osys.theories, op).th).prop)
+	   except when missing: return(dummy_empty_ot) end
+	end lookup_theory_quickly
+
+
+    % Returns the number of operator theories in "osys".
+
+    size = proc (osys: op_system) returns (int)
+	return(axioms$size(osys))
+	end size
+
+
+    % Returns the set of operators mentioned in operator theories in "osys"
+    % with names in "ns" (irrespective of the value of "ns.has_ots").
+    
+    subsystem_ops = proc (osys: cvt, ns: name_set) returns (op_set)
+        return(axioms$subsystem_ops(up(osys), ns))
+	end subsystem_ops
+    
+
+    % Writes commands to re-read all operator theories in "osys" named by "ns".
+    
+    write = proc (p: printer, osys: cvt, ns: name_set, stab: symtab,
+	    	  ai: ai_settings)
+	if ~ns.has_ots then return end
+	axioms$write(p, up(osys), "Operator theories", ns, stab, ai)
+	end write
+    
+    
+    % Returns a copy of "osys".
+
+    copy = proc (osys: cvt) returns (cvt)
+	return(rep$copy(osys))
+	end copy
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end op_system

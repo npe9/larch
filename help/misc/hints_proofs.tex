@@ -1,0 +1,91 @@
+\doc{Hints on managing proofs}
+\ref{hints-proof}
+
+Prove as you would program.  Design your proofs.  Modularize them.  Think about
+their computational complexity.
+\p
+Be careful not to let variables disappear too quickly in a proof.  Once they
+are gone, you cannot do a proof by \plink{by-induction}{induction}.  Start your
+inductions before starting proofs by \plink{by-cases}{cases}, 
+the \pflink{of-implication}{=>} method, the \pflink{of-biconditional}{<=>}
+method, or the \pflink{of-conditional}{if} method.
+\p
+Splitting a conjecture into separate conjuncts (using the
+\pflink{of-conjunction}{/\} proof method) early in a proof often leads to
+repeating work on multiple conjuncts, for example, doing the same case analysis
+several times.
+\p
+To keep lemmas and theorems from disappearing (because they normalize to
+\fq{true}), make them \dlink{../settings/immunity}{immune}.  Typing either of 
+the commands
+\begin{verbatim}
+set immunity on                          prove ... by explicit-commands
+prove ... by explicit-commands           make immune conjecture
+set immunity off                         resume by ...
+resume by ...
+\end{verbatim}
+when you begin the proof of a conjecture immunizes that conjecture (i.e.,
+causes it to be immune once it becomes a theorem), but nothing else.
+Similarly, the commands
+\begin{verbatim}
+set immunity ancestor
+instantiate ... in ...
+set immunity off
+\end{verbatim}
+help keep \dlink{../commands/instantiate}{instantiations} from disappearing
+when they are special cases of other facts.
+\p
+When a proof gets stuck:
+\begin{itemize}
+\item
+Be skeptical.  Don't be too sure your conjecture is a theorem.
+\item
+If the conjecture is a conditional, conjunction, implication, or logical
+equivalence, try the corresponding proof method.
+\item
+Try computing \dlink{../commands/critical-pairs}{critical pairs} between
+hypotheses and other rewrite rules, for example, by typing the command
+\fq{critical-pairs *Hyp with *}.
+\item
+Use a proof by \plink{by-cases}{cases} to find out what is going on.  Case on
+repeated subterms of the conjecture, on the antecedent of an implication in a
+rewrite rule, or on the test in an \fq{if} in a rewrite rule.
+\item
+Display the hypotheses (by typing \fq{display *Hyp}) and check whether any that
+you expected to see are missing or are not oriented in the way you expected.
+\item
+Look for a useful lemma to prove.  See if replacing a repeated subterm in a
+subgoal by a variable results in a more general fact that you know to be true.
+\end{itemize}
+In the course of a proof, you may lose track of your place in the subgoal tree.
+This happens most often if LP has just discharged several subgoals in
+succession without user intervention and/or it has automatically introduced
+subgoals.  The \cflink{display}, \cflink{resume}, and \cflink{history} commands
+can be used to help find your place.
+\begin{itemize}
+\item
+\fq{display *Hyp} is an easy way to find your place in nested case analyses.
+\item
+\fq{display proof-status} displays the entire proof stack; 
+\fq{display conjectures \v{names}} displays the named conjectures.
+\item
+\cflink{resume} shows just the current conjecture (normalized, if the 
+\setlink{proof-methods} setting includes \fq{normalization}).
+\item
+\fq{history 20} (or some other number) displays an indented
+history, including LP-generated \dlink{../commands/box}{box and diamond}
+commands.
+\end{itemize}
+\p
+Because LP automatically internormalizes facts, you may find that what you
+consider to be the information content of some user-supplied assertion has been
+``spread out'' over several facts in the current logical system in a way that
+may not be easy to understand, particularly if the system contains dozens or
+hundreds of facts.  Similarly, you may sometimes notice that LP is reducing (or
+has reduced) some expression in some way that you don't understand.  The
+command \fq{show normal-form E}, where \fq{E} is the expression being
+mysteriously reduced, or where \fq{E} is the original form of one side of a
+formula, will often be enlightening in such cases.  Setting the
+\setlink{trace-level} up to 6 will show which rewrite rules are applied in
+the normalization.
+

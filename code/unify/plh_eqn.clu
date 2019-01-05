@@ -1,0 +1,337 @@
+#extend
+
+% The following cluster is used to represent positive linear homogeneous
+% equations.  A linear homogeneous equation is an equation of the form:
+% 		SUM a[i]*x[i] = SUM b[j]*y[j] 
+%			where i runs from 1 to m and j from 1 to n.
+
+% This should possibly be made into an immutable type, with the cancel_common
+% implicit in creation--the complete varsets should possibly be kept around.
+
+
+plh_eqn = cluster [vartype: type] is create, empty, unsolvable, cancel_common,
+				     is_soln, get_left, get_right, get_vars,
+				     unparse, equal, similar1, copy, copy1
+	    where vartype in equal_type
+
+    rep = record [left: var_psum,
+		  right: var_psum]
+    var_psum = plh_poly[vartype]
+
+    var_arr = array[vartype]
+    var_seq = sequence[vartype]
+    var_vec = vector[vartype]
+    var_gen = generator[vartype]
+
+    create = proc (left, right: var_psum) returns (cvt)
+	return(rep${left: left, right: right})
+	end create
+
+    empty = proc(eqn: cvt) returns (bool)
+	return(var_psum$empty(eqn.left) cand var_psum$empty(eqn.right))
+	end empty
+
+
+    % Because we are solving over the natural numbers, an equation with zero on
+    % one side is unsolvable (since we have no zero in our solution space).
+
+    unsolvable = proc(eqn: cvt) returns(bool) signals (empty)
+	if var_psum$empty(eqn.left) cor var_psum$empty(eqn.right) 
+	   then 
+		if var_psum$empty(eqn.left) cand var_psum$empty(eqn.right) 
+		   then signal empty
+		   else return(true)
+		   end
+	   else
+		leftc: var_psum := var_psum$copy1(eqn.left)
+		rightc: var_psum := var_psum$copy1(eqn.right)
+		if var_psum$empty(leftc) cor var_psum$empty(rightc)
+		   then return(true)
+		   else return(false)
+		   end
+	   end
+	end unsolvable
+
+
+    cancel_common = proc (eqn: cvt) 
+	var_psum$cancel(eqn.left, eqn.right)
+	end cancel_common
+
+
+    % Returns true iff applying the solution generator, "gen" to the equation
+    % will make both sides equal.  In applying a solution, we can impose an
+    % order equations and generators, both determined by the order of their
+    % variables.  For the sake of efficiency, the variables in the equation
+    % must be in the same order as the variables in the generator, or
+    % not_applicable will be signalled.  In general, this constraint is not too
+    % restrictive, since we usually have an equation before we start to compute
+    % its solutions, so we can get the variable order from the created
+    % equation, and use it to form generators. Note:  If either side of the
+    % equation is empty, then not_applicable will always be signalled since
+    % generators can never be empty.
+
+    is_soln = proc (eqn: cvt, gen: var_gen) returns (bool)
+		signals (not_applicable)
+	g_vars: var_seq := var_vec$v2seq(gen.vars)
+	g_vals: int_seq := gen.vals
+	if g_vars = up(eqn).vars 
+	   then 
+		ls: int := var_psum$size(eqn.left)
+		rs: int := var_psum$size(eqn.right)
+		return ((var_psum$apply(eqn.left, 
+					int_seq$subseq(g_vals, 1, ls))) =
+			(var_psum$apply(eqn.right, 
+					int_seq$subseq(g_vals, ls + 1, rs))))
+	   else signal not_applicable
+	   end
+	end is_soln
+
+
+
+    % Return the pair of sequences that represent the coefficients and
+    % variables in the equation.  For each index, "i", in the sequences (they
+    % will be the same size), the <coeff, var> pair that we get from fetching
+    % an element from both arrays at i will be a product in the left side of
+    % the equation.  This corresponds to viewing the equation as as matrix
+    % equation of the form A*X = B*Y, where A and X are the "vectors" (i.e.,
+    % sequences) being returned.  This routine depends on the fact that
+    % "plh_poly[t]$products" yields its values in the same order each time, it
+    % is invoked, assuming the sum has not changed.
+
+    get_left = proc (eqn: cvt) returns (int_seq, var_seq)
+	coeffs: int_arr := int_arr$new()
+	vars: var_arr := var_arr$new()
+	for a: int, x: vartype in var_psum$products(eqn.left) do
+	    int_arr$addh(coeffs, a)
+	    var_arr$addh(vars, x)
+	    end
+	return(int_seq$a2s(coeffs), var_seq$a2s(vars))
+	end get_left
+
+
+    % (See get_left, above.) This procedure returns the two vectors which form
+    % the product making up the right-hand side of the equation.  The
+    % implementation depends on the fact that "plh_poly[t]$products" will
+    % always yield its values in the same order, assuming the sum has not
+    % changed.
+
+    get_right = proc (eqn: cvt) returns (int_seq, var_seq)
+	coeffs: int_arr := int_arr$new()
+	vars: var_arr := var_arr$new()
+	for b: int, y: vartype in var_psum$products(eqn.right) do
+	    int_arr$addh(coeffs, b)
+	    var_arr$addh(vars, y)
+	    end
+	return(int_seq$a2s(coeffs), var_seq$a2s(vars))
+	end get_right
+
+
+    % This procedure returns the sequence of all variables occurring in the
+    % equation "eqn".  It is equivalent to concatenating the var_seq's from
+    % get_left and get_right together (i.e., the order is the same and if a
+    % variable occurs on both the right and left side of the equation, it will
+    % occur twice in the returned sequence).
+
+    get_vars = proc (eqn: cvt) returns (var_seq)
+	var1s, var2s: var_seq
+	val1s, val2s: int_seq
+	val1s, var1s := get_left(up(eqn))
+	val2s, var2s := get_right(up(eqn))
+	return(var1s || var2s)
+	end get_vars
+
+    unparse = proc (eqn: cvt) returns (string)
+		where vartype in unparse_type
+	return(var_psum$unparse(eqn.left) || " = "
+		 || var_psum$unparse(eqn.right))
+	end unparse
+
+    equal = proc (eqn1, eqn2: cvt) returns (bool)
+	return (eqn1 = eqn2)
+	end equal
+
+    similar1 = proc (eqn1, eqn2: cvt) returns (bool)
+	return (rep$similar1(eqn1, eqn2))
+	end similar1
+
+    copy = proc (eqn: cvt) returns (cvt)
+		where vartype in copy_type
+	return (rep$copy(eqn))
+	end copy
+
+    copy1 = proc (eqn: cvt) returns (cvt)
+	return(rep${left: var_psum$copy1(eqn.left),
+		    right: var_psum$copy1(eqn.right)})
+	end copy1	
+
+    end plh_eqn
+
+
+
+plh_poly = cluster [vartype:  type] is new, make_var, add, cancel, 
+				       get_vars, empty, apply, coefficient, products,
+				       unparse, size, equal, similar1, copy, copy1
+	    where vartype in equal_type
+
+    rep = struct[products: var_mset,
+		 vars: vars_type]
+
+    vars_type = variant[empty: null, full: var_seq]
+
+    var_arr = array[vartype]
+    var_seq = sequence[vartype]
+    var_mset = multiset[vartype]
+
+    new = proc () returns (cvt)
+	return(rep${products: var_mset$new(),
+		    vars: vars_type$make_empty(nil)})
+	end new
+    
+    make_var = proc (v: vartype) returns (cvt)
+	vm: var_mset := var_mset$new()
+	var_mset$insert(vm, v)
+	return(rep${products: vm, vars: vars_type$make_empty(nil)})
+	end make_var
+
+    % Mutate s1 to be the result of adding s1 and s2.
+    
+    add = proc (s1, s2: cvt) 
+	var_mset$merge(s1.products, s2.products)
+	vars_type$change_empty(s1.vars, nil)
+	vars_type$change_empty(s2.vars, nil)
+	end add
+
+
+    % Cancel the common variables in s1 and s2 in a pairwise fashion.  For
+    % example, if s1 = 3x + 2y + z and s2 = w + 4x + y + z, cancel(s1, s2)
+    % would modify its arguments so that s1' = y and s2' = w + x.
+
+    cancel = proc (s1, s2: cvt)
+	% We copy s1 so that deleting elements from it in the body of the "for"
+	% loop will not affect the rest of the iteration.
+	s1_initial: var_mset := var_mset$copy1(s1.products)
+	for v: vartype, occur1: int in var_mset$elements(s1_initial) do
+	    occur2: int := var_mset$count(s2.products, v)
+	    min_occur: int 
+	    if occur1 > occur2 
+	       then min_occur := occur2 
+	       else min_occur := occur1
+	       end
+	    for i: int in int$from_to(1, min_occur) do
+		var_mset$delete(s1.products, v)
+		if s1.products ~= s2.products
+		   then var_mset$delete(s2.products, v)
+		   end         % if same object, then v was deleted already
+		end
+	    end
+	vars_type$change_empty(s1.vars, nil)
+	vars_type$change_empty(s2.vars, nil)
+	end cancel
+
+
+    % Returns the sequence of variables that are the plh_poly, s.  This
+    % procedure depends on the fact that multiset$elements always yields its
+    % elements in the same order.
+
+    get_vars = proc (s: cvt) returns (var_seq)
+	tagcase s.vars
+	   tag empty:
+	       va: var_arr := var_arr$new()
+	       for v: vartype, coeff: int in var_mset$elements(s.products) do
+		   var_arr$addh(va, v)
+		   end
+	       vars_type$change_full(s.vars, var_seq$a2s(va))
+	       return(var_seq$a2s(va))
+	   tag full(vs: var_seq):
+	       return(vs)
+	   end
+	end get_vars
+
+    empty = proc(s: cvt) returns (bool)
+	return (var_mset$empty(s.products))
+	end empty
+
+
+    % Substitute each integer in "vals" for its corresponding variable in
+    % "s.vars".  If the length of "vals" is different than the number of
+    % variables in the plh_poly.
+
+    apply = proc (s: cvt, vals: int_seq) returns (int) signals (bounds, empty)
+	if empty(up(s)) then signal empty end
+	if int_seq$size(vals) ~= var_mset$size(s.products) 
+	   then signal bounds end
+	answer: int := 0
+	count: int := 1
+	for c: int, v: vartype in products(up(s)) do
+	    answer := answer + c * vals[count]
+	    count := count + 1
+	    end 
+	return(answer)
+	end apply
+
+    % Yields the <constant, variable> pairs that form the sum, "s".  Values
+    % will be yielded in the same order with each invocation of "products",
+    % assuming the sum has not been mutated; this order is the same as the
+    % order of variables in the sequence "s.vars".
+    products = iter (s: cvt) yields (int, vartype)
+	for v: vartype, c: int in var_mset$elements(s.products) do
+	    yield (c, v)
+	    end
+	end products
+
+    % Returns a string form of the polynomial.
+    unparse = proc (s: cvt) returns (string)
+		where vartype in unparse_type
+	if empty(up(s)) then return("") end
+	str: string := ""
+	for c: int, v: vartype in products(up(s)) do
+	    str := str || int$unparse(c) || "*(" 
+		     || vartype$unparse(v) || ") + "
+	    end
+	str := string$substr(str, 1, string$size(str) - 3)
+	return(str)
+	end unparse
+
+
+    % Returns the number of products (i.e., distinct variables) that occur in
+    % "s".
+    size = proc (s: cvt) returns (int)
+	return(var_mset$size(s.products))
+	end size
+
+    % Returns the coefficient of "v" in "s". Signals "not_in" if "v" in not in
+    % the sum "s".
+    coefficient = proc (s: cvt, v: vartype) returns (int) signals (not_in)
+	c: int := var_mset$count(s.products, v)
+	if c = 0 
+	   then signal not_in
+	   else return(c)
+	   end
+	end coefficient
+
+    % Returns true iff "s1" and "s2" are the same object.
+    equal = proc (s1, s2: cvt) returns (bool)
+	return (s1 = s2)
+	end equal
+
+    % Returns true iff "s1" and "s2" have the same products, in the same order.
+    similar1 = proc (s1, s2: cvt) returns (bool)
+	return (var_mset$similar1(s1.products, s2.products))
+	end similar1
+
+    % Returns a complete copy of the structure up to the variables and invokes
+    % "vartype$copy" to copy the variables.
+    copy = proc (s: cvt) returns (cvt)
+		where vartype in copy_type
+	return (rep$copy(s))
+	end copy
+
+    % Copies the structure of the sum, "s", without copying the variables in
+    % "s".  The variables will be shared between the input and output sums.
+    copy1 = proc (s: cvt) returns (cvt)
+	return (rep${products: var_mset$copy1(s.products), vars: s.vars})
+	end copy1
+
+    end plh_poly
+
+

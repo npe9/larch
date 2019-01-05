@@ -1,0 +1,44 @@
+\doc{Partitioned by}
+\ref{partitioned-by}
+
+The \def{partitioned-by} construct provides a convenient syntax for expressing
+the fact that two objects of a given sort are the same if they cannot be
+distinguished by an operator in a given list.  Operationally, a
+\s{partitioned-by} is equivalent to a \dlink{deduction-rule}{deduction rule}.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{partitioned-by} ::= \f{sort} \slink{sort}{sort} \f{partitioned by} \slink{operator}{operator}+,
+\end{verbatim}
+Restriction: Each of the \s{operator}s must have \s{sort} in its domain.
+
+\head{2}{Examples}
+\begin{verbatim}
+sort Set partitioned by \in
+sort Stack partitioned by isEmpty, top, pop
+\end{verbatim}
+
+\head{2}{Usage}
+
+Users can \clink{assert} or \dlink{../proof/of-dr}{prove} a \s{partitioned-by},
+which LP automatically translates into a deduction rule.  For example, LP
+translates the examples into the deduction rules
+\begin{verbatim}
+when \A e (e \in s = e \in s1) yield s = s1
+when isEmpty(s) = isEmpty(s1), top(s) = top(s1), pop(s) = pop(s1)
+yield s = s1
+\end{verbatim}
+In general, LP translates a statement like
+\begin{verbatim}
+sort E partitioned by op1:E->R, op2:E,A->R, op3:E,E,A->R
+\end{verbatim}
+into to the deduction rule
+\begin{verbatim}
+when op1(e1) = op1(e2),
+     \A a (op2(e1, a) = op2(e2, a)),
+     \A a \A e3 (op3(e1, e3, a) = op3(e2, e3, a)),
+     \A a \A e3 (op3(e3, e1, a) = op3(e3, e2, a))
+yield e1 = e2
+\end{verbatim}
+which uses auxiliary variables \f{e1}, \f{e2}, and \f{e3} of sort \f{E} and
+\f{a} and \f{a1} of sort \f{A}.

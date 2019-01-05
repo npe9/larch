@@ -1,0 +1,326 @@
+#extend
+
+% Processes the "resume-proof" command by resuming the attempt to prove the
+% current conjecture.  If there is pending input, gets a method of proof from
+% the user.  Otherwise uses the current method of proof.
+
+c_resume_proof = proc (i: interactive) signals (error)
+    f: fact := i.prover.conjecture
+       except when none:
+		   printer$error(i.p)
+		   printer$text(i.p, "\nThere is nothing to prove.\n")
+		   signal error
+	      end
+    if iodev$pending_input(i.io) then
+       scan: scanner := scanner$from_string(iodev$getl(i.io), i.p)
+       prover$reset_method(i, resume_args(scan, i, f))
+	  except when illegal:
+		      printer$error(i.p)
+		      printer$text(i.p, "\nProof method doesn't apply to ")
+		      printer$text(i.p, "current conjecture.\n")
+		      signal error
+		 end
+       end resignal error
+       except when none: return end
+    prover$attempt_proofs(i)
+    end c_resume_proof
+
+
+
+% Returns a method of proof for proving "f".
+
+resume_args = proc (scan: scanner, i: interactive, f: fact)
+		returns (proof_method) signals (error, none)
+    own methods: keyword_table :=
+	    keyword_table$[and_proof_method.name, contra_proof_method.name,
+			   default_proof_method.name, if_proof_method.name,
+			   iff_proof_method.name, implies_proof_method.name,
+			   normal_proof_method.name, no_proof_method.name,
+			   "cases", "generalizing", "induction",
+			   "specializing"]
+    scanner$expecting_id(scan, "by")
+       resignal error
+    % ENHANCE: restrict pm_syntax to legal ones for conjecture
+    query$get_more(scan, "proof method", pm_syntax)
+       resignal none
+    m: proof_method
+    % ENHANCE: eliminate "i.symtab" as an argument
+    ms: string := keyword_table$scan_and_choose(methods, scan, i.symtab)
+       resignal error
+       except when none: scanner$error(scan, "unknown proof method")
+			 signal error
+	      end
+    if ms = and_proof_method.name then          m := and_proof_method.pm
+     elseif ms = contra_proof_method.name then  m := contra_proof_method.pm
+     elseif ms = default_proof_method.name then m := default_proof_method.pm
+     elseif ms = if_proof_method.name then      m := if_proof_method.pm
+     elseif ms = iff_proof_method.name then     m := iff_proof_method.pm
+     elseif ms = implies_proof_method.name then m := implies_proof_method.pm
+     elseif ms = normal_proof_method.name then  m := normal_proof_method.pm
+     elseif ms = no_proof_method.name then      m := no_proof_method.pm
+     elseif ms = "cases" then                   m := make_cases(i, scan)
+     elseif ms = "generalizing" then            m := make_a_intro(i, f, scan)
+     elseif ms = "induction" then               m := make_induct(i, f, scan)
+     elseif ms = "specializing" then            m := make_e_intro(i, f, scan)
+     else fail("query$method_of_proof")
+     end resignal none, error
+    if ~token$is_eof(scan.nextToken) then
+       scanner$error(scan, "expecting end of command")
+       printer$text(i.p, "\nCommand aborted\n")
+       signal error
+       end
+    return(m)
+    end resume_args
+
+
+% Returns a proof method for a proof of "f" by universal quantifier
+% introduction; prompts the user for further information, if necessary.
+
+make_a_intro = proc (i: interactive, f: fact, scan: scanner)
+		 returns (proof_method) signals (error, none)
+    own dummy_op_sys: op_system := op_system$[]
+    e: equation := fact$value_eq(f)
+       except when wrong_tag:
+		   abort_proof(i.p, "introducing universal quantifiers",
+			       "LP provides this method only for " ||
+			       "conjectures that are formulas.")
+	      end resignal error
+    query$get_more(scan, "the variable to generalize", generalize_syntax)
+       resignal none
+    sigma: substitution := psubstitution$read(scan, i.symtab, "from")
+       except when error:
+		   abort_proof(i.p, "introducing universal quantifiers", "")
+	      end resignal error
+    check_end_of_scan(scan)
+       except when error:
+		   abort_proof(i.p, "introducing universal quantifiers", "")
+	      end resignal error
+    if substitution$size(sigma) > 1 then
+       abort_proof(i.p, "introducing universal quantifiers",
+		   "LP only allows introducing a single universal " ||
+		   "quantifier at a time.")
+       end resignal error
+    v: variable := var_set$any_element(sigma.domain)
+       except when empty:
+                   abort_proof(i.p, "introducing universal quantifiers",
+		               "The term must begin with a function symbol.")
+              end resignal error
+    t: term := sigma[v]
+    ops: op_set := i.sys.ops + i.prover.ops
+    if ~term$is_funct(t) cor op_set$exists(ops, t.root) then
+       abort_proof(i.p, "introducing universal quantifiers",
+		   "The term must begin with an unused function symbol.")
+       end resignal error
+    if t.depth > 1 cor var_set$size(t.vars) ~= term_seq$size(t.args) then
+       abort_proof(i.p, "introducing universal quantifiers",
+		   "The term must consist of a function symbol applied " ||
+		   "to a sequence of distinct variables.")
+       end resignal error
+    m: string := ""
+    exists_elimination(e, v, t, false, dummy_op_sys, i.symtab)
+       except when missing:
+		   m := "There is no eliminable universal quantifier."
+	      when ambiguous:
+		   m := "It is ambiguous which quantifier to eliminate."
+	      when need_vars:
+		   m := "The term must contain all variables in the " ||
+			"formula that are bound by outer existential " ||
+			"quantifiers."
+	      end
+    if m ~= "" then
+       abort_proof(i.p, "introducing universal quantifiers", m)
+       end resignal error
+    return(proof_method$make_a_intro(sigma))
+    end make_a_intro
+	       
+	       
+% Returns a proof method for a proof of "f" by existential quantifier
+% introduction; prompts the user for further information, if necessary.
+
+make_e_intro = proc (i: interactive, f: fact, scan: scanner)
+		 returns (proof_method) signals (error, none)
+    own dummy_op_sys: op_system := op_system$[]
+    e: equation := fact$value_eq(f)
+       except when wrong_tag:
+		   abort_proof(i.p, "introducing existential quantifiers",
+			       "LP provides this method only for " ||
+			       "conjectures that are formulas.")
+	      end resignal error
+    query$get_more(scan, "the specialization", specialize_syntax)
+       resignal none
+    sigma: substitution := psubstitution$read(scan, i.symtab, "to")
+       except when error:
+		   abort_proof(i.p, "introducing existential quantifiers", "")
+	      end resignal error
+    check_end_of_scan(scan)
+       except when error:
+		   abort_proof(i.p, "introducing existential quantifiers", "")
+	      end resignal error
+    all_elimination(e, sigma, false, dummy_op_sys, i.symtab)
+       except when missing:
+		   abort_proof(i.p, "introducing existential quantifiers",
+			       "There is no eliminable existential " ||
+			       "quantifier.")
+	      end resignal error
+    return(proof_method$make_e_intro(sigma))
+    end make_e_intro
+	       
+	       
+% Returns a proof method for a proof by cases; prompts the user for cases if
+% necessary.
+
+make_cases = proc (i: interactive, scan: scanner) returns (proof_method)
+	       signals (error, none)
+    query$get_more(scan, "terms defining cases", term_syntax)
+       resignal none
+    ta: term_arr := term_arr$[]
+    err: bool := false
+    while true do
+	term_arr$addh(ta, term$read(scan, i.symtab))
+	   except when error: err := true
+			      scanner$skip_line(scan)
+		  end
+	tagcase scan.nextToken
+	   tag comma: scanner$get(scan)
+	   tag eof: break
+	   others: end
+	end
+    if err then
+       printer$text(i.p, "\nIllegal term for case.\n")
+       signal error
+       end
+    for n: int in term_arr$indexes(ta) do
+	t: term := ta[n]
+	if t.sort ~= bool_sort() then
+	   printer$error(i.p)
+	   printer$text(i.p, "\nCase " || int$unparse(n))
+	   printer$text(i.p," must have sort ")
+	   sort$print(i.p, bool_sort())
+	   printer$text(i.p, ", not sort ")
+	   sort$print(i.p, t.sort)
+	   printer$text(i.p, ".\n")
+	   signal error
+	   end
+	ta[n] := system$flatten_term(t, i.sys)
+	end
+    return(proof_method$make_cases(term_seq$a2s(ta)))
+    end make_cases
+
+
+% Returns a proof method for a proof of "f" by induction.
+% Syntax: 
+%      induction [[on] <variable>] [depth <integer>] 
+%                [[using] <class-expression>]
+    
+make_induct = proc (i: interactive, f: fact, scan: scanner)
+		returns (proof_method) signals (error, none)
+    vars: var_set := fact$value_eq(f).fvars
+       except when wrong_tag:
+		   abort_proof(i.p, "induction",
+			       "LP provides this method only for " ||
+			       "conjectures that are formulas.")
+	      end resignal error
+    if var_set$empty(vars) then
+       abort_proof(i.p, "induction",
+		   "There are no free variables in the conjecture.")
+       end resignal error
+    if iodev$pending_input(i.io) then       % FIX: this does not give help
+       query$get_more(scan, "instructions for the induction", induction_syntax)
+       end resignal none
+    stab: symtab := i.symtab
+    word: string
+    tagcase scan.nextToken
+       tag simpleId: word := slower(scan.nextToken.text)
+       tag eof:      word := ""
+       others:       scanner$error(scan, "expecting a variable")
+		     abort_proof(i.p, "induction", "")
+       end resignal error
+    if word ~= "" cand word ~= "using" cand word ~= "depth" then
+       if word = "on" then scanner$get(scan) end
+       v: variable := variable$read(scan, stab)
+	  except when error:
+		      abort_proof(i.p, "induction",
+				  "You must specify an appropriate variable.")
+		 end resignal error
+       if ~var_set$exists(vars, v) then
+	  m: string
+	  if var_set$exists(fact$value_eq(f).bvars, v)
+	     then m := "You cannot induct on a bound variable."
+	     else m := "The variable does not occur in the conjecture."
+	     end
+	  abort_proof(i.p, "induction", m)
+	  end resignal error
+       vars := var_set$[v]
+       end
+    depth: int := 1
+    if slower(scan.nextToken.text) = "depth" then
+       scanner$get(scan)
+       depth := int$parse(scan.nextToken.text)
+	  except others: scanner$error(scan, "expecting an integer")
+			 abort_proof(i.p, "induction", "")
+		 end resignal error
+       scanner$get(scan)
+       end
+    if depth < 1 then
+       abort_proof(i.p, "induction", "The depth must be at least 1.")
+       end resignal error
+    if slower(scan.nextToken.text) = "using" then
+       scanner$get(scan)
+       end
+    ns: name_set :=
+	class_expression$full_eval(class_expression$read(scan, stab),
+				   i.sys, i.symtab.classes)
+       except when error: abort_proof(i.p, "induction", "")
+	      when empty: ns := name_set$universal()
+	      when undefined (cn: class_name):
+		   abort_proof(i.p, "induction", "Undefined class name: "|| cn)
+	      end resignal error
+    check_end_of_scan(scan)
+       except when error: abort_proof(i.p, "induction", "")
+	      end resignal error
+    found_v: bool := false
+    ambig: bool := false
+    v: variable
+    rule: induction_rule
+    for v1: variable in var_set$elements(vars) do
+	rule := system$lookup_induction_rule(i.sys, v1.sort, ns)
+	   except when none: continue
+		  when ambiguous: ambig := true
+		  end
+	if found_v then
+	   printer$error(i.p)
+	   printer$text(i.p, "\nInduction is possible over several ")
+	   printer$text(i.p, "variables.  You must pick one.\n")
+	   signal error
+	   end
+	v := v1
+	found_v := true
+	end
+    if ~found_v then
+       abort_proof(i.p, "induction", "There is no applicable induction rule.")
+       end resignal error
+    if ambig then
+       printer$error(i.p)
+       printer$text(i.p, "\nThere is more than one applicable ")
+       printer$text(i.p, "induction rule.  You must pick one.\n")
+       signal error
+       end
+    ii: induction_info := induction_info${var: v, rule: rule, depth: depth}
+    return(proof_method$make_induct(ii))
+    end make_induct
+
+    
+% Announces that a proof by "method" is not possible.
+    
+abort_proof = proc (p: printer, method: string, why: string) signals (error)
+    printer$error(p)
+    printer$text(p, "\nA proof by ")
+    printer$text(p, method)
+    printer$text(p, " is not possible.  ")
+    if why = "" then why := "There is an error in your command." end
+    printer$text(p, why)
+    printer$newline(p)
+    signal error
+    end abort_proof
+    
+

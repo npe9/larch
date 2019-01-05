@@ -1,0 +1,32 @@
+\doc{Sample proofs: getting started}
+
+To invoke LP, type \fq{lp} at the Unix command prompt.  LP will respond with
+the following message:
+\begin{verbatim}
+Welcome to LP (the Larch Prover), Release 3.1 (94/12/30).
+Copyright (C) 1994, S. J. Garland and J. V. Guttag
+Type `help lp' (followed by a carriage return) for help.
+
+LP1:
+\end{verbatim}
+LP is a command-driven system.  The last line of LP's welcoming message,
+\fq{LP1:}, is a \setlink{prompt} for the first command.  LP prompts users to
+enter subsequent commands with \fq{LP2:}, \fq{LP3:}, ...
+\p
+You can type input directly in response to LP's prompts, or you can create a
+file of LP commands (e.g., \dflink{set1.lp}{set1.lp}) and then use LP's
+\clink{execute} command to cause LP to execute the commands in that file as if 
+you had typed them directly.  Here's the start of a session in which commands
+are executed from the file \fq{set1.lp}:
+\begin{verbatim}
+LP1: execute set1
+
+LP1.1: % Some simple theorems about finite sets
+
+LP1.2:
+\end{verbatim}
+The first command, \fq{execute set1}, was typed by the user.  The second was
+obtained from the file \fq{set1.lp}.  This command is a \clink{comment}: LP
+ignores all input following a percent sign.  The prompts \fq{LP1.1:} and
+\fq{LP1.2:} indicate that LP is taking input from the file being executed as a
+result of the command entered in response to the prompt \fq{LP1:}.

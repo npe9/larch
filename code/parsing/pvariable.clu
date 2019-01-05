@@ -1,0 +1,128 @@
+#extend
+
+% This cluster parses and unparses external representations for variables using
+% the following syntax:
+
+%      variable ::= simpleId [ ":" sort ]
+%      varDcl   ::= ( simpleId+, ":" sort )+[,]
+
+% The "psort" cluster defines the nonterminal symbol "sort".  The "token"
+% cluster defines the nonterminal symbol "simpleId".
+
+pvariable = cluster is print, read, read_overloadings, read_varDcl
+    
+    rep = null
+    
+    
+    % Prettyprints "v" on "p".  Qualifies "v" with its sort if
+    % "stab.unparse_mode" is "qualified" or if "v.id" is overloaded in "stab"
+    % and "stab.umparse_mode" is "unambiguous".  Uses the format
+    % "~{~2Iv.id~F:~Fv.sort}" to display the qualified representation of "v" in
+    % one of the following forms:
+    % (1) v.id:v.sort     (2) v.id:       (3) v.id           (4) v.id
+    %                           v.sort          :v.sort           :
+    %                                                             v.sort
+    
+    print = proc (p: printer, v: variable, stab: symtab)
+	qualify: bool
+	tagcase stab.unparse_mode.upm
+	   tag qualified_upm:   qualify := true
+	   tag unqualified_upm: qualify := false
+	   tag unambiguous_upm:
+	       qualify := symtab$nullary_overloadings(stab, v.id)
+	   end
+	if qualify
+	   then printer$text(p, "~{~2I")
+		printer$puts(p, v.id.sym)
+		printer$text(p, "~F:~F")
+		psort$print(p, v.sort)
+		printer$text(p, "~}")
+	   else printer$puts(p, v.id.sym)
+	   end
+	end print
+
+    
+    % Scans a variable from "scan" and returns the matching variable in "stab".
+    % Writes a message to "scan", and signals "error", if "scan" does not begin
+    % with a representation for a unique variable in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (variable)
+	     signals (error)
+	loc: locator := scan.nextToken.loc
+	vs: var_set := read_overloadings(scan, stab)
+	   resignal error
+	   except when unique (v: variable): return(v) end
+	scanner$error_at(scan, loc, "ambiguous variable")
+	signal error
+	end read
+
+
+    % Scans a variable from "scan" and returns the set of matching variables in
+    % "stab".  Writes a message to "scan", and signals "error", if "scan" does
+    % not begin with the representation for one or more variables in "stab".
+    % Signals "unique(v)" if "v" is the unique matching variable in "stab".
+
+    read_overloadings = proc (scan: scanner, stab: symtab) returns (var_set)
+			  signals (error, unique(variable))
+	tok: token := 
+	    scanner$expecting(scan, token$is_unreservedSimpleId, "a variable")
+	   resignal error
+	id: identifier := identifier$make_simple(tok.text)
+	if token$is_colon(scan.nextToken)
+	   then scanner$get(scan)
+		v: variable := variable${id: id, sort: sort$read(scan, stab)}
+		signal unique(symtab$lookup_var(stab, v))
+	   else vs: var_set := symtab$lookup_vars(stab, id)
+		n: int := var_set$size(vs)
+		if n = 0 then exit missing
+		 elseif n = 1 then signal unique(var_set$any_element(vs))
+		 else return(vs)
+		 end
+	   end resignal error
+	   except when missing:
+		       scanner$error_at(scan, tok.loc, "undeclared variable")
+		       signal error
+		  end
+	end read_overloadings
+
+
+    % Scans a "varDcl" from "scan" and yields a sequence of simpleId tokens
+    % and sorts.  Writes a message to "scan", and signals "error", if "scan"
+    % does not begin with a legal "varDcl" or if some sort is not in "stab".
+
+    read_varDcl = iter (scan: scanner, stab: symtab) yields (token, sort)
+		    signals (error)
+	while true do
+	    vars: token_arr := token_arr$[scan_simpleId(scan)]
+	    while token$is_comma(scan.nextToken) do
+		scanner$get(scan)
+		token_arr$addh(vars, scan_simpleId(scan))
+		end
+	    scanner$expecting(scan, token$is_colon,
+			      "`:' in variable declaration")
+	    s: sort := psort$read(scan, stab)
+	    	resignal error
+	    for tok: token in token_arr$elements(vars) do
+		yield(tok, s)
+		end
+	    tagcase scan.nextToken
+	       tag comma: scanner$get(scan)
+	       tag eof: break
+	       others:
+	       end
+	    end resignal error
+	end read_varDcl
+
+    
+    % (Internal procedure) Scans a simple identifier from the head of "sc".
+    % Writes a message to "sc", and signals "error", if the head of "sc" is not
+    % a simple identifier.
+
+    scan_simpleId = proc (scan: scanner) returns (token) signals (error)
+	return(scanner$expecting(scan, token$is_unreservedSimpleId, 
+				 "a variable identifier"))
+	   resignal error
+	end scan_simpleId
+
+    
+    end pvariable

@@ -1,0 +1,71 @@
+permute = iter [t: type] (base: t_seq) yields (t_seq)
+    t_seq = sequence[t]
+
+    used: int := 2 ** t_seq$size(base) - 1
+    for perm: t_seq in permute_work[t]
+			   (base, t_seq$[], t_seq$size(base), used) do
+	yield(perm)
+	end
+    end permute
+
+
+permute_of_size = iter [t: type] (base: t_seq, size: int) yields (t_seq)
+		    signals (bad_size)
+    t_seq = sequence[t]
+
+    if size > t_seq$size(base) then signal bad_size end
+    used: int := 2 ** t_seq$size(base) - 1
+    for perm: t_seq in permute_work[t](base, t_seq$[], size, used) do
+	yield(perm)
+	end
+    end permute_of_size
+
+
+permute_work = iter [t: type] (base, so_far: t_seq, count, used: int)
+		 yields (t_seq)
+    t_seq = sequence[t]
+
+    to_go: int := used
+    while true do
+	bit: int := i_last1(to_go)
+	new_so_far: t_seq := t_seq$addh(so_far, base[bit+1])
+	if count = 1
+	   then yield(new_so_far)
+	   else for perm: t_seq in permute_work[t](base, new_so_far, count-1,
+						   i_set1(used, bit, false)) do
+		    yield(perm)
+		    end
+	   end
+	to_go := i_set1(to_go, bit, false)
+	end
+       except when none: end
+    end permute_work
+
+
+permute_with_remainder = iter [t: type] (base: t_seq, size: int)
+			   yields (t_seq, t_seq)
+    t_seq = sequence[t]
+
+    for perm, remain: t_seq in permute_work_with_remainder[t]
+				   (t_seq$[], base, size) do
+	yield(perm, remain)
+	end
+    end permute_with_remainder
+
+
+permute_work_with_remainder = iter [t: type] (so_far, left: t_seq, count: int)
+				yields (t_seq, t_seq)
+    t_seq = sequence[t]
+
+    for i: int in t_seq$indexes(left) do
+	new_so_far: t_seq := t_seq$addh(so_far, left[i])
+	new_left: t_seq := t_seq$subseq(left, 1, i-1)
+			     || t_seq$subseq(left, i+1, t_seq$size(left)-i)
+	if count = 1 then yield(new_so_far, new_left); continue end
+	for perm, remain: t_seq in permute_work_with_remainder[t]
+				       (new_so_far, new_left, count-1) do
+	    yield(perm, remain)
+	    end
+	end
+    end permute_work_with_remainder
+

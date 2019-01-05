@@ -1,0 +1,22 @@
+\doc{Proofs by consistency}
+\ref{proof-by-consistency}
+\ref{inductionless-induction}
+\ref{consistency}
+
+LP permits manual \def{proofs by consistency} (also known as proofs by
+\def{inductionless induction}) in logical systems that consist solely of
+quantifier-free equations and rewrite rules.  Such proofs require that the
+\def{Huet-Hullot principle of definition} be satisfied, that is, that all 
+ground (variable-free) terms be equal, with respect to the equations and
+rewrite rules in the system, to ground terms involving a set of free
+generators.  In axiomatizations of abstract data types, the generators of
+the data type will usually have this property.  Axiomatizations of sets usually
+fail to satisfy the property because the \fq{insert} operator is not free.
+\p
+A proof by consistency proceeds by adding an equation to a \clink{complete}
+system and running the completion procedure.  If that procedure terminates
+without generating an \llink{inconsistency}{inconsistency}, then the equation
+is valid in the initial model; if it terminates with an inconsistency, the
+equation is not valid; if it does not terminate, the equation may or may not be
+valid.
+

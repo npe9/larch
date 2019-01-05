@@ -1,0 +1,64 @@
+\doc{The display command}
+\ref{display-command}
+\ref{information-type}
+
+The \def{display command} displays information about LP's logical system.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{display-command}  ::= \f{display} [ \s{information-type} ] [ \slink{../misc/names}{names} ]
+\sd{information-type} ::= \f{classes} | \f{conjectures} | \f{facts} | \f{names}
+                          | \f{ordering-constraints} | \f{proof-status} | \f{symbols}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+display
+display *Hyp
+display ordering-constraints contains-operator(+)
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{display} command displays information of the requested
+\s{information-type} about all facts and conjectures with names matching
+\s{names}.  If \s{information-type} is omitted, it is assumed to be \fq{facts}.
+\begin{description}
+\dt \f{display classes}
+\dd
+Displays the definitions of all \slink{../misc/class}{class-name}s.
+\p
+\dt \f{display conjectures [ \s{names} ]}
+\dd
+Displays all unproved conjectures [with the specified names].
+\p
+\dt \f{display facts [ \s{names} ]}
+\dd
+Displays all facts in the current proof context [with the specified names].
+Indicates \dlink{../settings/immunity}{immune} facts by an \fq{(I)} following
+their names, ancestor-immune statements by an \fq{(i)}, and
+\dlink{../settings/activity}{passive} facts by a \fq{(P)}.
+\p
+\dt \f{display names}
+\dd
+Displays all \setlink{name-prefix}es introduced in the current proof context.
+\p
+\dt \f{display ordering-constraints [ \s{names} ]}
+\dd
+Displays the \dlink{register}{registry} for all operators [in the
+named facts] in the current proof context, unless the value of the
+\setlink{ordering-method} setting is \fq{polynomial}, in which case it displays
+the \dlink{../ordering/polynomial}{polynomial interpretations} of these
+operators. 
+\p
+\dt \f{display proof-status}
+\dd
+Displays the status of the current conjecture and all other conjectures for
+which it is a subgoal (of a subgoal ...).
+\p
+\dt \f{display symbols [ \s{names} ]}
+\dd
+Displays all sorts, operators, and variables [in the named facts] in the
+current proof context.  The command \fq{display symbols} displays all symbols
+in the current proof context, whereas \fq{display symbols *} only displays
+those that occur in some fact.
+\end{description}

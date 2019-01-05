@@ -1,0 +1,793 @@
+#extend
+
+% The deduction rule
+%	WHEN hypothesis1, ..., hypothesisM YIELD conclusion1, ..., conclusionN
+% (where the hypotheses and conclusions are boolean-valued terms) is equivalent
+% to the logical implication
+%	hypothesis1 /\ ... /\ hypothesisM => conclusion1 /\ ... /\ conclusionN
+% Unbound variables in the deduction rule are understood to be universally
+% quantified.  Examples:
+%
+%	when p /\ q 			yield p, q
+%	when ~(p \/ q) 			yield ~p, ~q
+%	when x + y = x + z 		yield y = z
+%	when \A x (x*y = x*z)           yield y = z
+%	when \A x (x \in y <=> x \in z) yield y = z
+%	when x \in y 			yield y ~= {}
+
+% A deduction rule whose first hypothesis is "\A x1 ... \A xn H" is said to
+% "apply" to a formula F if there is a substitution "sigma" such that 
+% (1) sigma(H) = F,
+% (2) sigma(x1), ..., sigma(xn) are distinct variables, and
+% (3) the only occurrences of sigma(xi) in F are those that result from
+%     sigma to occurrences of xi in H.
+
+% FIX: Find a better way to express (3).  Is this the same mechanism that we
+% need for matching quantified formulas modulo change of bound variable?
+
+% The result of applying a deduction rule with one hypothesis is the sequence
+% of formulas obtained by instantiating each conclusion by the substitution(s)
+% that matched the hypothesis.
+
+% The result of applying a deduction rule with more than one hypothesis is the
+% set of deduction rules obtained by deleting the first hypothesis (i.e., the
+% one that was matched) and instantiating the remainder of the deduction rule
+% by the substitution(s) that matched this hypothesis.  For example, applying
+% the deduction rule
+%      WHEN x < y, y < z YIELD x < z
+% to the formula
+%      a < b
+% yields the deduction rule
+%     WHEN b < z YIELD a < z
+
+% Fresh variables are substituted for variables in the deduction rule that
+% occur in the range of the matching substitution, but not in its first 
+% hypothesis.  Thus applying the deduction rule
+%      	  WHEN P(x) YIELD Q(x, y)
+% to the formula "P(f(y))" produces the result "Q(f(y), y1)" and not the
+% weaker result "Q(f(y), y)".  Some other examples:
+% 1.      WHEN P(y, z), \A x Q(x, y) YIELD R(y, z)     		P(f(x), a)
+%         WHEN \A x1 Q(x1, f(x)) YIELD R(f(x), a)
+% 2.      WHEN \A x P(x, y), \A x Q(x, z) YIELD R(y, z)     	P(y, f(z))
+%         WHEN \A y Q(y, z1) YIELD R(f(z), z1)
+% 3.      WHEN \A x P(x, y), \A x Q(x, z) YIELD R(y, z)     	P(z, f(x))
+%         WHEN \A z Q(z, z1) YIELD R(f(z), z1)
+
+% FIX: Reconsider how these examples should be handled given the new treatment
+% of quantifiers.
+
+% A deduction rule is called reversible if its conclusions imply its
+% hypotheses.  When a reversible deduction rule is applied to a set of
+% formulas, we can replace (rather than supplement) the formulas by the results
+% of the deduction rule.
+
+% FIX: Does this work for deduction rules with multiple hypotheses?
+
+% ENHANCE: For now, we determine whether a deduction rule is reversible by
+% seeing if its conclusions define a substitution that reduces its hypotheses
+% to identities.  We could try proving the hypotheses from the conclusions.  If
+% we do so, we should use hardwired axioms, but not user-introduced axioms, so
+% that reversibility depends only on the deduction rule and not on the context
+% in which it is used.
+
+% ENHANCE: Consider removing redundant formulas from the conclusions.  The
+% easiest redundancy to eliminate is a duplicate.  Formal consequences of other
+% conclusions are also redundant.
+
+
+deduction_rule = cluster is
+	create, get_conclusions, get_fvars, get_has_quantifiers, 
+	get_hypotheses, get_name, set_name, get_named, get_ops, get_reversible,
+	get_vars,
+	apply, apply_mult, deduce_term, dr2e, instantiate, normalize, parse,
+	print, read, reduce, reflat, unparse, similar, copy, _gcd,
+	decode, encode
+
+    % The rep for a deduction rule contains its hypotheses and conclusions.  It
+    % also contains the following information:
+    
+    % "cvars": the set of variables that appear free in the conclusions, but
+    % not free in the hypotheses.  These get mapped to fresh variables in the
+    % result of the deduction rule.
+    
+    % "fvars": the set of free variables appearing in the deduction rule.
+    
+    % "has_quantifiers": true if the deduction rule contains a quantifier
+
+    % "name": the name assigned to the deduction rule.
+    
+    % "ops": the set of operators appearing in the deduction rule.
+
+    % "reversible": true if the deduction rule is reversible.
+
+    % "symmetric": an array of booleans indicating which hypotheses are
+    % equations that have the same left and right sides modulo variable
+    % renaming, i.e., that have left and right sides matching the same set of
+    % terms.  When matching a symmetric hypothesis, it is not necessary to use
+    % the commutativity of equality at the top level.
+
+    rep = record[conclusions: term_seq, 
+    		 cvars: var_set,
+                 fvars: var_set,
+		 has_quantifiers: bool,
+		 hypotheses: term_seq, 
+		 name: name_type,
+		 ops: ops_type,
+		 reversible: bool,
+		 symmetric: bool_seq]		% FIX: delete for now?
+
+    name_type    = variant[exists: name, none: null]
+    ops_type     = variant[exists: op_set, none: null]
+    var_set_arr  = array[var_set]
+ 
+    
+    % Creates and returns a new deduction rule.  The "#extend" mode of the CLU
+    % complier provides sugared invocations of the form
+    %      "deduction_rule${hypotheses: h, conclusions: c, symtab: stab}".
+    % ASSUMES: "h[i]" and "c[i]" are boolean-valued terms
+    
+    create = proc (a: args) returns (cvt) 
+	args = struct[hypotheses, conclusions: term_seq, symtab: symtab]
+	own osys: op_system := op_system$[]
+
+	nhyps: int := term_seq$size(a.hypotheses)
+	hvars: var_set := var_set$[]
+	has_quantifiers: bool := false
+	for h: term in term_seq$elements(a.hypotheses) do
+	    var_set$merge(hvars, h.fvars)
+	    has_quantifiers := has_quantifiers cand h.has_quantifiers
+	    end
+	cvars: var_set := var_set$[]
+	for c: term in term_seq$elements(a.conclusions) do
+	    var_set$merge(cvars, c.fvars)
+	    has_quantifiers := has_quantifiers cand c.has_quantifiers
+	    end
+	
+	% To see whether "dr" is reversible, compute the substitution defined
+	% by the conclusions of "dr" and then see if it reduces the hypotheses
+	% of "dr" to identities.  When doing this, we can ignore conclusions
+	% with free variables that do not appear free in the hypotheses.
+	sigma: substitution := substitution$[]
+	for c: term in term_seq$elements(a.conclusions) do
+	    left, right: term := decompose(c)
+	       except when impossible: continue end
+	    if term$is_var(left) then
+	       v: variable := left.var
+	       if var_set$exists(hvars, v) then sigma[v] := right end
+	     elseif term$is_var(right) then
+	       v: variable := right.var
+	       if var_set$exists(hvars, v) then sigma[v] := left end
+	     end
+	    end
+       
+	% Compute reversibility of "dr" along with the symmetry of its
+	% hypotheses.
+	reversible: bool := true
+	sym: bool_arr := bool_arr$fill(1, nhyps, false)
+	stab: symtab := a.symtab
+	i: int := 0
+	for h: term in term_seq$elements(a.hypotheses) do
+	    i := i + 1
+	    left, right: term := decompose(h)
+	       except when impossible: reversible := false   % ENHANCE
+				       continue
+		      end
+	    if reversible then
+	       reversible := term$equal(
+				 substitution$apply(sigma, left, stab),
+				 substitution$apply(sigma, right, stab))
+	       end
+            % ENHANCE: The "left" and "right" here should really be computed
+	    % after stripping leading quantifiers from "h".
+	    for sigma1: substitution in match(left, right, osys, stab) do
+		for sigma2: substitution in match(right, left, osys, stab) do
+		    sym[i] := true
+		    exit done
+		    end
+		exit done
+		end except when captured, done, no_match: end
+	    end 
+	return(rep${conclusions: a.conclusions,
+		    cvars: cvars - hvars,
+		    fvars: hvars + cvars,
+		    has_quantifiers: has_quantifiers,
+		    hypotheses: a.hypotheses,
+		    name: name_type$make_none(nil),
+		    ops: ops_type$make_none(nil),
+		    reversible: reversible,
+		    symmetric: bool_seq$a2s(sym)})
+	end create
+
+
+    % (Internal procedure)  If "t" is of the form "t1 = t2", returns "t1" and
+    % "t2".  Otherwise signals "impossible".
+    
+    decompose = proc (t: term) returns (term, term) signals (impossible)
+	op: operator := t.root
+	   except when wrong_tag: signal impossible end
+	if op ~= op_iff() cand ~is_op_equals(op) then signal impossible end
+	args: term_seq := t.args
+	if term_seq$size(args) > 2 then signal impossible end
+	return(args[1], args[2])
+	end decompose
+
+
+    % Returns the conclusions of "dr".
+    
+    get_conclusions = proc (dr: cvt) returns (term_seq)
+	return(dr.conclusions)
+	end get_conclusions
+    
+
+    % Returns the set of free variables in "dr".  ASSUMES: caller will not
+    % modify this set.
+
+    get_fvars = proc (dr: cvt) returns (var_set)
+	return(dr.fvars)
+	end get_fvars
+
+
+    % Returns "true" if "dr" contains a quantifier.
+    
+    get_has_quantifiers = proc (dr: cvt) returns (bool)
+	return(dr.has_quantifiers)
+	end get_has_quantifiers
+
+    
+    % Returns the hypotheses of "dr".
+    
+    get_hypotheses = proc (dr: cvt) returns (term_seq)
+	return(dr.hypotheses)
+	end get_hypotheses
+    
+
+    % Returns the name of "dr".  Signals "none" if "dr" is not named.
+
+    get_name = proc (dr: cvt) returns (name) signals (none)
+	return(name_type$value_exists(dr.name))
+	   except when wrong_tag: signal none end
+	end get_name
+
+
+    % Sets the name of "dr" to "n".  Signals "impossible" if "dr" is already
+    % named.
+
+    set_name = proc (dr: cvt, n: name) signals (impossible)
+	if name_type$is_exists(dr.name) then signal impossible end
+	dr.name := name_type$make_exists(n)
+	end set_name
+
+
+    % Returns "true" if "dr" has been named.
+
+    get_named = proc (dr: cvt) returns (bool)
+	return(name_type$is_exists(dr.name))
+	end get_named
+
+
+    % Returns the set of operators in "dr".  ASSUMES: caller will not modify
+    % this set.
+
+    get_ops = proc (dr: cvt) returns (op_set)
+	tagcase dr.ops
+	   tag none:
+	       ops: op_set := op_set$[]
+	       for h: term in term_seq$elements(dr.hypotheses) do
+		   op_set$merge(ops, h.ops)
+		   end
+	       for c: term in term_seq$elements(dr.conclusions) do
+		   op_set$merge(ops, c.ops)
+		   end
+	       dr.ops := ops_type$make_exists(ops)
+	       return(ops)
+	   tag exists (ops: op_set):
+	       return(ops)
+	   end
+	end get_ops
+
+
+    % Returns "true" if "dr" is reversible.
+
+    get_reversible = proc (dr: cvt) returns (bool)
+	return(dr.reversible)
+	end get_reversible
+
+
+    % Returns the set of variables in "dr".
+    % FIX: stash result in rep.  This was implemented for axioms$subsystem_vars.
+    % Should that routine return free variables?
+    
+    get_vars = proc (dr: cvt) returns (var_set)
+	vars: var_set := var_set$copy(dr.fvars)
+	for h: term in term_seq$elements(dr.hypotheses) do
+	    var_set$merge(vars, h.bvars)
+	    end
+	for c: term in term_seq$elements(dr.conclusions) do
+	    var_set$merge(vars, c.bvars)
+	    end
+	return(vars)
+	end get_vars
+    
+
+    % Yields the results of applying "dr" to "f".  Signals "too_many_hyps" if
+    % "dr" has more than one hypothesis.
+    % ENHANCE:  Special treatment for multiple matches?
+
+    apply = iter (dr: cvt, f: formula, osys: op_system, stab: symtab)
+	      yields (formula) signals (too_many_hyps)
+	if f.is_conditional then return end
+	if term_seq$size(dr.hypotheses) > 1 then signal too_many_hyps end
+	vars: var_set, h: term := strip_universal_quantifiers(dr.hypotheses[1])
+	% FIX: if "h" is symmetric, don't use c-matching at top level
+	for sigma: substitution in match(f.formula, h, osys, stab) do
+	    if legal_sub(sigma, vars, h) then
+	       improve_sub(sigma, f.formula.vars, dr.fvars, stab)
+	       for f1: formula in the_results(dr, sigma, osys, stab) do
+		   yield(f1)
+		   end
+	       end
+	    end except when no_match: end
+	end apply
+
+    strip_universal_quantifiers = proc (t: term) returns (var_set, term)
+	vars: var_set := var_set$[]
+	while true do
+	    q: quantifier := t.quant
+	    if q.is_existential then break end
+	    var_set$insert(vars, q.var)
+	       except when exists: end
+	    t := t.subform
+	    end except when wrong_tag: end
+	return(vars, t)
+	end strip_universal_quantifiers
+
+    
+    % (Internal procedure)  Returns "true" if "sigma" maps "free" into distinct
+    % variables that do not appear elsewhere "sigma[t]".
+
+    legal_sub = proc (sigma: substitution, free: var_set, t: term)
+		  returns (bool)
+	free_images: var_set := var_set$[]
+	used_vars: var_set := var_set$[]
+	for v: variable in var_set$elements(t.vars) do
+	    v_image: term := sigma[v]
+	       except when captured: fail("deduction_rule$%legal_sub") end
+	    if var_set$exists(free, v)
+	       then v1: variable := v_image.var
+		       except when wrong_tag: return(false) end
+		    if var_set$exists(used_vars, v1) then return(false) end
+		    var_set$insert(free_images, v1)
+		       except when exists: return(false) end
+	       else for v1: variable in var_set$elements(v_image.vars) do
+			if var_set$exists(free_images, v1) then return(false)
+			   end
+			var_set$insert(used_vars, v1)
+			   except when exists: end
+			end
+	       end
+	    end
+	return(true)
+	end legal_sub
+
+
+    % (Internal procedure) Yields the formulas that result from applying the
+    % substitution "sigma" to the conclusions of the deduction rule "dr".
+
+    the_results = iter (dr: rep, sigma: substitution, osys: op_system,
+			stab: symtab) yields (formula)
+	for c: term in term_seq$elements(dr.conclusions) do
+	    c := flatten(substitution$apply(sigma, c, stab), osys)
+	    f: formula := formula$create(c)
+	    if ~formula$is_identity(f) then yield(f) end
+	    end
+	end the_results
+
+
+    % (Internal procedure) Modifies "sigma" by mapping variables in its range,
+    % but not in "dom", to distinct variables that are not in "dom", the range
+    % of "sigma", or "avoid".
+    
+    % FIX: Improve "sigma" further by taking account of the terms to which it
+    % will be applied.  See the warning for substitution$get_range_vars.
+
+    improve_sub = proc (sigma: substitution, dom, avoid: var_set, stab: symtab)
+	used_vars: var_set
+	already_renaming: bool := false
+	sigma_vars: var_set := sigma.range_vars
+	for v: variable in var_set$elements(sigma_vars) do
+	    if var_set$exists(dom, v) then continue end
+	    if ~already_renaming then
+	       symtab$begin_changes(stab)
+	       already_renaming := true
+	       used_vars := avoid + sigma_vars
+	       end
+	    v1: variable := variable$different(v.sort, used_vars, stab)
+	    var_set$insert_unique(used_vars, v1)
+	    sigma[v] := term$make_var(v1)
+	    end
+	if already_renaming then symtab$commit_changes(stab) end
+	end improve_sub
+
+
+    % Yields the deduction rules that result from applying a
+    % multiple-hypothesis deduction rule "dr" to "f".
+    % ENHANCE: Figure out how to apply to conditional rewrite rules.
+    
+    apply_mult = iter (dr: cvt, f: formula, osys: op_system, stab: symtab)
+		   yields (cvt)
+	if f.is_conditional then return end
+	if term_seq$size(dr.hypotheses) < 2 then
+	   fail("deduction_rule$apply_mult")
+	   end
+	vars: var_set, h: term := 
+	    strip_universal_quantifiers(dr.hypotheses[1])
+	% FIX: if "h" is symmetric, don't use c-matching at top level
+	for sigma: substitution in match(f.formula, h, osys, stab) do
+	    if ~legal_sub(sigma, vars, h) then continue end
+	    dr1: deduction_rule :=
+		deduction_rule${hypotheses: term_seq$reml(dr.hypotheses),
+				conclusions: dr.conclusions,
+				symtab: stab}
+	    improve_sub(sigma, f.formula.vars, dr.fvars, stab)
+	    dr1 := instantiate(dr1, sigma, osys, stab)
+	       except when nonconsequence: continue
+		      when same:
+		      end
+	    yield(down(dr1))
+	    end except when no_match: end
+	end apply_mult
+
+
+    % Returns true if "t" follows from "dr", i.e., if "t" matches a
+    % conclusion of "dr" and the hypotheses of "dr", under the matching
+    % substitution, reduce to identities.
+    
+    deduce_term = proc (dr: cvt, t: term, rsys: rewriting_system, 
+	    	        osys: op_system, stab: symtab) returns (bool)
+	own n: name := name$orphan()
+	for c: term in term_seq$elements(dr.conclusions) do
+	    for sigma: substitution in match(t, c, osys, stab) do
+		for h: term in term_seq$elements(dr.hypotheses) do
+		    t1: term := substitution$apply(sigma, h, stab)
+		    t1 := rewriting_system$normal_form(t1, rsys, osys, stab, n)
+		       except when already_normal_form: end
+		    if ~is_term_true(t1) then exit no_good end
+		    end
+		return(true)
+		end except when no_match, no_good:
+			   when might_loop (*): 
+			   end
+	    end
+	return(false)
+	end deduce_term
+
+    
+    % Returns an unflattened formula that is logically equivalent to "dr".
+    
+    dr2e = proc (dr: cvt) returns (formula)
+	return(formula$create(term2(op_implies(),
+				    ts2t(dr.hypotheses),
+				    ts2t(dr.conclusions))))
+	end dr2e
+
+
+    % (Internal procedure) Returns a term representing the conjunction of the
+    % boolean-valued terms in "ts".
+
+    ts2t = proc (ts: term_seq) returns (term)
+	n: int := term_seq$size(ts)
+	if n = 0 then return(term_true())
+	 elseif n = 1 then return(ts[1])
+	 else return(term$make_funct(op_and(), ts))
+	 end
+	end ts2t
+
+
+    % Returns an unnamed deduction rule obtained by applying the substitution
+    % "sigma" to "dr", changing bound variables in "dr" as necessary to avoid
+    % capturing a variable in a substituted term.  Signals "same" if "sigma"
+    % does not change "dr".
+
+    % NOTE: This routine was more complicated in lp2.4.  In that release,
+    % quantifiers were part of the deduction rule, not of individual
+    % hypotheses, and "legal_sub" was used to ensure that "sigma" mapped
+    % the quantified variables to a set of distinct variables.  Now, 
+    % quantifiers are handling during the application of deduction rules; they
+    % need no special attention during instantiation.
+
+    instantiate = proc (dr: cvt, sigma: substitution, osys: op_system, 
+	                stab: symtab)
+		    returns (deduction_rule) signals (same)
+	same: bool := true
+	hyps, cons: term_arr
+	i: int := 0
+	for h: term in term_seq$elements(dr.hypotheses) do
+	    i := i + 1
+	    h1: term := flatten(substitution$apply(sigma, h, stab), osys)
+	    if term$same_object(h, h1) then continue end
+	    if same then
+	       hyps := term_seq$s2a(dr.hypotheses)
+	       cons := term_seq$s2a(dr.conclusions)
+	       same := false
+	       end
+	    hyps[i] := h1
+	    end
+	i := 0
+	for c: term in term_seq$elements(dr.conclusions) do
+	    i := i + 1
+	    c1: term := flatten(substitution$apply(sigma, c, stab), osys)
+	    if term$same_object(c, c1) then continue end
+	    if same then
+	       hyps := term_seq$s2a(dr.hypotheses)
+	       cons := term_seq$s2a(dr.conclusions)
+	       same := false
+	       end
+	    cons[i] := c1
+	    end
+	if same then signal same end
+	return(deduction_rule${hypotheses: term_seq$a2s(hyps),
+			       conclusions: term_seq$a2s(cons),
+			       symtab: stab})
+	end instantiate
+    
+    
+    % Normalizes "dr" with respect to "rsys" and returns the result.  Signals
+    % "already_normal_form" if "dr" is already in normal form.  Signals
+    % "formulas(fo_arr)" if the normalized deduction rule is logically
+    % equivalent to the formulas in "fo_arr".
+
+    % ENHANCE: detect inconsistent hypotheses (be careful to treat "x = t" as
+    % inconsistent only if "x" is universally quantified and does not occur
+    % in "t").
+    % ENHANCE: normalize conclusions wrt hypotheses (to aid in termination)
+
+    normalize = proc (dr: cvt, rsys: rewriting_system, osys: op_system,
+		      stab: symtab) returns (deduction_rule)
+		  signals (already_normal_form, formulas(fo_seq))
+	hyps: term_seq, hsame: bool := 
+	    normalize_term_seq(dr.hypotheses, rsys, osys, stab)
+	cons: term_seq, csame: bool := 
+	    normalize_term_seq(dr.conclusions, rsys, osys, stab)
+	i: int := 1
+	while i <= term_seq$size(cons) do
+	    if in_seq[term](cons[i], hyps)
+	       then csame := false
+		    cons := delete_at_seq[term](cons, i)
+	       else i := i + 1
+	       end
+	    end
+	if term_seq$empty(hyps) cor term_seq$empty(cons) then
+	   results: fo_arr := fo_arr$predict(1, term_seq$size(cons))
+	   for c: term in term_seq$elements(cons) do
+	       fo_arr$addh(results, formula$create(c))
+	       end
+	   signal formulas(fo_seq$a2s(results))
+	   end
+	if hsame cand csame then signal already_normal_form end
+        dr1: deduction_rule := 
+	    deduction_rule${hypotheses: hyps, conclusions: cons, symtab: stab}
+	dr1.name := name_type$value_exists(dr.name)
+	   except when wrong_tag: end
+	return(dr1)
+	end normalize
+
+
+    % (Internal procedure) Normalizes the terms in "ts".  Discards any
+    % identities and duplicates.  Returns the resulting sequence of terms
+    % together with a boolean indicating whether it contains the same elements
+    % as "ts".
+
+    normalize_term_seq = proc (ts: term_seq, rsys: rewriting_system, 
+			       osys: op_system, stab: symtab)
+			   returns (term_seq, bool)
+	own n: name := name$orphan()
+	deleted: int := 0
+	unchanged: bool := true
+	ta: term_arr
+	i: int := 0
+	for t: term in term_seq$elements(ts) do
+	    i := i + 1
+	    same: bool := false
+	    t := rewriting_system$normal_form(t, rsys, osys, stab, n)
+	       except when already_normal_form: same := true
+		      when might_loop (t1: term): t := t1
+		      end
+	    ignore: bool := is_term_true(t)
+	    if ~ignore then % See if "t" duplicates an earlier term
+	       for j: int in int$from_to(1, i-deleted-1) do
+		   if (unchanged cand t = ts[j]) 
+			cor (~unchanged cand t = ta[j]) then
+		      ignore := true
+		      break
+		      end
+		   end
+	       end
+	    if unchanged cand (ignore cor ~same) then
+	       unchanged := false
+	       ta := term_seq$s2a(ts)
+	       end
+	    if ignore then deleted := deleted + 1
+	     elseif ~unchanged then ta[i-deleted] := t
+	     end
+	    end
+	if unchanged then return(ts, true) end
+	if deleted > 0 then 
+	   term_arr$trim(ta, 1, term_arr$size(ta) - deleted)
+	   end
+	return(term_seq$a2s(ta), false)
+	end normalize_term_seq
+    
+    
+    % Parses "s" and returns the corresponding deduction rule.  Writes a
+    % message to "error", and signals "error", if "s" does not represent a
+    % deduction rule constructed from identifiers in "stab".
+
+    parse = proc (s: string, stab: symtab, error: printer)
+	      returns (deduction_rule) signals (error)
+	return(parse_item_with_ids[deduction_rule]
+		   ("deduction rule", s, stab, error))
+	   resignal error
+	end parse
+
+
+    % Prettyprints "dr" on "p".
+
+    print = proc (p: printer, dr: deduction_rule, stab: symtab)
+	pdeduction_rule$print(p, dr, stab)
+	end print
+
+
+    % Reads and returns a deduction rule from the head of "scan".  Writes an
+    % error message to "scan", and signals "error", if the head of "scan" does
+    % not contain a valid deduction rule constructed from identifiers in
+    % "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (deduction_rule)
+	     signals (error)
+	return(pdeduction_rule$read(scan, stab))
+	   resignal error
+	end read
+
+
+    % Returns a deduction rule that results from reducing some hypothesis or
+    % conclusion of "dr" by "rsys", or from eliminating some redundant
+    % hypothesis or conclusion.  The returned deduction rule has the same name
+    % as "dr".  Signals "already_normal_form" if no reduction occurs.
+    
+    reduce = proc (dr: cvt, rsys: rewriting_system, osys: op_system,
+		   stab: symtab)
+	       returns (deduction_rule) signals (already_normal_form)
+	hyps: term_seq, reduced: bool := 
+	    reduce_term_seq(dr.hypotheses, rsys, osys, stab)
+	cons: term_seq := dr.conclusions
+	if ~reduced then 
+	   cons, reduced := reduce_term_seq(cons, rsys, osys, stab)
+	   end
+        if ~reduced then
+	   for i: int in term_seq$indexes(cons) do
+	       if in_seq[term](cons[i], hyps) then
+		  cons := delete_at_seq[term](cons, i)
+		  reduced := true
+		  break
+		  end
+	       end
+	   end
+	if reduced 
+	   then dr1: deduction_rule := deduction_rule${hypotheses: hyps,
+						       conclusions: cons,
+						       symtab: stab}
+		dr1.name := name_type$value_exists(dr.name)
+		   except when wrong_tag: end
+		return(dr1)
+	   else signal already_normal_form
+	   end
+	end reduce
+
+    
+    % (Internal procedure) Reduces one term in "ts", discards an identity, or
+    % discards a duplicate.  Returns the resulting sequence of terms together
+    % with a boolean indicating whether it contains the same elements as "ts".
+
+    reduce_term_seq = proc (ts: term_seq, rsys: rewriting_system, 
+			    osys: op_system, stab: symtab)
+			returns (term_seq, bool)
+	own nam: name := name$orphan()
+	i: int := 0
+	for t: term in term_seq$elements(ts) do
+	    i := i + 1
+	    begin
+		t := rewriting_system$reduce(t, rsys, osys, stab, nam)
+		return(term_seq$replace(ts, i, t), true)
+		end except when already_normal_form: end
+	    if is_term_true(t) then exit delete(i) end
+	    for j: int in int$from_to(1, i - 1) do
+		if t = ts[j] then exit delete(i) end
+		end
+	    end except when delete (n: int):
+			    return(delete_at_seq[term](ts, n), true)
+		       end
+	return(ts, false)
+	end reduce_term_seq
+
+
+    % Returns a deduction rule equivalent to "dr" with its terms flattened.
+    % Signals "same" if there is no change in "dr".
+    
+    reflat = proc (dr: cvt, osys: op_system) returns (cvt) signals (same)
+	changed: bool := false
+	i: int := 0
+	for h: term in term_seq$elements(dr.hypotheses) do
+	    i := i + 1
+	    h1: term := flatten(dr.hypotheses[i], osys)
+	    if term$same_object(h, h1) then continue end
+	    if ~changed then
+	       changed := true
+	       dr := rep$copy(dr)
+	       end
+	    dr.hypotheses := term_seq$replace(dr.hypotheses, i, h)
+	    end
+	i := 0
+	for c: term in term_seq$elements(dr.conclusions) do
+	    i := i + 1
+	    c1: term := flatten(dr.conclusions[i], osys)
+	    if term$same_object(c, c1) then continue end
+	    if ~changed then
+	       changed := true
+	       dr := rep$copy(dr)
+	       end
+	    dr.conclusions := term_seq$replace(dr.conclusions, i, c1)
+	    end
+	if changed
+	   then return(dr)
+	   else signal same
+	   end
+	end reflat
+
+
+    % Returns a string denoting "dr" suitable for printing on the terminal.
+    % Qualifies all identifiers if the current "display_mode" is
+    % "qualified_mode"; otherwise omits all qualifications.
+    
+    unparse = proc (dr: deduction_rule) returns (string)
+	return(unparse_item_with_ids[deduction_rule](dr))
+	end unparse
+
+
+    % Returns "true" if "dr1" and "dr2" are similar deduction rules.
+    % NOTE: The order of the hypotheses makes a difference because LP matches
+    % the first hypothesis first; the order of the conclusions makes no 
+    % difference.
+    
+    similar = proc (dr1, dr2: cvt) returns (bool)
+	if dr1 = dr2 then return(true) end
+	return(dr1.hypotheses = dr2.hypotheses cand
+	       same_elements_seq[term](dr1.conclusions, dr2.conclusions,
+				       term$equal))
+	end similar
+    
+
+    % Returns a copy of "dr".
+
+    copy = proc (dr: cvt) returns (cvt)
+	return(rep$copy(dr))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end deduction_rule

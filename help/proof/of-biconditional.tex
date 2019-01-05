@@ -1,0 +1,17 @@
+\doc{Proofs of logical equivalence}
+\ref{proof-of-equivalence}
+\ref{<=>-method}
+
+The command \fq{prove t1 <=> t2 by <=>} directs LP to prove the conjecture by
+proving two implications, \fq{t1 => t2} and \fq{t2 => t1}.  LP substitutes new
+\llink{constant}{constants} for the free variables in both \fq{t1} and \fq{t2}
+to obtain terms \fq{t1'} and \fq{t2'}, and it creates two subgoals: the first
+involves proving \fq{t2'} using \fq{t1'} as an additional hypothesis, the
+second proving \fq{t1'} using \fq{t2'} as an additional hypothesis.  The names
+of the hypotheses have the form \s{simpleId}\fq{ImpliesHyp.}\s{number}, where
+\s{simpleId} is the current value of the \setlink{name-prefix} setting.
+\p
+The command \fq{resume by <=>} directs LP to resume the proof of the current
+conjecture using this method.  It is applicable only when the current
+conjecture has been reduced to a formula of the form \fq{t1 <=> t2} or of the
+form \fq{t1 = t2} when \fq{t1} and \fq{t2} are boolean-valued terms.

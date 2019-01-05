@@ -1,0 +1,23 @@
+\doc{Normalization}
+\ref{normalize}
+\ref{normalization}
+\ref{normal-form}
+
+A term is said to be \def{normalized}, or in \def{normal form}, with respect to
+a set of \llink{rewrite-rule}{rewrite rules} if none of those rules can be
+applied to the term.  The command \dflink{../commands/show}{show normal-form}
+displays the normal form of a term with respect to the active rewrite
+rules in LP's logical system.  See also the \cflink{normalize} command.
+\p
+If the rewriting system is not guaranteed to terminate (e.g., if the user
+oriented an equation into a rewrite rule manually), the normal form computation
+may not terminate.  When the rewriting system is not known to terminate, LP
+stops the rewriting process and issues a warning after a very large number of
+rewrites during a normal form computation.  See the \setlink{rewriting-limit}
+setting.
+\p
+If the rewriting system is not \glink{confluent}{confluent}, a term
+may have more than one normal form.
+\p
+LP uses normalization as a method of \plink{forward}{forward} and
+\plink{backward}{backward} inference.

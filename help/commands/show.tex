@@ -1,0 +1,33 @@
+\doc{The show command}
+\ref{show-command}
+
+The \def{show command} displays the results of certain operations without
+affecting the state of LP's logical system.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{show-command} ::= \f{show} \f{normal-form} \slink{../logic/term}{term}
+                      | \f{show} \f{unifiers}  \slink{../logic/term}{term},  \slink{../logic/term}{term}
+\end{verbatim}
+
+Note: The first argument of the \fq{show} command can be
+\dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+show n-f e \in (s \U s)
+show unifiers e*x, i(y)*y
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{show normal-form} command displays a \olink{normalization}{normal form}
+of the term with respect to the currently \dlink{../settings/activity}{active}
+rewrite rules.  If the \setlink{trace-level} is nonzero, LP also displays
+successive reductions of the term leading to the normal form.
+\p
+The \fq{show unifiers} command displays a complete set of most general 
+\olink{unify}{unifiers} of two terms.  It displays the unifying substitutions 
+along with the unifications of the terms, and it uses unification algorithms
+appropriate to the \llink{operator-theory}{theories} associated with the
+operators in the terms.
+

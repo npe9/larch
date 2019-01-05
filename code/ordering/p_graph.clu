@@ -1,0 +1,361 @@
+#extend
+
+% A "p_graph" is a set of objects of type "node", together with a set of
+% directed edges connecting these nodes with labels of type "label".  It is
+% possible to change the label "weak_label" on an edge, but not to change other
+% labels.  Additions and changes to a "p_graph" can be undone back to the last
+% "push" operation using the "pop" operation; they can also be preserved using
+% the "commit" operation.
+
+p_graph = cluster is new, insert_node, insert_edge, change_edge, commit,
+    		     delete_node, edge_value, is_edge, is_node, nodes, pop, 
+		     predecessors, push, successors, copy, _gcd, decode,
+		     encode
+    % where node in equal_type, label in equal_type
+
+    rep		= record[npushes: int, 		% number of unpopped pushes
+                         nodes: ni_arr]		% list of nodes
+    ni_arr     	= array[node_info]
+    node_info 	= record[node: node, 		% the node
+			 npushes: int, 		% "npushes" when node was added
+			 pred, succ: ei_arr]	% lists of adjacent nodes
+    ei_arr	= array[edge_info]
+    edge_info	= record[label: label,		% label on edge
+    			 node: node, 		% node at other end of edge
+			 npushes: int, 		% "npushes" when edge was added
+			 revert: int		% "npushes" of replaced label
+			 ]			%   (-1 if not replaced)
+			 
+    node 	= operator
+    label 	= sym
+    weak_label	= gt_eq_sym
+
+    % Rep invariants:
+    
+    % i <= j => pg.nodes[i].npushes <= pg.nodes[j].npushes <= pg.npushes
+    % for any "ei_arr" E in the rep
+    %    i <= j /\ E[i].revert < 0 => E[i].npushes <= E[j].npushes
+    %	 i <= j => E[i].revert <= E[j].npushes
+    %	 E[i].revert <= E[i].npushes <= pg.npushes
+    
+    
+    % Returns a new "p_graph" with no nodes or edges.
+
+    new = proc () returns (cvt)
+	return(rep${npushes: 0, nodes: ni_arr$[]})
+	end new
+
+
+    % Adds an unconnected node "n" to "g".  If "n" is already in "g", signals
+    % "exists".
+
+    insert_node = proc (g: cvt, n: node) signals (exists)
+	find_node(g.nodes, n, g.npushes)
+	   except when new (*): return end
+	signal exists
+	end insert_node
+
+
+    % Adds an edge from "from" to "to" with label "val" to "g".  Signals
+    % "exists" if there is already an edge from "from" to "to" in "g".  Adds
+    % "from" and "to" to "g" if they are not already nodes in "g".
+
+    insert_edge = proc (g: cvt, from: node, val: label, to: node)
+		    signals (exists)
+	% Add "to" to the successors of "from".
+	ni: node_info := find_node(g.nodes, from, g.npushes)
+	   except when new (ni1: node_info): ni := ni1 end
+	begin
+	    find_edge(ni.succ, to)
+	    signal exists
+	    end except when missing: end
+	ei: edge_info := edge_info${label: val, node: to, npushes: g.npushes, 
+				    revert: -1}
+	ei_arr$addh(ni.succ, ei)
+	% Add "from" to the predecessors of "to".
+	ni := find_node(g.nodes, to, g.npushes)
+	   except when new (ni1: node_info): ni := ni1 end
+	% Since "to" was not a successor of "from", "from" cannot be a
+	% predecessor of "to".
+	ei := edge_info${label: val, node: from, npushes: g.npushes,
+			 revert: -1}
+	ei_arr$addh(ni.pred, ei)
+	end insert_edge
+
+    
+    % (Internal procedure) Returns the "node_info" for "n" in "nodes".  If "n"
+    % is not in "nodes", adds it with "npushes = p" if "p >= 0" or signals
+    % "missing" if "p < 0".
+
+    find_node = proc (na: ni_arr, n: node, p: int) returns (node_info)
+		  signals (missing, new(node_info))
+	for ni: node_info in ni_arr$elements(na) do
+	    if ni.node = n then return(ni) end
+	    end
+	if p < 0 then signal missing end
+	ni: node_info := node_info${node: n,
+				    npushes: p, 
+				    pred: ei_arr$[],
+				    succ: ei_arr$[]}
+	ni_arr$addh(na, ni)
+	signal new(ni)
+	end find_node
+		
+    
+    % (Internal procedure)  Returns the "edge_info" for "n" in "edges".  If "n"
+    % is not in "edges", signals "missing".
+    
+    find_edge = proc (edges: ei_arr, n: node) returns (edge_info) 
+		  signals (missing)
+	for ei: edge_info in ei_arr$elements(edges) do
+	    if ei.node = n then return(ei) end
+	    end
+	signal missing
+	end find_edge
+
+    
+    % If there is already an edge in "g" from "from" to "to", changes its label
+    % from "weak_sym" to "val"; signals "impossible" if its label is not
+    % "weak_sym" or "val".  Adds the edge if it does not exist.  Adds "from"
+    % and "to" to "g" if they are not already nodes in "g".
+
+    change_edge = proc (g: cvt, from: node, val: label, to: node) 
+		    signals (impossible)
+	% Add "to" to the successors of "from".
+	ni: node_info := find_node(g.nodes, from, g.npushes)
+	   except when new (ni1: node_info): ni := ni1 end
+	ei: edge_info
+	new_edge: bool := true
+	begin
+	    ei := find_edge(ni.succ, to)
+	    if ei.label = val then return end
+	    if ei.label ~= weak_label then signal impossible end
+	    if ei.revert >= 0 then fail("p_graph$change_edge") end
+	    new_edge := false
+	    ei.label := val
+	    if ei.npushes ~= g.npushes then
+	       ei.revert := ei.npushes
+	       ei.npushes := g.npushes
+	       end
+	    end except when missing:
+			    ei := edge_info${label: val,
+					     node: to,
+					     npushes: g.npushes,
+					     revert: -1}
+			    ei_arr$addh(ni.succ, ei)
+		       end
+	% Add "from" to the predecessors of "to".
+	ni := find_node(g.nodes, to, g.npushes)
+	   except when new (ni1: node_info): ni := ni1 end
+	if new_edge
+	   then ei := edge_info${label: val, node: from, npushes: g.npushes,
+				 revert: -1}
+		ei_arr$addh(ni.pred, ei)
+	   else ei := find_edge(ni.pred, from)
+	        ei.label := val
+		if ei.npushes ~= g.npushes then
+		   ei.revert := ei.npushes
+		   ei.npushes := g.npushes
+		   end
+	   end except when missing: fail("p_graph$change_edge") end
+	end change_edge
+
+
+    % Decrements "g.npushes", as well as each "ni.npushes" and "ei.npushes"
+    % that has the value "np".  Signals "mismatch" if "np" does not equal the
+    % "g.npushes".  Signals "empty" if "np" is 0.
+    
+    commit = proc (g: cvt, np: int) signals (empty, mismatch)
+	if np ~= g.npushes then signal mismatch end
+	if np = 0 then signal empty end
+	for ni: node_info in ni_arr$elements(g.nodes) do
+	    if ni.npushes = np then ni.npushes := np - 1 end
+	    commit_edges(ni.pred, np)
+	    commit_edges(ni.succ, np)
+	    end
+	g.npushes := np - 1
+	end commit
+
+
+    % (Internal procedure)  Subsidiary to "commit".
+
+    commit_edges = proc (e: ei_arr, np: int)
+	for ei: edge_info in ei_arr$elements(e) do
+	    if ei.npushes = np then
+	       ei.npushes := np - 1
+	       ei.revert := -1
+	       end
+	    end
+	end commit_edges
+
+
+    % Deletes the node "n" from "g".  Signals "missing" if "n" is not in "g".
+    
+    delete_node = proc (g: cvt, n: node) signals (missing)
+	if ~is_node(up(g), n) then signal missing end
+	loc: int := 0
+	nloc: int
+	for ni: node_info in ni_arr$elements(g.nodes) do
+	    loc := loc + 1
+	    if ni.node = n
+	       then nloc := loc
+	       else delete_edges(ni.pred, n)
+		    delete_edges(ni.succ, n)
+	       end
+	    end
+	size: int := ni_arr$size(g.nodes) - 1
+	for i: int in int$from_to(nloc, size) do
+	    g.nodes[i] := g.nodes[i + 1]
+	    end
+	ni_arr$trim(g.nodes, 1, size)
+	end delete_node
+    
+    
+    delete_edges = proc (e: ei_arr, n: node)
+	count: int := 0
+	for ei: edge_info in ei_arr$elements(e) do
+	    count := count + 1
+	    if ei.node = n then
+	       size: int := ei_arr$size(e) - 1
+	       for i: int in int$from_to(count, size) do e[i] := e[i + 1] end
+	       ei_arr$trim(e, 1, size)
+	       return
+	       end
+	    end
+	end delete_edges
+
+
+    % Returns the label associated with the edge in "g" from "from" to "to".
+    % Signals "missing" if there is no such edge in "g".
+
+    edge_value = proc (g: cvt, from: node, to: node) returns (label)
+		   signals (missing)
+	return(find_edge(find_node(g.nodes, from, -1).succ, to).label)
+	   resignal missing
+	end edge_value
+
+
+    % Returns "true" iff there is an edge in "g" from "from" to "to".
+
+    is_edge = proc (g: cvt, from: node, to: node) returns (bool)
+	find_edge(find_node(g.nodes, from, -1).succ, to)
+	   except when missing: return(false) end
+	return(true)
+	end is_edge
+
+
+    % Returns "true" iff "n" is a node in "g".
+
+    is_node = proc (g: cvt, n: node) returns (bool)
+	find_node(g.nodes, n, -1)
+	   except when missing: return(false) end
+	return(true)
+	end is_node
+
+
+    % Yields each of the nodes in "g".
+
+    nodes = iter (g: cvt) yields (node)
+	for ni: node_info in ni_arr$elements(g.nodes) do yield(ni.node) end
+	end nodes
+
+
+    % Pops the state of "g" back to the preceding state on the stack created
+    % by "push".  Signals "mismatch" if "np" does not equal the height of the
+    % current stack.  Signals "empty" if the stack is empty.
+    
+    pop = proc (g: cvt, np: int) signals (empty, mismatch)
+	if np ~= g.npushes then signal mismatch end
+	if np = 0 then signal empty end
+	node_count: int := 0
+	for ni: node_info in ni_arr$elements(g.nodes) do
+	    if ni.npushes = np then % Done (by rep invariant)
+	       ni_arr$trim(g.nodes, 1, node_count)
+	       break
+	       end
+	    node_count := node_count + 1
+	    pop_edges(ni.pred, np)
+	    pop_edges(ni.succ, np)
+	    end
+	g.npushes := g.npushes - 1
+	end pop
+
+
+    % (Internal procedure)  Subsidiary to "pop".
+
+    pop_edges = proc (e: ei_arr, np: int)
+	edge_count: int := 0
+	for ei: edge_info in ei_arr$elements(e) do
+	    if ei.npushes = np then
+	       if ei.revert >= 0
+		  then ei.npushes := ei.revert
+		       ei.revert := -1
+		       ei.label := weak_label
+		  else ei_arr$trim(e, 1, edge_count)
+		       break
+		  end
+	       end
+	    edge_count := edge_count + 1
+	    end
+	end pop_edges
+
+
+    % Yields all the pairs "<from, e>" such that there is an edge in "g" from
+    % "from" to "n" with label "e".
+
+    predecessors = iter (g: cvt, n: node) yields (node, label)
+	ni: node_info := find_node(g.nodes, n, -1)
+	   except when missing: return end
+	for ei: edge_info in ei_arr$elements(ni.pred) do
+	    yield(ei.node, ei.label)
+	    end
+	end predecessors
+
+
+    % Pushes the state of "g" on a stack, so that a subsequent "pop" can
+    % restore "g" to this state.  Returns the height of the stack.
+    
+    push = proc (g: cvt) returns (int)
+	g.npushes := g.npushes + 1
+	return(g.npushes)
+	end push
+    
+    
+    % Yields all the pairs "<to, e>" such that there is an edge in "g" from
+    % "n" to "to" with label "e".
+
+    successors = iter (g: cvt, n: node) yields (node, label)
+	ni: node_info := find_node(g.nodes, n, -1)
+	   except when missing: return end
+	for ei: edge_info in ei_arr$elements(ni.succ) do
+	    yield(ei.node, ei.label)
+	    end
+	end successors
+
+
+    % Returns a new "p_graph" containing the same nodes and edges as "g".
+    
+    copy = proc (g: cvt) returns (cvt)
+	return(rep$copy(g))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	% where node in gcd_type, label in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+               signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+
+    end p_graph

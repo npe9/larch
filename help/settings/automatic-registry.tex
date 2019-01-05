@@ -1,0 +1,26 @@
+\doc{The automatic-registry setting}
+\ref{automatic-registry-setting}
+
+The \def{automatic-registry} setting controls whether LP asks the user to
+confirm extensions to the registry when formulas are oriented into rewrite
+rules. 
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-automatic-registry-command} ::= \f{set automatic-registry} ( \f{on} | \f{off} )
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set auto-reg off
+\end{verbatim}
+
+\head{2}{Usage}
+
+If \fq{automatic-registry} is \fq{on} (the default), then LP automatically
+extends its registry, if necessary, when using a
+\dlink{../ordering/registered}{registered ordering} to orient formulas into 
+rewrite rules.  If it is \fq{off}, LP prompts the user to select one of a list
+of possible extensions whenever the registry must be extended.  When it is
+\fq{off}, LP also gives users the opportunity to divide
+\dlink{../ordering/interactive}{incompatible} equations and to orient formulas
+manually.

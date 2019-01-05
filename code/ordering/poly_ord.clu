@@ -1,0 +1,95 @@
+#extend
+
+% The procedures "poly_quiet", "poly_user", and "poly_auto" in this file
+% comprise the "poly_ordering".  This ordering interprets operators using
+% tuples of polynomials, and it interprets an equation by constructing two
+% tuples of polynomials corresponding to left and right sides of the equation.
+% If one of these tuples can be shown to be lexicographically greater than the
+% other, then the equation can be ordered.
+
+
+% If "eq" can be ordered using the polynomial interpretations in "reg" subject
+% to any restriction imposed by the user, returns the resulting rewrite rule.
+% Otherwise, signals "cannot_orient".  Equations entered by the user with "->"
+% instead of "==", or reduced forms of those equations, may not be ordered from
+% right to left.  If "eq" is such an equation, this routine signals
+% "cannot_orient" even if the polynomial ordering returns the result that the
+% left side of "eq" is "less than" the right side.
+
+poly_quiet = proc (reg: registry, eq: equation) returns (rewrite_rule)
+	       signals (cannot_orient)
+    % ENHANCE: Do something with quantifiers	       
+    if eq.has_quantifiers then signal cannot_orient end
+    poly_interp$apply(reg, eq)
+       except when l2r, r2l (rr: rewrite_rule): return(rr)
+	      when cannot_orient, reversible (*): signal cannot_orient
+	      end
+    end poly_quiet
+
+
+% Attempts to order "eq".  First attempts to order "eq" without user
+% interaction.  If this fails, presents an appropriate list of choices to the
+% user (see the "ordering_choice" procedure).
+
+poly_user = proc (p: printer, reg: registry, stab: symtab, eq: equation) 
+	      returns (order_action)
+    own sug: suggestions := suggestions$[]
+    tracer$present_equation(eq)
+
+    rev: bool := false
+    % ENHANCE: Do something with quantifiers	       
+    if ~eq.has_quantifiers then
+       bad_index: int
+       left, right: polynomial
+       poly_interp$apply(reg, eq)
+	  except
+	     when l2r (rr: rewrite_rule):
+		  printer$text(p, "\nOrdered automatically.\n")
+		  return(order_action$make_auto(rr))
+	     when r2l (rr: rewrite_rule):
+		  printer$text(p, "\nOrdered automatically from right to left.\n")
+		  return(order_action$make_auto(rr))
+	     when reversible (n: int, p1, p2: polynomial):
+		  rev := true
+		  bad_index := n
+		  left := p1
+		  right := p2
+	     when cannot_orient (n: int, p1, p2: polynomial):
+		  bad_index := n
+		  left := p1
+		  right := p2
+	     end
+
+       % Show the polynomial.
+
+       if reg.n_polys = 1
+	  then printer$text(p, "\nThe")
+	  else printer$text(p, "\nPolynomial " || int$unparse(bad_index))
+	       printer$text(p, " in the")
+	  end
+       printer$text(p, " polynomial interpretation of this equation is\n")
+       printer$start_block(p)
+       p.indent := 2
+       polynomial$print(p, left)
+       printer$text(p, " >? ")
+       polynomial$print(p, right)
+       printer$finish_block(p)
+       printer$text(p, "\nwhich cannot be proved.\n")
+       end
+    return(ordering_choice[suggestions]
+	       (eq, reg, p, stab, sug, sug, rev, false, dsmpos_choice))
+
+    end poly_user
+
+
+% An "automatic" version of the polynomial ordering.  If "choice" is greater
+% than one, signals "cannot_orient" (because we had to back up in the
+% termination proof and we don't know how to change the polynomials on the
+% fly).  If "choice" is one, attempts to order "eq" using "poly_quiet".
+
+poly_auto = proc (reg: registry, eq: equation, choice: int)
+	      returns (rewrite_rule) signals (cannot_orient)
+    if choice > 1 then signal cannot_orient end
+    return(poly_quiet(reg, eq))
+       resignal cannot_orient
+    end poly_auto

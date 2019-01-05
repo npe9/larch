@@ -1,0 +1,66 @@
+/*** Page elements ***/
+
+/* Hyperlinks */
+a {
+  color: 			#C05757;
+  text-decoration:      	none;
+}
+
+a:hover { 
+  color: 			#C03131;
+  text-decoration: 	        underline;
+}   
+
+body {
+  font-family: 			"Arial", sans-serif;
+  font-size:                    14pt;
+}
+
+dd { 
+  margin:           	        0px 10px 20px 30px;
+  text-align:       	        left;
+}
+
+dl {
+  margin:                       1.2em 0;
+}
+
+dt {
+  margin:           	        0px 10px 5px 1.12em;
+  text-align:       	        left;
+  color:                        blue;
+}
+
+li {
+  margin-bottom:        	5px;
+  text-decoration:      	none;
+  }
+
+ul {
+  margin-top:            	5px;
+}
+
+tt {
+ font-family: 			 monospace;
+}
+
+/* For "<tag class="center"> */
+.center {
+  text-align:                   center;
+}
+
+
+/* For <div id="nav"> */
+#nav {
+  display:                      inline;
+  float:                        right;
+  margin-top:                   13pt;
+}
+
+/* For <div id="trailer"> */
+#trailer {
+  margin-left:			6em;
+  text-align:                   left;
+  color: 			#828282;
+}
+

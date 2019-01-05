@@ -1,0 +1,58 @@
+#extend
+
+% Processes the "thaw" command.  Prompts the user for the name of a file
+% and then attempts to read that file as a frozen state of LP in object
+% form.  If there is no error, the frozen state replaces the current one in
+% "i" and the tracer is reset.
+
+c_thaw = proc (i: interactive) signals (error)
+    msg = "File containing frozen system (default suffix is `.lpfrz'): "
+    fn: file_name := get_existing_file_name(i.io, msg, i.search_path,
+					    "lpfrz", help_thaw)
+       resignal error
+       except when no_response: return end
+    check_end_of_line(i.io)
+       resignal error
+    fname: string := file_name$unparse(fn)
+    % Free up space on the heap
+    i.symtab := symtab$[]
+    i.sys := system$[]
+    i.prover := prover${symtab: i.symtab, system: i.sys}    
+    d: dumped_rep := gc_read[dumped_rep](fn)
+       except when not_possible (why: string):
+		   printer$error(i.p)
+		   printer$text(i.p, "\nCan't thaw from `" || fname)
+		   printer$text(i.p, "': " || why || "\n")
+		   signal error
+	      end
+    if d.a_freeze_version ~= lp_freeze_version() then
+       printer$error(i.p)
+       printer$text(i.p, "\nCan't thaw from `" || fname)
+       printer$text(i.p, "' because the format of LP's data structures ")
+       printer$text(i.p, "has changed between " || d.a_freeze_version)
+       printer$text(i.p, " and " || lp_freeze_version() || ".\n")
+       signal error
+       end
+    sort$set_owns(d.sorts)
+    i.history_size := d.history_size
+    i.io.history := d.history
+    i.prover := d.prover
+    i.symtab := d.symtab
+    i.sys := d.sys
+    term$reset_enode(term_true())
+    term$reset_enode(term_false())
+    tracer$reset(i.symtab)
+    printer$text(i.p, "\nSystem thawed from `" || fname || "'.\n")
+    settings$thaw(i, d.settings)
+    iodev$reset_script_indent(i.io)
+    prover$set_indentation(i)
+    end c_thaw
+
+
+% A help procedure for use with "thaw".
+
+help_thaw = proc (io: iodev)
+    prints = iodev$prints
+    prints(io, "Enter the name of a file that contains a frozen system, ")
+    prints(io, "or type <ret> to quit.  The default suffix is `.frz'.\n")
+    end help_thaw

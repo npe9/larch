@@ -1,0 +1,552 @@
+#extend
+
+% This file contains procedures for applying hardwired reductions.  
+
+% Returns a simplification of "t" obtained by applying one of the following 
+% rewrite rules at the top level of "t":
+%     x /\ true -> x		x \/ false -> x		x <=> true -> x
+%     x /\ false -> false	x \/ true -> true
+%     x /\ x -> x		x \/ x -> x		x <=> x -> true
+%     x /\ ~x -> false	        x \/ ~x -> true	        x <=> ~x -> false
+%							~x <=> ~y -> x <=> y
+% If "is_hardwired(hw, rewrite_iff_false)" is true, also uses
+%     x <=> false -> ~x
+% Regards "=" as an alternate spelling of "<=>".  Assumes that "t.root" is an
+% AC boolean operator and that "t" is flattened (this assumption simplifies
+% checking for matches of "x /\ x" and "x /\ ~x").  Signals "not_reduced" if
+% "t" is not reduced.
+
+reduce_ac_bool_op = proc (t: term, hw: int) returns (term) 
+		      signals (not_reduced)
+    identity: term := term_true()
+    identity_op: operator := op_true()
+    negated_identity: term := term_false()
+    negated_identity_op: operator := op_false()
+    simple: bool := true
+    root: operator := t.root
+    args: term_seq := t.args
+    if root = op_or() then
+       identity := term_false()
+       identity_op := op_false()
+       negated_identity := term_true()
+       negated_identity_op := op_true()
+     elseif root = op_iff() cor root = op_bool_equals() then 
+       simple := false
+     elseif root ~= op_and() then
+       signal not_reduced
+     end
+    first_not: int := 0
+    last_not: int := -1
+    delete: bool_arr := bool_arr$fill(0, term_seq$size(args) + 1, false)
+    delete[0] := true
+    n_deleted: int := 0
+    falsify: bool := false	% Notes "false" introduced by "x <=> ~x"
+    for n: int in term_seq$indexes(args) do
+	t1: term := args[n]
+	begin
+	    root1: operator := t1.root
+	    if root1 = identity_op then
+	       % Delete constant from "x /\ true", "x \/ false", "x <=> true"
+	       delete[n] := true
+	       n_deleted := n_deleted + 1
+	       continue
+	     elseif root1 = negated_identity_op then
+	       % Handle "x /\ false", "x \/ true", "x <=> false"
+	       if simple then return(negated_identity) end
+	       if is_hardwired(hw, rewrite_iff_false) then
+		  delete[n] := true
+		  n_deleted := n_deleted + 1
+		  falsify := ~falsify
+		  continue
+		  end
+	     elseif root1 = op_not() then
+	       % Note negated argument for next pass
+	       last_not := n
+	       if first_not = 0 then first_not := last_not end
+	     end
+	    end except when wrong_tag: end
+	if ~delete[n - 1] cand t1 = args[n - 1] then
+	   % Handle "x /\ x", "x \/ x", "x <=> x"
+	   delete[n] := true
+	   n_deleted := n_deleted + 1
+	   if ~simple then 
+	      delete[n - 1] := true
+	      n_deleted := n_deleted + 1
+	      end
+	   end
+	end
+    next_index: int := 1
+    next_arg: term := args[next_index]
+    for not_index: int in int$from_to(first_not, last_not) do
+	if delete[not_index] then continue end
+	not_arg: term := args[not_index].args[1]
+	if term$is_funct(not_arg) cand not_arg.root = root
+	   then % Handle "x /\ y /\ ~(x /\ y)", etc.
+	        args1: term_seq := not_arg.args
+		delete := remove_arg_subseq(args1, args, not_index,
+					    n_deleted, delete)
+		   except when not_subseq: continue end
+		if simple then return(negated_identity) end
+		n_deleted := n_deleted + term_seq$size(args1) + 1
+	   else % Handle "x /\ ~x", "x \/ ~x", "x <=> ~x"
+	        while delete[next_index] cor next_arg < not_arg do
+		    next_index := next_index + 1
+		    next_arg := args[next_index]
+		    end
+		if next_arg ~= not_arg then continue end
+		if simple then return(negated_identity) end
+		delete[next_index] := true
+		delete[not_index] := true
+		n_deleted := n_deleted + 2
+	   end
+	falsify := ~falsify
+	end except when bounds: end
+    new_args: term_arr 
+    same_args: bool := true
+    if ~simple then % Handle "~x <=> ~y"
+       found_not: int := 0
+       for not_index: int in int$from_to(first_not, last_not) do
+	   if delete[not_index] then continue end
+	   if found_not = 0
+	      then found_not := not_index
+	      else if same_args then
+		      same_args := false
+		      new_args := term_seq$s2a(args)
+		      end
+		   new_args[found_not] := new_args[found_not].args[1]
+		   new_args[not_index] := new_args[not_index].args[1]
+		   found_not := 0
+	      end
+	   end
+       end
+    if n_deleted = 0
+       then if same_args then signal not_reduced end
+       else new_args := term_arr$predict(1, term_seq$size(args) - n_deleted)
+	    for i: int in term_seq$indexes(args) do
+		if ~delete[i] then term_arr$addh(new_args, args[i]) end
+		end
+       end
+    t2: term
+    n: int := term_arr$size(new_args)
+    if n = 0 then
+       if falsify
+	  then return(negated_identity)
+	  else return(identity)
+	  end
+     elseif n = 1 then t2 := new_args[1]
+     else t2 := term$make_funct(root, term_seq$a2s(new_args))
+     end
+    if falsify
+       then return(term1(op_not(), t2))
+       else return(t2)
+       end
+    end reduce_ac_bool_op
+
+
+% Returns a simplification of "t" obtained by applying the following rewrite
+% rule at the top level of "t":
+%     "x = x -> true"
+% Assumes "t.root" is "=".  Signals "not_reduced" if "t" is not reduced.
+    
+reduce_equals = proc (t: term) returns (term) signals (not_reduced)
+    if t.args[1] = t.args[2] then return(term_true()) end
+    signal not_reduced
+    end reduce_equals
+    
+    
+% Returns a simplification of "t" obtained by applying one of the following 
+% rewrite rules at the top level of "t":
+%     if(true, x, y) -> x
+%     if(false, x, y) -> y
+%     if(x, y, y) -> y
+%     if(~x, y, z) -> if(x, z, y)
+% If "is_hardwired(hw, rewrite_if_to_bool)" is true, also uses
+%     if(x, true, y) -> x \/ y
+%     if(x, false, y) -> ~x /\ y
+%     if(x, y, true) -> x => y
+%     if(x, y, false) -> x /\ y
+% If "is_hardwired(hw, simplify_if)" is true, also uses the metarule
+%     if(t1, t2[t1], t3[t1]) -> if(t1, t2[true], t3[false])
+% when "t1" occurs as a subterm of "t2 or "t3".  Assumes that "t.root" is "if".
+% Signals "not_reduced" if "t" is not reduced.
+
+reduce_if = proc (t: term, osys: op_system, stab: symtab, hw: int) 
+	      returns (term) signals (not_reduced)
+    own truth_values: term_seq := term_seq$[term_true(), term_false()]
+    arg1: term := t.args[1]
+    arg2: term := t.args[2]
+    arg3: term := t.args[3]
+    if arg1.root = op_true() then return(arg2)
+     elseif arg1.root = op_false() then return(arg3)
+     elseif arg1.root = op_not() then
+       return(term3(t.root, arg1.args[1], arg3, arg2))
+     end except when wrong_tag: end
+    if is_hardwired(hw, rewrite_if_to_bool) then
+       if arg2.root = op_true() then
+	  return(flatten(term2(op_or(), arg1, arg3), osys)) % ENHANCE: flatten1
+	elseif arg2.root = op_false() then
+	  return(flatten(term2(op_and(), term1(op_not(), arg1), arg3), osys))
+	end except when wrong_tag: end
+       if arg3.root = op_true() then
+	  return(term2(op_implies(), arg1, arg2))
+	elseif arg3.root = op_false() then
+	  return(flatten(term2(op_and(), arg1, arg2), osys))
+	end except when wrong_tag: end
+       end
+    if arg2 = arg3 then return(arg2) end
+	
+    % Try "if-simplification"
+    if ~is_hardwired(hw, simplify_if) then signal not_reduced end
+    reduced: bool := false
+    args: term_arr := term_seq$s2a(t.args)
+    for i: int in int$from_to(2, 3) do
+	args[i] := embed(args[1], args[i], osys)
+	   except when no_match: continue end
+	s: substitution := substitution$[]
+	s[embed_var()] := truth_values[i-1]
+	args[i] := substitution$apply(s, args[i], stab)
+	reduced := true
+	end
+    if reduced
+       then return(term$make_funct(t.root, term_seq$a2s(args)))
+       else signal not_reduced
+       end
+    end reduce_if
+
+
+% If "is_hardwired(hw, rewrite_if_out)" is true and "t.root" is not
+% "if", returns a reduction of "t" obtained by applying the following metarule
+% at the top level of "t":
+%    g(..., if(x, y, z), ...) -> if(x, g(..., y, ...), g(..., z, ...))
+% Signals "not_reduced" if "t" is not reduced.
+
+% ENHANCE: If we decide to use this metarule again, we should check how
+% "t.root" and "if" compare in the registry to see if it is safe to order the
+% rewrite rule in this direction.
+    
+distribute_if_out = proc (t: term, r: registry, hw: int) returns (term) 
+		      signals (not_reduced)
+    if ~is_hardwired(hw, rewrite_if_out) cor is_op_if(t.root) then 
+       signal not_reduced
+       end except when wrong_tag: signal not_reduced end
+    for i: int in term_seq$indexes(t.args) do
+	if ~is_op_if(t.args[i].root) then continue end
+	   except when wrong_tag: continue end
+	args1: term_seq := t.args[i].args
+	arg_t: term :=
+	    term$make_funct(t.root, term_seq$replace(t.args, i, args1[2]))
+	arg_f: term :=
+	    term$make_funct(t.root, term_seq$replace(t.args, i, args1[3]))
+	t2: term :=
+	    term$make_funct(t.args[i].root, term_seq$[args1[1], arg_t, arg_f])
+	return(t2)
+	end except when wrong_tag: end
+    signal not_reduced
+    end distribute_if_out
+
+
+% Returns a simplification of "t" obtained by applying one of the following 
+% rewrite rules at the top level of "t":
+%     true => x -> x
+%     false => x -> true
+%     ~x => x -> x
+%     x => true -> true
+%     x => ~x -> ~x
+%     x => x -> true
+% If "is_hardwired(hw, rewrite_implies_false)" is true, also uses
+%     x => false -> ~x
+% Assumes "t.root" is "=>".  Signals "not_reduced" if "t" is not reduced.
+    
+reduce_implies = proc (t: term, hw: int) returns (term) signals (not_reduced)
+    arg1: term := t.args[1]
+    arg2: term := t.args[2]
+    if arg1.root = op_true() then return(arg2)
+     elseif arg1.root = op_false() then return(term_true())
+     elseif arg1.root = op_not() cand arg1.args[1] = arg2 then return(arg2)
+     end except when wrong_tag: end
+    if arg2.root = op_true() then return(term_true())
+     elseif arg2.root = op_false() 
+	      cand is_hardwired(hw, rewrite_implies_false) then
+       return(term1(op_not(), arg1))
+     elseif arg2.root = op_not() cand arg2.args[1] = arg1 then return(arg2)
+     end except when wrong_tag: end
+    if arg1 = arg2 then return(term_true()) end
+    signal not_reduced
+    end reduce_implies
+
+    
+% Returns a simplification of "t" obtained by applying the rewrite rule
+%    x ~= y -> ~(x = y)
+% at the top level.
+
+reduce_neq = proc (t: term, stab: symtab) returns (term) signals (not_reduced)
+    if is_op_neq(t.root) then
+       t1: term := t.args[1]
+       return(term1(op_not(), term2(op_equals(t1.sort, stab), t1, t.args[2])))
+       end
+    signal not_reduced 
+    end reduce_neq
+
+
+% Returns a simplification of "t" obtained by applying one of the following 
+% rewrite rules at the top level of "t":
+%    ~true -> false
+%    ~false -> true
+%    ~(~x) -> x
+% NOTE: The following reductions are not performed at present, because they
+% lengthened the proof scripts (both in terms of text and execution time) for
+% the examples mutex.lp and ring2.lp.
+%    ~(x /\ y) -> ~x \/ ~y
+%    ~(x \/ y) -> ~x /\ ~y
+%    ~(x => y) -> x /\ ~y
+%    ~\A x P -> \E x ~P
+%    ~\E x P -> \A x ~P
+% Assumes "t.root = op_not()".  Signals "not_reduced" if "t" is not reduced.
+    
+reduce_not = proc (t: term, stab: symtab) returns (term) signals (not_reduced)
+    t1: term := t.args[1]
+    op: operator := t1.root_or_quant
+       except when wrong_tag: signal not_reduced end
+    if op = op_true() then return(term_false())
+     elseif op = op_false() then return(term_true())
+     elseif op = op_not() then return(t1.args[1])
+			       %     elseif op = op_and() then return(deMorgan(op_or(), t1.args))
+			       %     elseif op = op_or() then return(deMorgan(op_and(), t1.args))
+			       %     elseif op = op_implies() then
+			       %       args: term_seq := t1.args
+			       %       return(term2(op_and(), args[1], term1(op_not(), args[2])))
+			       %     elseif is_op_exists(op) then
+			       %       return(term$make_quant(quantifier$make_universal(t1.quant.var, stab),
+			       %			      term1(op_not(), t1.subform)))
+			       %     elseif is_op_forall(op) then
+			       %       return(term$make_quant(quantifier$make_existential(t1.quant.var, stab),
+			       %			      term1(op_not(), t1.subform)))
+     else signal not_reduced
+     end
+    end reduce_not
+
+
+% (Local procedure) Returns a term obtained by applying "op" to the negations
+% of the terms in "ts".  Assumes: "ts" is a sequence of boolean terms.
+
+deMorgan = proc (op: operator, ts: term_seq) returns (term)
+    args: term_arr := term_seq$s2a(ts)
+    for i: int in term_arr$indexes(args) do
+	args[i] := term1(op_not(), args[i])
+	end
+    return(term$make_funct(op, term_seq$a2s(args)))
+    end deMorgan
+
+
+% (Local procedure) Assumes "args[n]" is "~op(args1)", where "op" is "/\",
+% "\/", or "<=>", and that the "missing" terms indicated in "delete" have
+% already been deleted from "args".  Signals "not_subseq" if "args1" is not a
+% subset of the undeleted "args".  Otherwise returns an updated version of
+% "delete" with "args[n]" and the terms in "args1" marked as being deleted.
+
+remove_arg_subseq = proc (args1, args: term_seq, n, missing: int,
+			  delete: bool_arr) returns (bool_arr)
+		      signals (not_subseq)
+    available: int := term_seq$size(args) - missing - 1
+    needed: int := term_seq$size(args1)
+    if needed > available then signal not_subseq end
+    delete1: bool_arr := bool_arr$copy(delete)
+    delete1[n] := true
+    next1: int := 1
+    for next: int in term_seq$indexes(args) do
+	if delete1[next] then continue end
+        available := available - 1
+	if args[next] = args1[next1] then
+	   delete1[next] := true
+	   next1 := next1 + 1
+	   needed := needed - 1
+	   end
+    	if needed > available then signal not_subseq end
+	end except when bounds: end
+    if needed > 0 then signal not_subseq end
+    return(delete1)
+    end remove_arg_subseq
+
+
+% Returns "true" if "hw" indicates that reduction "r" should be applied.
+
+is_hardwired = proc (hw, r: int) returns (bool)
+    return(~i_get1(hw, r))
+    end is_hardwired
+
+
+% Returns a simplification of "t" obtained by applying the following rewrite
+% metarule at the top level of "t":
+%	\E x \E x1 ... \E xn (x = t /\ P(x)) -> \E x1 ... \E xn P(t)
+% Here "P(x)" is an arbitrary term, "t" is a term not containing "x", and
+% "P(t)" is the result of substituting "t" for "x" in "P(x)" with appropriate
+% changes of bound variables to prevent a quantifier in "P" from capturing a 
+% variable in "t".
+
+reduce_exists = proc (t: term, stab: symtab) returns (term) 
+		  signals (not_reduced)
+    return(reduce_exists_work(t, operator$v2c(t.quant.var), stab))
+       resignal not_reduced
+    end reduce_exists
+
+reduce_exists_work = proc (t: term, vc: operator, stab: symtab) returns (term) 
+		       signals (not_reduced)
+    if t.quant.is_existential then
+       return(term$make_quant(t.quant, reduce_exists_work(t.subform, vc, stab)))
+       end resignal not_reduced
+       except when wrong_tag: end
+    for t1: term, i: int in conjuncts(t) do
+	t2: term := value_for_var(vc, t1)
+	   except when none: continue end
+        if i = 0 then return(term_true()) end
+	t := remove_conjunct(t, i)
+	sigma: substitution := substitution$[]
+	sigma[operator$c2v(vc)] := t2.unrenamed
+	return(substitution$apply(sigma, t.unrenamed, stab).renamed)
+	end 
+    signal not_reduced
+    end reduce_exists_work
+
+
+
+% Returns "t1" if "t" has the form "vc = t1", where "t1" does not contain "vc".
+% Otherwise signals "none".  Note: The code is designed to work when "t" has
+% the form "vc <=> t1 <=> t2".
+
+value_for_var = proc (vc: operator, t: term) returns (term) signals (none)
+    if ~is_op_equals(t.root) cand t.root ~= op_iff() then signal none end
+       except when wrong_tag: signal none end
+    i: int := 0
+    for t1: term in term_seq$elements(t.args) do
+	i := i + 1
+	if t1.root = vc then
+	   args: term_seq := delete_at_seq[term](t.args, i)
+	   if term_seq$size(args) = 1
+	      then t1 := args[1]
+	      else t1 := term$make_funct(t.root, args)
+	      end
+	   if op_set$exists(t1.ops, vc) then continue end
+	   return(t1)
+	   end
+	end
+    signal none
+    end value_for_var
+
+
+% Returns a simplification of "t" obtained by applying the following rewrite
+% metarules at the top level of "t":
+%  \A x \A x1 ... xn (x = t /\ P(x) => Q(x))    -> \A x1 ... xn (P(t) => Q(t))
+%  \A x \A x1 ... xn (P(x) => ~(x = t) \/ Q(x)) -> \A x1 ... xn (P(t) => Q(t))
+%  \A x \A x1 ... xn (~(x = t) \/ Q(x))         -> \A x1 ... xn Q(t)
+% Here "P(x)" and "Q(x)" are arbitrary terms, "t" is a term not containing "x",
+% and "P(x)" and "Q(x)" are the results of substituting "t" for "x" in "P(x)"
+% and "Q(x)" with appropriate changes of bound variables to prevent a
+% quantifier in "P" or "Q" from capturing a variable in "t".
+
+reduce_forall = proc (t: term, stab: symtab) returns (term) 
+		  signals (not_reduced)
+    return(reduce_forall_work(t, operator$v2c(t.quant.var), stab))
+       resignal not_reduced
+    end reduce_forall
+
+reduce_forall_work = proc (t: term, vc: operator, stab: symtab) returns (term) 
+		       signals (not_reduced)
+    if t.quant.is_universal then
+       return(term$make_quant(t.quant, reduce_forall_work(t.subform, vc, stab)))
+       end resignal not_reduced
+       except when wrong_tag: end
+    t2: term
+    if t.root = op_implies() 
+       then hyp: term := t.args[1]
+	    con: term := t.args[2]
+	    for t1: term, i: int in conjuncts(hyp) do
+		t2 := value_for_var(vc, t1)
+		   except when none: continue end
+		exit found(term2(op_implies(), remove_conjunct(hyp, i), con))
+		end
+	    for t1: term, i: int in disjuncts(con) do
+		if t1.root = op_not() then
+		   t2 := value_for_var(vc, t1.args[1])
+		   exit found(term2(op_implies(), 
+			            hyp, remove_disjunct(con, i)))
+		   end except when none, wrong_tag: end
+		end
+       else for t1: term, i: int in disjuncts(t) do
+		if t1.root = op_not() then
+		   t2 := value_for_var(vc, t1.args[1])
+		   exit found(remove_disjunct(t, i))
+		   end except when none, wrong_tag: end
+		end
+       end except when found (t3: term):
+		       sigma: substitution := substitution$[]
+		       sigma[operator$c2v(vc)] := t2.unrenamed
+		       return(substitution$apply(sigma, t3.unrenamed, stab).renamed)
+		  when wrong_tag:
+		  end
+    signal not_reduced
+    end reduce_forall_work
+
+
+
+% Like "reduce_forall", but for reducing a formula with an implicit universal
+% quantifier over a variable not in "vs".
+
+reduce_implicit_forall = proc (t: term, vs: var_set, stab: symtab) 
+			   returns (term) signals (not_reduced)
+    t2: term
+    v: variable
+    if t.root = op_implies() 
+       then hyp: term := t.args[1]
+	    con: term := t.args[2]
+	    for t1: term, i: int in conjuncts(hyp) do
+		v, t2 := var_and_value(t1, vs)
+		   except when none: continue end
+		exit found(term2(op_implies(), remove_conjunct(hyp, i), con))
+		end
+	    for t1: term, i: int in disjuncts(con) do
+		if t1.root = op_not() then
+		   v, t2 := var_and_value(t1.args[1], vs)
+		   exit found(term2(op_implies(), 
+			            hyp, remove_disjunct(con, i)))
+		   end except when none, wrong_tag: end
+		end
+       else for t1: term, i: int in disjuncts(t) do
+		if t1.root = op_not() then
+		   v, t2 := var_and_value(t1.args[1], vs)
+		   exit found(remove_disjunct(t, i))
+		   end except when none, wrong_tag: end
+		end
+       end except when found (t3: term):
+		       sigma: substitution := substitution$[]
+		       sigma[v] := t2
+		       return(substitution$apply(sigma, t3, stab))
+		  when wrong_tag:
+		  end
+    signal not_reduced
+    end reduce_implicit_forall
+
+
+% Returns "(v, t1)" if "t" has the form "v = t1", where "v" is a variable not
+% in "vs" and "t1" does not contain "v".  Otherwise signals "none".  Note: The
+% code is designed to work when "t" has the form "v <=> t1 <=> t2".
+
+var_and_value = proc (t: term, vs: var_set) returns (variable, term) 
+		  signals (none)
+    if ~is_op_equals(t.root) cand t.root ~= op_iff() then signal none end
+       except when wrong_tag: signal none end
+    i: int := 0
+    for t1: term in term_seq$elements(t.args) do
+	i := i + 1
+	v: variable := t1.var
+	   except when wrong_tag: continue end
+	args: term_seq := delete_at_seq[term](t.args, i)
+	if term_seq$size(args) = 1
+	   then t1 := args[1]
+	   else t1 := term$make_funct(t.root, args)
+	   end
+	if ~var_set$exists(t1.fvars, v) cand ~var_set$exists(vs, v) then
+	   return(v, t1)
+	   end
+	end
+    signal none
+    end var_and_value

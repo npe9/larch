@@ -1,0 +1,199 @@
+#extend 
+
+% A "clause_list" is an undoable set of clauses.  A set of clauses is
+% consistent if each of its clauses is nonempty.  
+
+% A set of clauses is "simplified" with respect to an equivalence relation over
+% a set of literals iff
+% (a) no clause in contains a literal equivalent to "true" or to "false",
+% (b) no clause in contains two equivalent literals, and
+% (c) no clause in contains two literals, one of which is equivalent to the 
+%     negation of the other.
+
+
+clause_list = cluster is new, insert, simplify, prevalent_literal, 
+    		         get_size, print, save, undo, _gcd
+
+    rep = record[clauses: clause_arr, undo: undo_arr]
+		 
+    clause_arr = array[clause]
+    undo_arr   = array[undo_info]
+    undo_info  = oneof[push: int, remove: remove_info, simplify: simplify_info]
+    remove_info = record[clause: clause, pos: int]
+    simplify_info = record[clause: clause, lit: literal]
+
+    % A(r) = {r.clauses[1], ..., r.clauses[r.clauses.high]}
+    
+    % NOTE: "r.clauses" can have duplicate elements, because it would be more
+    % expensive to maintain "no duplicates" than to deal with duplicates.
+
+
+    % Returns a new, empty set of clauses
+    
+    new = proc () returns (cvt)
+        return(rep${clauses: clause_arr$[],
+		    undo: undo_arr$[]})
+	end new
+
+
+    % Modifies: cls.clauses
+    % Effects:  cls'.clauses = insert(cls^.clauses, c)
+    
+    insert = proc (cls: cvt, c: clause) 
+	clause_arr$addh(cls.clauses, c)
+	end insert
+
+
+    % Modifies: cls, lits
+    % Ensures:  (a) cls' \union asserted(lits') is satisfiable iff
+    %		    cls^ \union asserted(lits^) is satisfiable
+    %           (b) cls' is simplified with respect to lits'
+    %           (c) cls' contains no unit clauses
+    % Yields all literals in asserted(lits') ~ asserted(lits^).  Signals
+    % contradiction iff asserted(lits') is inconsistent or if cls' contains an
+    % empty clause.
+    
+    simplify = iter (cls: cvt, lits: literal_table) yields (literal) 
+		 signals (contradiction)
+	new_units: bool := true
+        while new_units do
+	    new_units := false
+	    index: int := 0
+	    while true do
+		index := index + 1
+		c: clause := cls.clauses[index]
+		for l: literal in clause$elements(c) do
+		    if literal_table$is_asserted(lits, l.negation) then
+		       clause$remove_current_literal(c)
+		       si: simplify_info := simplify_info${clause: c, lit: l}
+		       undo_arr$addh(cls.undo, undo_info$make_simplify(si))
+		       end
+		    if literal_table$is_asserted(lits, l) then 
+		       remove_clause(cls, index)
+		       index := index - 1
+		       exit removed
+		       end
+		    end except when removed: continue end
+		if clause$empty(c) then signal contradiction end
+		if clause$is_unit(c) then
+		   new_units := true
+		   literal_table$assert(lits, c.literal)
+		   remove_clause(cls, index)
+		   index := index - 1
+		   yield(c.literal)
+		   end
+		end except when bounds: end
+	    end resignal contradiction
+	end simplify
+
+
+    % (Internal procedure)  Removes clause number "index" from "cls.clauses".
+    % Remembers which clause was removed in "cls.undo".
+    
+    remove_clause = proc (cls: rep, index: int)
+	c: clause := cls.clauses[index]
+	ri: remove_info := remove_info${clause: c, pos: index}
+	undo_arr$addh(cls.undo, undo_info$make_remove(ri))
+	c := clause_arr$remh(cls.clauses)
+	cls.clauses[index] := c
+	   except when bounds: end
+	end remove_clause
+
+
+    % Returns the positive literal, other than "true" or "false", that occurs
+    % (modulo the equivalence relation defined by "lits") most frequently
+    % (either positively or negatively) in "cls".  Signals "none" if no literal
+    % other than "true" or "false" occurs in "cls".
+    
+    prevalent_literal = proc (cls: cvt, lits: literal_table) 
+			      returns (literal) signals (none)
+	for l: literal in literal_table$classes(lits) do l.count := 0 end
+	max_count: int := 0
+	result: literal
+	for c: clause in clause_arr$elements(cls.clauses) do
+	    for l: literal in clause$elements(c) do
+		if ~l.sense then l := l.negation end
+		l := l.class_rep
+		count: int := l.count + 1
+		l.count := count
+		if count > max_count then
+		   max_count := count
+		   result := l
+		   end
+		end
+	    end
+	if max_count = 0 then signal none else return(result) end
+	end prevalent_literal
+    
+    
+    % Returns the number of literals in "cls".
+    
+    get_size = proc (cls: cvt) returns (int)
+	count: int := 0
+	for c: clause in clause_arr$elements(cls.clauses) do
+	    count := count + c.size
+	    end
+	return(count)
+	end get_size
+    
+
+    % Returns a string representation for "cls" (for debugging only)
+    
+    print = proc (pr: printer, cls: cvt, stab: symtab) 
+	printer$text(pr, "~{~2I")
+	printed: bool := false
+	for c: clause in clause_arr$elements(cls.clauses) do
+	    if printed then printer$text(pr, "~1A~{/\\~ ") end
+	    printer$puts(pr, "(")
+	    clause$print(pr, c, stab)
+	    printer$text(pr, ")")
+	    if printed then printer$text(pr, "~}") end
+	    printed := true
+	    end
+	printer$text(pr, "~}")
+	end print
+    
+    
+    % Dumps "cls" on the standard output (for debugging).
+    
+    dump = proc (cls: cvt)
+	pr: printer := tracer$get_printer()
+	print(pr, up(cls), tracer$get_symtab())
+	printer$newline(pr)
+	end dump
+
+    
+    % Modifies: cls
+    % Effects:  cls' = save(cls^)
+    
+    save = proc (cls: cvt)
+        undo_arr$addh(cls.undo, 
+	              undo_info$make_push(clause_arr$size(cls.clauses)))
+	end save
+
+
+    % Modifies: cls
+    % Effects:  cls' = undo(cls^)
+    
+    undo = proc (cls: cvt) signals (empty) 
+    	while true do
+	    tagcase undo_arr$remh(cls.undo)
+	       tag remove (ri: remove_info):
+		   clause_arr$addh(cls.clauses, ri.clause)
+	       tag simplify (si: simplify_info):  
+	           clause$insert_unique(si.clause, si.lit)
+	       tag push (n: int): 	   
+		   clause_arr$trim(cls.clauses, 1, n)
+		   break
+	       end
+	    end resignal empty
+	end undo
+
+    
+    % Necessary for "gc_dump".
+ 
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end clause_list

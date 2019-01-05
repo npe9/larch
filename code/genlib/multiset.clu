@@ -1,0 +1,276 @@
+#extend
+
+% A multiset is a collection of elements "{e1, ..., en}" of type "t", where the
+% elements need not be distinct.  The operation "t$equal" is used to determine
+% if two elements are the same.  Two elements are said to be "distinct" in a
+% multiset if they are not "t$equal" to one another.
+
+multiset = cluster [t: type] is
+	new, cons, insert, delete, remove, merge, intersection, sub, count,
+	elements, sorted_elements,
+	total_elements, empty, size, total_size, equal, similar, similar1, 
+	copy1, copy
+	    where t in equal_type
+
+    % The rep associates each element of type "t" with the number of times it
+    % occurs in the multiset (if it occurs at least once in the multiset).
+
+    rep  = array[pair]
+    pair = record[elem: t, count: int]
+    
+    % Abstraction function
+    %   A(r) = {r[i].count copies of r[i].elem: rep$low(r) <= i <= rep$high(r)}
+    
+    % Representation invariant:
+    %  r[i].count > 0         when rep$low(r) <= i <= rep$high(r)
+    %  r[i].elem ~= r[j].elem when rep$low(r) <= i < j <= rep$high(r)
+
+    t_multi  = multiset[t]
+    t_seq    = sequence[t]
+    pair_seq = sequence[pair]
+
+    
+    % Returns a new, empty multiset.
+
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+
+
+    % Returns a new multiset consisting of the elements in "e".  This operation
+    % is provided so that a sequence-like constructor can be used to build a
+    % multiset.  This facility is provided by the "#extend" mode of the CLU
+    % compiler.
+
+    cons = proc (ts: t_seq) returns (t_multi)
+	m: t_multi := new()
+	for e: t in t_seq$elements(ts) do insert(m, e) end
+	return(m)
+	end cons
+
+
+    % Inserts "e" into "m".
+
+    insert = proc (m: cvt, e: t)
+	begin
+	    p: pair := find_pair(m, e)
+	    p.count := p.count + 1
+	    end except when missing: rep$addh(m, pair${elem: e, count: 1}) end
+	end insert
+
+
+    % Removes one occurrence of "e" in "m".  Signals "missing" if there are no
+    % occurrences of "e" in "m".
+
+    delete = proc (m: cvt, e: t) signals (missing)
+	for i: int in rep$indexes(m) do
+	    p: pair := m[i]
+	    if p.elem = e then
+	       if p.count = 1
+		  then delete_at_arr[pair](m, i)
+		  else p.count := p.count - 1
+		  end
+	       return
+	       end
+	    end
+	signal missing
+	end delete
+
+
+    % Removes all occurrences of "e" in "m".  Signals "missing" if there are no
+    % occurrences of "e" in "m".
+
+    remove = proc (m: cvt, e: t) signals (missing)
+	for i: int in rep$indexes(m) do
+	    p: pair := m[i]
+	    if p.elem = e then
+	       delete_at_arr[pair](m, i)
+	       return
+	       end
+	    end
+	signal missing
+	end remove
+
+
+    % Inserts each element of "m2" into "m1".  Leaves "m2" unchanged.
+
+    merge = proc (m1, m2: cvt)
+	for p2: pair in rep$elements(m2) do
+            begin
+  	        p1: pair := find_pair(m1, p2.elem)
+  	        p1.count := p1.count + p2.count
+	        end except when missing: rep$addh(m1, pair$copy1(p2)) end
+	    end
+	end merge
+
+
+    % Returns a multset with all elements that occur in both "m1" and "m2",
+    % with the number of occurences being the smaller of the two.
+
+    intersection = proc (m1, m2: cvt) returns (cvt)
+	inter: rep := rep$[]
+	for p1: pair in rep$elements(m1) do
+	    for p2: pair in rep$elements(m2) do
+		if p1.elem ~= p2.elem then continue end
+		rep$addh(inter, pair${elem: p1.elem,
+				      count: int$min(p1.count, p2.count)})
+		end
+	    end
+	return(inter)
+	end intersection
+
+
+    % Returns the multiset formed by removing from "m1" each element that
+    % occurs in "m2", the number of times it occurs in "m2".  Thus, the
+    % relationship "m1 + m2 = (m1 - m2) + (m1 ^ m2) + (m2 - m1)" is true.
+
+    sub = proc (m1, m2: cvt) returns (cvt)
+	diff: rep := rep$[]
+	for p1: pair in rep$elements(m1) do
+	    for p2: pair in rep$elements(m2) do
+		if p1.elem = p2.elem then
+		   if p2.count < p1.count then
+		      rep$addh(diff, pair${elem: p1.elem,
+			   	           count: p1.count - p2.count})
+		      end
+		   exit found
+		   end
+		end except when found: continue end
+	    rep$addh(diff, pair$copy1(p1))
+	    end
+	return(diff)
+	end sub
+
+
+    % Returns the number of occurences of "e" in "m".
+
+    count = proc (m: cvt, e: t) returns (int)
+	return(find_pair(m, e).count)
+	   except when missing: return(0) end
+	end count
+
+
+    % Yields each element in "m", together with the number of times that it
+    % occurs in "m".  Elements are yielded in the same order each time this
+    % operation is invoked on a given multiset, provided the multiset does not
+    % change between invocations and provided that the "sorted_elements" iter
+    % is not invoked on "m".
+
+    elements = iter (m: cvt) yields (t, int)
+	for p: pair in rep$elements(m) do
+	    yield(p.elem, p.count)
+	    end
+	end elements
+
+    
+    % Like "elements", except that it yields elements in order of increasing
+    % multiplicity.
+
+    sorted_elements = iter (m: cvt) yields (t, int)
+	quicksort[pair](m, 1, rep$high(m), cmp_count)
+	for p: pair in rep$elements(m) do
+	    yield(p.elem, p.count)
+	    end
+	end sorted_elements
+    
+    
+    % (Internal procedure)  Used by "sorted_elements".
+
+    cmp_count = proc (p1, p2: pair) returns (bool)
+    	return(p1.count > p2.count)
+	end cmp_count
+    
+
+    % Yields each element of "m" the number of times it occurs.
+
+    total_elements = iter (m: t_multi) yields (t)
+	for elem: t, i: int in elements(m) do
+	    for j: int in int$from_to(1, i) do yield(elem) end
+	    end
+	end total_elements
+	
+
+    % Returns "true" iff "m" contains no elements.
+
+    empty = proc (m: cvt) returns (bool)
+	return(rep$empty(m))
+	end empty
+
+
+    % Returns the number of distinct elements in "m".
+
+    size = proc (m: cvt) returns (int)
+	return(rep$size(m))
+	end size
+
+
+    % Returns the number of elements in "m", counting each element the number
+    % of times it occurs.
+
+    total_size = proc (m: t_multi) returns (int)
+	total: int := 0
+	for elem: t, i: int in elements(m) do total := total + i end
+	return(total)
+	end total_size
+
+
+    % Returns "true" iff "m1" and "m2" are the same object.
+
+    equal = proc (m1, m2: cvt) returns (bool)
+	return(m1 = m2)
+	end equal
+
+
+    % Returns "true" iff "m1" and "m2" represent the same abstract object.
+
+    similar = proc (m1, m2: cvt) returns (bool)
+		where t in similar_type
+	return(same_elements_arr[pair](m1, m2, pair$similar))
+	end similar
+
+
+    % Returns "true" iff the number of occurrences of any given element is the
+    % same in "m1" and "m2".
+
+    similar1 = proc (m1, m2: cvt) returns (bool)
+	if rep$size(m1) ~= rep$size(m2) then return(false) end
+	for e1: t, count1: int in elements(up(m1)) do
+	    if count(up(m2), e1) ~= count1 then return(false) end
+	    end
+	return(true)
+	end similar1
+
+
+    % Returns a new multiset with the same contents as "m".  (Note: rep$copy1
+    % does not work because "m" and "copy1(m)" should not share pairs in their
+    % reps.)
+
+    copy1 = proc (m: cvt) returns (cvt)
+	ans: rep := rep$predict(1, rep$size(m))
+	for p: pair in rep$elements(m) do
+	    rep$addh(ans, pair$copy1(p))
+	    end
+	return(ans)
+	end copy1
+
+
+    % Returns a new multiset containing a copy of the contents of "m".
+
+    copy = proc (m: cvt) returns (cvt)
+		where t in copy_type
+	return(rep$copy(m))
+	end copy
+
+
+    % (Internal procedure.)  Returns the pair "p" in "m" such that "p.elem" is
+    % "e".  Signals "missing" if there is no such pair.
+
+    find_pair = proc (m: rep, e: t) returns (pair) signals (missing)
+	for p: pair in rep$elements(m) do
+	    if p.elem = e then return(p) end
+	    end
+	signal missing
+	end find_pair
+
+
+    end multiset

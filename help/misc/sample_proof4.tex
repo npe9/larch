@@ -1,0 +1,103 @@
+\doc{Sample proofs: three theorems about subset}
+
+The next three theorems in \dflink{set1.lp}{set1.lp} establish some basic
+properties of the subset relation.  They illustrate how LP's proof techniques
+combine to establish conjectures.  The user types a few commands to select
+proof strategies (e.g., a proof by induction or a proof by cases).  LP
+generates subgoals appropriate for the selected strategies and fills in most of
+the details automatically.  Sometimes the user needs to tell LP to work a
+little harder near the end of a proof to fill in the remaining details.
+\begin{verbatim}
+set proof-methods normalization, =>
+prove e \in x /\ x \subseteq y => e \in y by induction on x
+      resume by case ec = e1c
+        complete
+qed
+\end{verbatim}
+The \clink{set} command directs LP to use an automatic proof technique whenever
+the user does not specify one explicitly.  Here, it directs LP to try to prove
+conjectures first by rewriting, and then to assume the hypotheses of
+implications and try again.  This setting for \fq{proof-methods} is a good
+alternative to the standard setting, which consists of \fq{normalization}
+alone. 
+\head{2}{A proof by induction}
+The user directs LP to begin the proof of the conjecture by
+\plink{by-induction}{induction} on the variable \f{x} instead of by using one
+of the automatic proof methods.  LP creates two subgoals for the proof by
+induction, a \def{basis subgoal} for the generator \f#{}# of sort \fq{S} and an
+\def{induction subgoal} for the generator \fq{insert}; it also formulates an
+\def{induction hypothesis} that can be used in the proof of the induction
+subgoal.
+\begin{verbatim}
+Creating subgoals for proof by structural induction on `x'
+Basis subgoal:
+  Subgoal 1: e \in {} /\ {} \subseteq y => e \in y
+Induction constant: xc
+Induction hypothesis:
+  setTheoremsInductHyp.1: e \in xc /\ xc \subseteq y => e \in y
+Induction subgoal:
+  Subgoal 2: e \in insert(e1, xc) /\ insert(e1, xc) \subseteq y => e \in y
+\end{verbatim}
+LP proves the basis subgoal automatically by rewriting the term \f#e \in {}# to
+\fq{false}, but it needs further guidance to prove the induction subgoal. 
+\head{2}{A proof technique for use with implications}
+LP uses the automatic \pflink{of-implication}{=>} proof technique to create
+a subgoal for the induction step:
+\begin{verbatim}
+Creating subgoals for proof of =>
+New constants: e1c, ec, yc
+Hypothesis:
+  setTheoremsImpliesHyp.1:
+     (ec = e1c \/ ec \in xc) /\ e1c \in yc /\ xc \subseteq yc
+Subgoal:
+  ec \in yc
+\end{verbatim}
+The hypothesis for this subgoal is the result of reducing the hypothesis of the
+implication in the induction subgoal, after replacing its variables by new
+constants.
+\head{2}{A proof by cases}
+The user must issue two more commands to finish the proof.  The first directs
+LP to divide the proof into two \pflink{by-cases}{cases}, depending on whether
+the formula \fq{ec = e1c} is true or not.
+\begin{verbatim}
+Creating subgoals for proof by cases 
+Case hypotheses:
+  setTheoremsCaseHyp.1.1: ec = e1c
+  setTheoremsCaseHyp.1.2: ~(ec = e1c)
+Same subgoal for all cases:
+  ec \in yc
+\end{verbatim}
+LP finishes the first case by using the case hypothesis to rewrite the subterm
+\fq{ec} of the subgoal \fq{ec \in yc} to \fq{e1c}; then it rewrites 
+\fq{e1c \in yc} to \fq{true} using the second conjunct of the implication 
+hypothesis.
+\p
+In the second case, LP uses the case hypothesis and its hardwired rules to
+rewrite the first conjunct of the implication hypothesis to \fq{ec \in xc}, at
+which point it gets stuck.  The \clink{complete} command directs LP to use what
+it knows to finish the proof by deriving a few critical-pair equations.  First,
+LP derives \fq{xc \subseteq y => ec \in y} as critical pair between 
+\fq{ec \in xc} and the induction hypothesis .  Then it obtains \fq{ec \in yc} 
+as a critical pair between this fact and the last conjunct of the implication
+hypothesis.  This finishes the proof by cases, the proof of the implication for
+the induction step of the conjecture, and the proof of the conjecture itself.
+\head{2}{Two more theorems about subset}
+Similar techniques can be used to prove two more basic theorems about subset.
+In the first, the automatic \pflink{of-implication}{=>} proof technique
+introduces \fq{xc = yc} as a subgoal.  To finish the proof, the user proves a
+lemma (using the \pflink{of-biconditional}{<=>} technique) suggested by the
+principle of extensionality.
+\begin{verbatim}
+prove x \subseteq y /\ y \subseteq x => x = y
+    prove e \in xc <=> e \in yc by <=>
+        complete
+        complete
+    instantiate x by xc, y by yc in extensionality
+qed
+\end{verbatim}
+In the second, LP fills in all the details in a proof by induction without
+requiring further guidance from the user.
+\begin{verbatim}
+prove (x \union y) \subseteq z <=> x \subseteq z /\ y \subseteq z by induction on x
+qed
+\end{verbatim}

@@ -1,0 +1,33 @@
+\doc{Brute-force orderings}
+\ref{brute-force-ordering}
+\ref{left-to-right-ordering}
+\ref{manual-ordering}
+\ref{either-way-ordering}
+
+LP's \def{brute-force} ordering procedures give users complete control over the
+direction in which formulas are oriented into 
+\llink{rewrite-rule}{rewrite rules}, but provide no guarantees about 
+termination.
+
+\head{2}{The \fq{left-to-right} ordering}
+
+This ordering method causes LP to orient equations into rewrite rules from left
+to right, provided the results are valid rewrite rules.  Equations that cannot
+be oriented from left to right are left unoriented.
+
+\head{2}{The \fq{either-way} ordering}
+
+This ordering method causes LP to orient equations into rewrite rules from left
+to right, provided the results are valid rewrite rules.  If an equation cannot
+be oriented from left to right, but can be from right to left, the method
+causes it to be oriented in that direction; otherwise it is left unoriented.
+
+\head{2}{The \fq{manual} ordering}
+
+When the \setlink{automatic-registry} setting is \fq{off}, this ordering method
+causes LP to \dlink{interactive}{interact} with the user to select an
+orientation for each equation.  When the setting is \fq{on}, this ordering
+method does not orient any formulas into rewrite rules.
+
+
+

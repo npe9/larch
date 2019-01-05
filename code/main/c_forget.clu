@@ -1,0 +1,37 @@
+#extend
+
+% Processes the "forget" command, which allows the user to clear the critical
+% pair list, saving some space.  (Extra generality in command interface is to
+% provide for forgetting other kinds of information.)
+
+c_forget = proc (i: interactive) signals (error)
+    forget_ct = command_table[what]
+    what = oneof[all, pairs: null]
+    what_act = struct[name: string, choice: what]
+    what_act_seq = sequence[what_act]
+    own what_acts: forget_ct :=
+	    forget_ct${help: forget_ct$help, delims: " \t", label: "item",
+		       as: what_act_seq$[
+			       what_act${name: "pairs",
+					 choice: what$make_pairs(nil)}]}
+    f: what
+    if iodev$pending_input(i.io) then
+       f := forget_ct$choose(what_acts, "\nInformation to forget: ", i.io)
+	  resignal error
+	  except when no_response, end_of_file: return end
+       else f := what$make_all(nil)
+       end
+    check_end_of_line(i.io)
+       resignal error
+    pairs: bool := false
+    tagcase f
+       tag all:   pairs := true
+       tag pairs: pairs := true
+       end
+    if pairs then
+       system$forget_pairs(i.sys)
+       printer$text(i.p, "\nCritical pair list cleared.\n")
+       end
+    end c_forget
+
+

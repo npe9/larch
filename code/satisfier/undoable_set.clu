@@ -1,0 +1,90 @@
+#extend
+
+% An "undoable_set" is a nonempty stack "s1", ..., "sn" of sets such that "si" is a
+% subset of "s_i+1".
+
+undoable_set = cluster [t: type] is new, insert, insert_unique, elements, 
+     	                     save, undo, _gcd
+	    where t has equal: proctype (t, t) returns (bool),
+	    	        _gcd: proctype (t, gcd_tab) returns (int)
+
+    
+    rep       = array[undo_info]
+    undo_info = oneof[push: null, elem: t]
+    push      = undo_info$make_push(nil)
+    
+    % A(r): n is one more than the number of pushes in r
+    %       e is in si iff r[j] = e for some j before the nth push in r
+
+    % Invariant: r contains no duplicate elements
+    
+    
+    % Effects: top(result) = {} /\ fresh(result)
+    
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+  
+    
+    % Modifies: s
+    % Effects:  s' = insert(top(s^), elem)
+ 
+    insert = proc (s: cvt, elem: t) 
+	if ~is_in(up(s), elem) then rep$addh(s, undo_info$make_elem(elem)) end
+	end insert
+
+    
+    % Requires: ~(elem \in top(s^))
+    % Modifies: s
+    % Effects:  s' = insert(top(s^), elem)
+    
+    insert_unique = proc (s: cvt, elem: t)
+	rep$addh(s, undo_info$make_elem(elem))
+	end insert_unique
+    
+    
+    % Yields all elements of "top(s)", each exactly once.
+
+    elements = iter (s: cvt) yields (t)
+	for ui: undo_info in rep$elements(s) do
+	    yield(undo_info$value_elem(ui)) except when wrong_tag: end
+	    end
+	end elements
+    
+
+    % Modifies: s
+    % Effects:  s' = push(s^, top(s^))
+    
+    save = proc (s: cvt)
+	rep$addh(s, push)
+	end save
+    
+
+    % Modifies: s
+    % Effects:  s' = pop(s^)
+    % Signals:  empty when size(s^) = 0
+
+    undo = proc (s: cvt)  signals (empty)
+        while undo_info$is_elem(rep$remh(s)) do
+	    end except when bounds: signal empty end
+	end undo
+
+    
+    % (Internal)
+    % Effects: result = (elem \in top(s^))
+    
+    is_in = proc (s: undoable_set[t], elem: t) returns (bool)
+	for e: t in elements(s) do
+	    if e = elem then return(true) end
+	    end
+	return(false)
+	end is_in
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end undoable_set

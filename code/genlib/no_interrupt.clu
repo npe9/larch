@@ -1,0 +1,23 @@
+% This file contains procedures to be used in place of those in "interrupt.clu"
+% when running a program under the CLU debugger.  If there were some way for a
+% CLU program to tell whether it was being run under the debugger, this file
+% would not be necessary.
+
+
+% Does nothing so that the CLU debugger, and not the program, will catch
+% interrupts.
+
+OS_init_interrupt = proc ()
+    end OS_init_interrupt
+
+
+% Returns "false".
+
+OS_check_interrupt = proc () returns (bool)
+    return(false)
+    end OS_check_interrupt
+
+% NOP
+
+OS_self_interrupt = proc ()
+    end OS_self_interrupt

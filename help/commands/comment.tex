@@ -1,0 +1,21 @@
+\doc{The comment command}
+\ref{comment-command}
+
+The \def{comment command} provides a way for users to annotate scripts and
+logs.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{comment-command} ::= \f{%} \slink{../symbols/symbols}{string}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+% Axioms for finite sets
+\end{verbatim}
+
+\head{2}{Usage} 
+LP ignores all input from the character (\f{%}) introducing a comment to the
+end of the line.  These characters appear in any \setlink{script} or
+\setlink{log} file active at the time of the command, but do not otherwise
+affect LP's operation.

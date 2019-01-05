@@ -1,0 +1,61 @@
+clause.clu
+clause_list.clu
+cnf.clu
+equiv_relation.clu
+literal.clu
+literal_table.clu
+undoable_set.clu
+
+TheoryB.clu
+rat.clu
+
+
+Satisfier.equ
+  improve "other data types"
+TheoryE.clu
+TheoryR.clu
+egraph.clu
+expression.clu
+extend.clu
+ground_system.clu
+model.clu
+numeric_matrix.clu
+numeric_ops.clu
+numeric_theory.clu
+rat_terms.clu
+simplex.clu
+subterm_graph.clu
+tableau.clu
+theory_system.clu
+unknown.clu
+unknowns.clu
+
+
+TheoryB = cluster is assert_incomplete, 
+                     get_literal, remaining, get_num_remaining,
+		     get_num_known, get_num_of_lits, 
+		     unparse
+
+TheoryE = cluster is add_subterms, contradicts,
+                     normalize, normalize_selected_subt, unparse, 
+
+
+TheoryR = cluster is add_subterms, is_int_ge, equality,
+                     multiplicative, canonize, canonize_term, 
+
+
+ground_system = cluster is display, transform, get_literal,
+			   get_model, get_formulas, get_depth, 
+			   get_case_split, get_interesting_term,
+                           copy
+
+		gsys	bool	equal	real
+		----	----	-----	----
+new		yes	yes	yes	yes
+add		yes	yes
+relevant		yes	yes	yes
+assert		yes	yes	yes	yes
+model			yes	yes	yes
+save		yes	yes	yes	yes
+undo		yes	yes	yes	yes
+_gcd		yes	yes	yes	yes

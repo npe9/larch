@@ -1,0 +1,71 @@
+#extend
+
+% Processes the "make" command.  Gets a list of attributes and names from the
+% user; sets the attributes for the named equations, rewrite, and deduction
+% rules.
+    
+c_make = proc (i: interactive) signals (error)
+    ctt = command_table[string]
+    act = struct[name, choice: string]
+    act_seq = sequence[act]
+    own ct: ctt :=
+	    ctt${help: ctt$help, delims: " \t", label: "attribute",
+		 as: act_seq$[
+			 act${name: "active",    choice: "activate"},
+			 act${name: "ancestor-immune",
+			      choice: "make ancestor-immune"},
+			 act${name: "passive",   choice: "deactivate"},
+			 act${name: "immune",    choice: "immunize"},
+			 act${name: "nonimmune", choice: "deimmunize"},
+			 act${name: "inactive",  choice: "deactivate"}]}
+    own keys: keyword_table := keyword_table$["conjecture"]
+    m: string := ctt$choose(ct, "\nAttribute to change: ", i.io)
+       resignal error
+       except when no_response, end_of_file: return end
+    key: string, ns: name_set :=
+	query$one_name_set(i, "objects to " || m, keys, false)
+       except when none: return
+	      when no_names (key1: string): key := key1
+					    ns := name_set$universal()
+	      when error: aborted(i.p, "error in names")
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    b: bool := key = ""
+    % NOTE: If the user types "make active conjecture thm", the "ns" that
+    % query$one_name_set returns will not contain the name of the current
+    % conjecture (because it is not a fact in "i.sys").
+    if m = "activate" then
+       if b
+	  then system$change_activity(i.sys, ns, true)
+	  else prover$change_activity(i.prover, ns, true)
+	  end
+       prover$make_inferences(i, stabilize_task_mode)
+	  except when interrupt, proved: end
+     elseif m = "deactivate" then
+       if b
+	  then system$change_activity(i.sys, ns, false)
+	  else prover$change_activity(i.prover, ns, false)
+	  end
+     elseif m = "immunize" then
+       if b
+	  then system$change_immunity(i.sys, ns, immunity_on)
+	  else prover$change_immunity(i.prover, ns, immunity_on)
+	  end
+     elseif m = "deimmunize" then
+       if b
+	  then system$change_immunity(i.sys, ns, immunity_off)
+	  else prover$change_immunity(i.prover, ns, immunity_off)
+	  end
+       prover$make_inferences(i, stabilize_task_mode)
+	  except when interrupt, proved: end
+     elseif m = "make ancestor-immune" then
+       if b
+	  then system$change_immunity(i.sys, ns, immunity_anc)
+	  else prover$change_immunity(i.prover, ns, immunity_anc)
+	  end
+       prover$make_inferences(i, stabilize_task_mode)
+	  except when interrupt, proved: end
+     end
+    end c_make
+	
+

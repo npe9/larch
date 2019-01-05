@@ -1,0 +1,74 @@
+\doc{Overloaded identifiers}
+\ref{overloaded}
+\ref{overloading}
+\ref{disambiguation}
+\ref{disambiguates}
+
+LP allows users to overload identifiers for \dlink{variable}{variables} and
+\dlink{operator}{operators}.  For example, LP allows the simple identifier 
+\fq{s} to be used both as a function \fq{s:Nat->Nat} and as a variable 
+\fq{s:Set}, and it allows the operator identifier \f{-} to be used both as a 
+prefix operator and as an infix operator.  LP automatically overloads the
+predefined \dlink{equality}{equality} and \dlink{conditional}{conditional}
+operators (\f{=}, \f{~=}, and \f{if__then__else__}), once for each declared
+sort.  There are only two restrictions on overloading:
+\begin{itemize}
+\item
+The same identifier cannot be used to name a variable and a constant (i.e., a
+nullary operator) of the same sort.
+\item
+The logical, equality, and conditional operators (except for \f{~}) cannot be
+overloaded with user-defined signatures.
+\end{itemize}
+
+LP disambiguates user input by using context to associate each identifier with
+a previous declaration.  When context permits more than one association, users
+must supply additional annotations to resolve the ambiguity.
+
+
+\head{2}{Disambiguating terms}
+
+Users can resolve potential ambiguities in terms by qualifying selected
+subterms with their sorts.  For example, given the declarations
+\begin{verbatim}
+declare variables x, y, z: Bool, x, y, w: Nat
+\end{verbatim}
+the terms \fq{x = z} and \fq{x = w} are unambiguous, but the term \fq{x = y} is
+ambiguous.  It can be disambiguated in several ways, for example, as 
+\fq{x:Nat = y} or as \fq{x = y:Bool}.  Given the additional declarations
+\begin{verbatim}
+declare operators f:Nat->Nat, f:Nat->Bool, f:Bool->Bool
+\end{verbatim}
+the term \fq{f(z)} is unambiguous, but the term \fq{f(w)} needs to be
+disambiguated as either \fq{f(w):Nat} or \fq{f(w):Bool}, and the term \fq{f(x)}
+needs to be disambiguated as one of \fq{f(x:Bool)}, \fq{f(x:Nat):Nat}, or
+\fq{f(x:Nat):Bool}.
+\p
+Another potential ambiguity in terms arises from the treatment LP accords to
+the period symbol (\f{.}).  For example, given the declarations
+\begin{verbatim}
+declare operators
+  1, min:                       -> Nat
+  a:                            -> Array
+  __.__:             Array, Nat -> Nat
+  __ .size, __ .min: Array      -> Nat
+  ..
+\end{verbatim}
+the terms \fq{a.size} and \fq{a.1} are unambiguous, but \fq{a.min} could
+represent an application of either the infix operator \fq{.} or the postfix
+operator \fq{.min}.  In such cases, LP disambiguates \fq{a.min} as containing a
+postfix operator; users who want \fq{.} to refer to the infix operator can
+write \fq{a.(min)}.
+
+\head{2}{Disambiguating operators outside of terms}
+
+Users can resolve an ambiguous operator identifier by qualifying it with its
+signature or by decorating it with one or two markers (\f{__}) to indicate
+whether it is an infix, postfix, or prefix operator.
+
+\head{2}{See also}
+
+\begin{itemize}
+\item The \setlink{display-mode} setting
+\item The \setlink{write-mode} setting
+\end{itemize}

@@ -1,0 +1,65 @@
+                     Correctness proof for an arbiter tree
+
+                        Garland, Guttag, and Staunstrup
+
+     An arbiter is a frequently used circuit for providing indivisible access
+to some shared resource, e.g., a bus or a peripheral.  The arbiter described
+here is implemented as a tree in which all nodes (including the root and the
+leaves) are identical.  The arbitration algorithm is based on passing a unique
+token around the tree.  An external process, connected to a leaf, may use the
+resource only when that leaf has the token.
+
+     Each node x has two children, L(x) and r(x), and three pairs of
+connections, one for its parent and one for each child.  A connection pair
+consists of two signals, req and gr.  A node x communicates with its children
+via the signals req(L(x)), gr(L(x)), req(R(x)), and gr(R(x)).  Connections are
+used according to the following four-phase protocol.
+
+1.  A node raises the request (req signal to its parent) to indicate that it
+    wants to get the token.
+
+2.  When the grant is raised (gr signal from the parent) the node has the
+    token, which it may use or pass down the tree.
+
+3.  The token is handed back by lowering the request.
+
+4.  Lowering the grant implies the end of one cycle; i.e., now a new request
+    can be made.
+
+     There are six actions possible in the arbiter tree:requestparent (request
+the token), grantleft and grantright (pass the token to a child), doneleft and
+doneright (receive the token back from a child), and done (return the token to
+the parent).  Each action is described by a deduction rule that
+
+(a)  imposes a precondition on the signals req and gr in the pre-state for some
+     node and its children,
+
+(b)  defines the signals req and gr in the post-state for that node and its 
+     children in terms of the signals in the pre-state, and
+
+(c)  describes which other signals are left unchanged.
+
+     The correctness proof in arbiterG.lp shows that each of these actions
+preserves an invariant.  The invariant states that an arbiter node grants
+access to at most one child, and that access is only granted to a child when
+the parent has requested and been granted access.
+
+     The correctness proof in arbiterL.lp is a localized version of that in
+arbiterG.lp.
+
+     An additional proof in mutex.lp shows that, on any level in the arbiter
+tree, at most one node has the token.  This establishes that the arbiter tree
+guarantees mutual exclusion.
+
+
+References
+----------
+
+Stephen J. Garland, John V. Guttag, and Jorgen Staunstrup, ``Verification of
+VLSI circuits using LP,'' Proceedings of an IFIP Working Conference on the
+Fusion of Hardware Design and Verification, North Holland, 1988.
+
+Jorgen Staunstrup, Stephen J. Garland, and John V. Guttag, ``Compositional
+verification of VLSI circuits,'' Proceedings of an International Workshop on
+Automatic Verification Methods for Finite State Systems,'' Grenoble, June 1989,
+Springer Lecture Notes in Computer Science 407.

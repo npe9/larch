@@ -1,0 +1,31 @@
+\doc{The help command}
+\ref{help-command}
+\ref{topic}
+
+The \def{help command} provides information about the use of LP.  This same
+information can also be viewed using a web browser starting at the home page '
+in \fq{~lp/help/introduction.html}.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{help-command} ::= \f{help} \s{topic}
+\sd{topic}        ::= \slink{../symbols/symbols}{blank-free-string}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+help ?
+help commands
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{help} command provides a detailed explanation of the requested topic,
+which can be specified by an unambiguous prefix.  The command \fq{help ?}
+produces a terse list of topics for which help is available.  The command
+\fq{help commands} produces a summary of the LP commands.  The command
+\fq{help lp} produces a list of general topics for which help is available.
+\p
+If you don't get information on the topic you expected after typing a command
+like \fq{help rewrite}, try typing \fq{help rewrite-} to see if there is
+further information about related topics (e.g., \fq{rewrite-command} or
+\fq{rewrite-rule}).

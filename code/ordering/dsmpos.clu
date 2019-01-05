@@ -1,0 +1,959 @@
+#extend
+
+% DSMPOS is an ordering on terms based on RPOS (N. Dershowitz, "Orderings for
+% Term-Rewriting Systems," Theoretical Computer Science 17 (1982), 279-301).
+% It differs in that it is monotonic in the status, and in that it can compute
+% complete sets of minimal extensions to the registry that suffice to order
+% terms that cannot be ordered with that registry.  See R. Forgaard, "A Program
+% for Generating and Analyzing Term Rewriting Systems," Master's Thesis, MIT
+% Laboratory for Computer Science, September 1984 for details.
+
+
+stat_hyps 	= array[sx_seq]
+sx_seq 		= sequence[stat_ext]
+sx_arr 		= array[stat_ext]
+stat_ext 	= struct[op: operator, stat: status]
+
+
+% The "dsmpos_ext" procedure is the implementation of Forgaard's EPOS
+% higher-order ordering.  It returns a comparison ("gt", "lt", or "undefined")
+% of "t1" and "t2" under the registry "r".  When "make_sugs" is true, and
+% extensions to "r" would make "t1" and "t2" comparable, the procedure signals
+% "suggest(gtsugs, ltsugs)", where "gtsugs" and "ltsugs" are complete sets of
+% suggestions that will make "t1" either greater than or less than "t2".
+
+dsmpos_ext = proc (use_eq, make_sugs: bool, t1, t2: term, r: registry)
+	       returns (comparison) signals (suggest(suggestions, suggestions))
+
+    % ENHANCE: Because of the way that >= precedence relations are handled,
+    % DSMPOS sometimes signals suggestions even when two terms are orderable.
+    % In such cases, it discovers that the terms are orderable by checking
+    % whether at least one of the suggestions signalled is already a part of
+    % the current registry.  DSMPOS would be faster if it did not have to
+    % compute suggestions when "make_sugs" is false.
+    
+    gt_sugs: suggestions := suggestions$[]
+    lt_sugs: suggestions := suggestions$[]
+
+    % ENHANCE: Don't compute suggestions if only "use_eq" is true.
+    % ENHANCE: Split "make_sugs" into "make_gt_sugs" and "make_eq_sugs".
+    %          Only use "make_gt_sugs" here.
+    %          Consider "make_lt_sugs" for symmetry.
+    
+    tagcase dsmpos(use_eq, false, use_eq cor make_sugs, true, t1, t2, r)
+       tag gt:  return(comparison$make_gt())
+       tag lt:  return(comparison$make_lt())
+       tag eq:  if ord_dbg then dsmpos_dump(0, "ext (undef)", t1, t2) end
+		return(comparison$make_undefined())
+       others:  if ~use_eq cand ~make_sugs then
+		   return(comparison$make_undefined())
+		   end
+		% QUERY: Is "~use_eq" here because we need to compute 
+		% suggestions to discover "lt"?
+       end
+       except when suggest(gt_sugs1, eq_sugs: suggestions):
+		   gt_sugs := suggestions$trim(gt_sugs1, r)
+		   if suggestions$already_satisfied(gt_sugs, r) then
+		      if ord_dbg then 
+			 dsmpos_dump(0, "ext (gt by sugs)", t1, t2)
+			 end
+		      return(comparison$make_gt())
+		      end
+	      end
+    % ENHANCE: Don't compute suggestions if only "use_eq" is true.
+    % ENHANCE: if make_sugs then ...
+    dsmpos(use_eq, false, use_eq cor make_sugs, true, t2, t1, r)
+       except when suggest(lt_sugs1, eq_sugs: suggestions):
+		   lt_sugs := suggestions$trim(lt_sugs1, r)
+		   if suggestions$already_satisfied(lt_sugs, r) then
+		      if ord_dbg then 
+			 dsmpos_dump(0, "ext (lt by sugs)", t1, t2)
+			 end
+		      return(comparison$make_lt())
+		      end
+	      end
+    if make_sugs cand
+       (~suggestions$empty(gt_sugs) cor ~suggestions$empty(lt_sugs))
+       then signal suggest(gt_sugs, lt_sugs)
+       else return(comparison$make_undefined())
+       end
+    end dsmpos_ext
+
+
+% The "dsmpos" procedure compares the terms "t1" and "t2" using the information
+% in "r" in a way specified by its four boolean parameters.  
+% if use_eq	then suggestions computed when "make_sugs" is true may assign
+%		     the same precedence to different operators 
+%		else such suggestions will not assign the same precedence to
+%		     different operators
+% if gt_eq	then >= is a possible result
+%		else >= is not a possible result
+% if make_sugs	then the signal "suggest(gt_sugs, eq_sugs)" can occur when
+%		     t1" and "t2" are not comparable under "r"
+%		else the signal will not occur
+% if try_lt	then < is a possible result, as is <= if "gt_eq" is true
+%		else < and <= are not possible results
+% "Eq_sugs" contains the complete set of suggestions that will make "t1" and
+% "t2" equivalent.  If "gt_eq" is false, "gt_sugs" contains the complete set of
+% suggestions that make "t1" greater than "t2".  If "gt_eq" is true, "gtsugs"
+% will contain these, as well as suggestions that make "t1" greater than or
+% equal to "t2".  The "try_lt" parameter should be false to optimize the
+% computation when < or <= results are not expected or make no difference.
+
+dsmpos = proc (use_eq, gt_eq, make_sugs, try_lt: bool, 
+	       t1, t2: term, r: registry)
+	   returns (xcomparison) signals (suggest(suggestions, suggestions))
+	   
+    % Compare "t1" and "t2" first without generating any suggestions.
+    if ord_dbg then dsmpos_dump(1, "", t1, t2) end
+    xc: xcomparison := dsmpos_work(use_eq, gt_eq, false, try_lt, t1, t2, r)
+    if ord_dbg then dsmpos_dump_xc(xc, t1, t2) end
+    if ~xcomparison$is_undefined(xc) cor ~make_sugs then return(xc) end
+    
+    % Now generate suggestions, if they are needed.
+    if ord_dbg then dsmpos_dump(1, "", t1, t2) end
+    xc := dsmpos_work(use_eq, gt_eq, true, false, t1, t2, r)
+       except when suggest (s1, s2: suggestions):
+		   if ord_dbg then dsmpos_dump_sugs(s1, s2, t1, t2) end
+		   signal suggest(s1, s2)
+	      end
+    if ord_dbg then dsmpos_dump_xc(xc, t1, t2) end
+    return(xc)
+    end dsmpos
+
+
+dsmpos_work = proc (use_eq, gt_eq, make_sugs, try_lt: bool,
+		    t1, t2: term, reg: registry)
+		returns (xcomparison)
+		signals(suggest(suggestions, suggestions))
+
+    % If "t1" or "t2" is a variable term, the comparison is undefined unless
+    % that variable occurs free in the other term.  If it does, then the other
+    % term can be either the same term, in which case the comparison is "eq",
+    % or else a nonvariable term, which is "gt" than the variable term.
+
+    if term$is_var(t1)
+       then if term$is_var(t2)
+	       then if t1.var = t2.var
+		       then return(xcomparison$make_eq())
+		       else return(xcomparison$make_undefined())
+		       end
+	       else if try_lt cand var_set$exists(t2.fvars, t1.var)
+		       then return(xcomparison$make_lt())
+		       else return(xcomparison$make_undefined())
+		       end
+	       end
+       else if term$is_var(t2)
+	       then if var_set$exists(t1.fvars, t2.var)
+		       then return(xcomparison$make_gt())
+		       else return(xcomparison$make_undefined())
+		       end
+	       end
+       end
+
+    % Neither term is a variable term.
+    
+    root1: operator := t1.root_or_quant
+    root2: operator := t2.root_or_quant
+
+    % Optimize computation of result when "t1" and "t2" are both constants.
+    if root1.arity = 0 cand root2.arity = 0 then
+       gsug, esug: suggestions
+       tagcase registry$compare(reg, root1, root2)
+	  tag gt:        return(xcomparison$make_gt())
+	  tag gt_eq:     if gt_eq then return(xcomparison$make_gt_eq()) end
+	  tag lt:        if try_lt 
+	                    then return(xcomparison$make_lt())
+			    else return(xcomparison$make_undefined())
+			    end
+	  tag lt_eq:     if try_lt cand gt_eq then 
+	                    return(xcomparison$make_lt_eq()) 
+			    end
+			 if ~make_sugs cor ~use_eq then
+			    return(xcomparison$make_undefined())
+			    end
+			 esug := suggestions$make_prec(root1, eq_sym, root2)
+			 signal suggest(suggestions$[], esug)
+	  tag eq:        return(xcomparison$make_eq())
+	  tag undefined:
+	  end
+       if ~make_sugs then return(xcomparison$make_undefined()) end
+       gsug := suggestions$make_prec(root1, gt_sym, root2)
+       if use_eq
+	  then esug := suggestions$make_prec(root1, eq_sym, root2)
+	  else esug := suggestions$[]
+	  end
+       signal suggest(gsug, esug)
+       end
+
+    % Now handle the case when at least one of "t1" and "t2" has subterms.
+    
+    gt_sugs: suggestions := suggestions$[]
+    eq_sugs: suggestions := suggestions$[]
+
+    if ord_dbg then dsmpos_dump(0, "trying subterm >=", t1, t2) end
+    if dsmpos_subterm_is_gt_eq(use_eq, make_sugs, t1, t2, reg) then
+       return(xcomparison$make_gt())
+       end except when suggest (s: suggestions): suggestions$merge(gt_sugs, s) 
+		  end
+    if ord_dbg then dsmpos_dump(0, "done trying subterm >=", t1, t2) end
+    % ENHANCE: Eliminate or make more symmetric?
+    if ord_dbg then dsmpos_dump(0, "trying subterm >=", t2, t1) end
+    if try_lt cand dsmpos_subterm_is_gt_eq(use_eq, false, t2, t1, reg) then
+       return(xcomparison$make_lt())
+       end
+    if ord_dbg then dsmpos_dump(0, "done trying subterm >=", t2, t1) end
+
+    if ord_dbg then dsmpos_dump(0, "comparing roots", t1, t2) end
+    tagcase registry$compare(reg, root1, root2)
+       tag gt:
+           if ord_dbg then dsmpos_dump(0, "found >", t1, t2) end
+	   if dsmpos_gt_rest(use_eq, make_sugs, t1, t2.subterms, 1, reg) then
+	      return(xcomparison$make_gt())
+	      end except when gtsuggest (sugs2: suggestions):
+			      suggestions$merge(gt_sugs, sugs2)
+			 end
+
+       tag gt_eq:  % Check for same result under "gt" and "eq".
+           if ord_dbg then dsmpos_dump(0, "found >=", t1, t2) end
+	   gt_signalled: bool := false
+	   eq_signalled: bool := false
+
+	   gt_result: xcomparison := xcomparison$make_undefined()
+	   sugs_under_gt: suggestions :=
+	       suggestions$make_prec(root1, gt_sym, root2)
+	   ticket: int := registry$push(reg)
+	   if ord_dbg then 
+	      dsmpos_dump(0, "trying registry$make_higher", t1, t2)
+	      end
+	   registry$make_higher(reg, root1, root2)
+	   gt_result := dsmpos(use_eq, gt_eq, make_sugs, false, t1, t2, reg)
+	      except when suggest (gtsugs2, eqsugs2: suggestions):
+			  gt_signalled := true
+			  % "eqsugs2" is empty because "root1" > "root2"
+			  sugs_under_gt := sugs_under_gt || gtsugs2
+		     end
+	   registry$pop(reg, ticket)
+	   if ord_dbg then 
+	      dsmpos_dump(0, "done trying registry$make_higher", t1, t2)
+	      end
+	   gt_works: bool := ~xcomparison$is_undefined(gt_result)
+
+	   % ENHANCE: Are "gt_eq" or "try_lt" relevant?
+	   eq_result: xcomparison := xcomparison$make_undefined()
+	   sugs_under_eq: suggestions :=
+	       suggestions$make_prec(root1, eq_sym, root2)
+	   gt_sugs_under_eq: suggestions := suggestions$[]
+	   eq_sugs_under_eq: suggestions := suggestions$[]
+	   registry$push(reg)
+	   begin
+	       if ord_dbg then 
+		  dsmpos_dump(0, "trying registry$make_equal", t1, t2)
+		  end
+	       registry$make_equal(reg, root1, root2)
+	       eq_result :=
+	           dsmpos(use_eq, gt_eq, make_sugs, false, t1, t2, reg)
+	       end except when suggest (gtsugs2, eqsugs2: suggestions):
+			       eq_signalled := true
+			       if ~suggestions$empty(gtsugs2) then
+				  gt_sugs_under_eq := sugs_under_eq || gtsugs2
+				  end
+			       if ~suggestions$empty(eqsugs2) then
+				  eq_sugs_under_eq := sugs_under_eq || eqsugs2
+				  end
+			  when multi_and_lex: % "registry$make_equal" failed
+			  end
+	   registry$pop(reg, ticket)
+	   if ord_dbg then 
+	      dsmpos_dump(0, "done trying registry$make_equal", t1, t2)
+	      end
+	   eq_works: bool := ~xcomparison$is_undefined(eq_result)
+
+	   % If we can return a result, then do so.
+	   if xcomparison$is_gt(gt_result) cand xcomparison$is_gt(eq_result)
+	      then return(gt_result)
+	      end
+	   if gt_eq cand eq_works cand gt_works then
+	      return(xcomparison$make_gt_eq())
+	      end
+
+	   % Otherwise, merge the appropriate suggestions.
+	   if ~make_sugs then exit no_sugs end
+	   if gt_works cor gt_signalled then
+	      suggestions$merge(gt_sugs, sugs_under_gt)
+	      end
+	   if eq_works then
+	      tagcase eq_result
+		 tag gt, gt_eq: suggestions$merge(gt_sugs, sugs_under_eq)
+		 tag eq:        suggestions$merge(eq_sugs, sugs_under_eq)
+		 others:
+		 end
+	    elseif eq_signalled then
+	      suggestions$merge(gt_sugs, gt_sugs_under_eq)
+	      suggestions$merge(eq_sugs, eq_sugs_under_eq)
+	    end
+
+       tag lt:
+           if ord_dbg then dsmpos_dump(0, "found <", t1, t2) end
+	   if try_lt cand dsmpos_gt_rest(use_eq, false, t2, t1.subterms, 1, reg)
+	      then return(xcomparison$make_lt())
+	      else exit undef
+	      end
+
+       tag lt_eq:
+           if ord_dbg then dsmpos_dump(0, "found <=", t1, t2) end
+	   reverse_comp: xcomparison :=
+	       dsmpos(use_eq, gt_eq, false, false, t2, t1, reg)
+	   if ~make_sugs then return(xcomparison$reverse(reverse_comp)) end
+	   if ~use_eq then exit no_eq end
+
+	   eq_signalled: bool := false
+	   eq_result: xcomparison := xcomparison$make_undefined()
+	   sugs_under_eq: suggestions :=
+	       suggestions$make_prec(root1, eq_sym, root2)
+	   gt_sugs_under_eq: suggestions := suggestions$[]
+	   eq_sugs_under_eq: suggestions := suggestions$[]
+	   ticket: int := registry$push(reg)
+	   begin
+	       if ord_dbg then 
+		  dsmpos_dump(0, "trying registry$make_equal", t1, t2)
+		  end
+	       registry$make_equal(reg, root1, root2)
+	       eq_result :=
+		   dsmpos(use_eq, gt_eq, make_sugs, false, t1, t2, reg)
+	       end except when suggest (gtsugs2, eqsugs2: suggestions):
+			       eq_signalled := true
+			       if ~suggestions$empty(gtsugs2) then
+				  gt_sugs_under_eq := sugs_under_eq || gtsugs2
+				  end
+			       if ~suggestions$empty(eqsugs2) then
+				  eq_sugs_under_eq := sugs_under_eq || eqsugs2
+				  end
+			  when multi_and_lex:
+			  end
+	   registry$pop(reg, ticket)
+	   if ord_dbg then 
+	      dsmpos_dump(0, "done trying registry$make_equal", t1, t2)
+	      end
+
+	   % Merge the appropriate suggestions.
+	   tagcase eq_result
+	      tag gt, gt_eq: suggestions$merge(gt_sugs, sugs_under_eq)
+	      tag eq:        suggestions$merge(eq_sugs, sugs_under_eq)
+	      others:        if eq_signalled then
+			        suggestions$merge(gt_sugs, gt_sugs_under_eq)
+			        suggestions$merge(eq_sugs, eq_sugs_under_eq)
+			        end
+	      end
+
+       tag eq:
+           if ord_dbg then dsmpos_dump(0, "found =", t1, t2) end
+	   % The root operators of the two terms are equivalent.  If both terms
+	   % have 1 or fewer arguments, that is a simple special case.
+	   size1: int := term_seq$size(t1.subterms)
+	   size2: int := term_seq$size(t2.subterms)
+	   if size1 = 0 cand size2 = 0 then return(xcomparison$make_eq()) end
+	   if size2 = 0 then return(xcomparison$make_gt()) end
+	   if size1 = 0 then 
+	      if try_lt 
+		 then return(xcomparison$make_lt())
+		 else exit undef
+		 end
+	      end
+	   if size1 = 1 cand size2 = 1 then
+	      return(dsmpos(use_eq, gt_eq, make_sugs, try_lt, 
+			    t1.subterms[1], t2.subterms[1], reg))
+	      end except when suggest (gtsugs2, eqsugs2: suggestions):
+			      suggestions$merge(gt_sugs, gtsugs2)
+			      suggestions$merge(eq_sugs, eqsugs2)
+			      signal suggest(gt_sugs, eq_sugs)
+			 end
+
+	   % If the top operators both have multiset status, do a multiset
+	   % comparison of their arguments.  If either has lexicographic
+	   % status, do a bounded lexicographical comparison.
+	   stat1: status := registry$get_status(reg, root1)
+	   stat2: status := registry$get_status(reg, root2)
+
+	   if status$is_multiset(stat1) cor status$is_multiset(stat2) then
+	      tagcase stat1
+		 tag multiset:
+		 tag undefined: registry$set_status(reg, root1, mset_stat)
+				% NOTE: Do we really want to do this?
+		 others:        exit undef
+		 end except when multi_and_lex: exit undef end
+	      tagcase stat2
+		 tag multiset:
+		 tag undefined: registry$set_status(reg, root2, mset_stat)
+				% NOTE: Do we really want to do this?
+		 others:        exit undef
+		 end except when multi_and_lex: exit undef end
+
+	      % Experimental ac-dsmpos code
+	      if interactive$get_debug() then
+		 df: dsmpos_flow := 
+		     dsmpos_flow$create(t1.subterms, t2.subterms, root1, 
+			                try_lt, reg)
+		    except when done (xc: xcomparison): return(xc) end
+		 % FIX: Return "lt" only if "try_lt" is true.
+		 if dsmpos_flow$is_gt(df, reg) then 
+		    return(xcomparison$make_gt())
+		  elseif try_lt cand dsmpos_flow$is_lt(df, reg) then
+		    return(xcomparison$make_lt())
+		  end
+		 if make_sugs then
+		    gtsugs2, eqsugs2: suggestions :=
+			dsmpos_flow$suggest(df, reg, use_eq)
+		    suggestions$merge(gt_sugs, gtsugs2)
+		    suggestions$merge(eq_sugs, eqsugs2)
+		    signal suggest(gt_sugs, eq_sugs)
+		    end
+		 return(xcomparison$make_undefined())
+		 end
+	     
+	      return(dsmpos_multiset_compare(use_eq, make_sugs, try_lt,
+					     t1, t2, reg))
+		 except when suggest (gtsugs2, eqsugs2: suggestions):
+			     suggestions$merge(gt_sugs, gtsugs2)
+			     suggestions$merge(eq_sugs, eqsugs2)
+			     signal suggest(gt_sugs, eq_sugs)
+			end
+	    elseif ~status$is_undefined(stat1)
+		     cand ~status$is_undefined(stat2) then
+	      return(dsmpos_lex_compare(use_eq, gt_eq, make_sugs, try_lt,
+					t1, t2, reg))
+		 except when suggest (gtsugs2, eqsugs2: suggestions):
+			     suggestions$merge(gt_sugs, gtsugs2)
+			     suggestions$merge(eq_sugs, eqsugs2)
+			     signal suggest(gt_sugs, eq_sugs)
+			end
+	    else % One or both is undefined.
+		 hyps: stat_hyps := stat_hyps$[]
+		 sxs: sx_seq
+		 if ~status$is_undefined(stat1) cor root1 = root2
+		    then for s2: status
+			       in registry$compatible_stati(reg, root2) do
+			     sxs := sx_seq$[stat_ext${op: root2, stat: s2}]
+			     stat_hyps$addh(hyps, sxs)
+			     end
+		    else for s1: status
+			       in registry$compatible_stati(reg, root1) do
+			     sxs := sx_seq$[stat_ext${op: root1, stat: s1}]
+			     if size2 = 1 cor ~status$is_undefined(stat2) then
+				stat_hyps$addh(hyps, sxs)
+				continue
+				end
+			     for s2: status
+				   in registry$compatible_stati(reg, root2) do
+				 sx: stat_ext := stat_ext${op: root1, stat: s1}
+				 % NOTE: Shouldn't this be "root2"?
+				 stat_hyps$addh(hyps, sx_seq$addh(sxs, sx))
+				 end
+			     end
+		    end
+		 begin
+		     gt_sugs_under_hyps, eq_sugs_under_hyps: suggestions :=
+			 try_stat_hyps(use_eq, gt_eq, make_sugs, try_lt,
+				       t1, t2, reg, hyps)
+		     suggestions$merge(gt_sugs, gt_sugs_under_hyps)
+		     suggestions$merge(eq_sugs, eq_sugs_under_hyps)
+		     end except when all_work (xc: xcomparison): return(xc)
+				when none_work:
+				end
+	    end
+
+       tag undefined:
+	   if ord_dbg then dsmpos_dump(0, "found undefined", t1, t2) end
+	   if ~make_sugs then exit no_sugs end
+	   sugs2: suggestions :=  suggestions$make_prec(root1, gt_sym, root2)
+	   ticket: int := registry$push(reg)
+	   if ord_dbg then 
+	      dsmpos_dump(0, "trying registry$make_higher", t1, t2)
+	      end
+	   registry$make_higher(reg, root1, root2)
+	   tagcase dsmpos(use_eq, gt_eq, make_sugs, false, t1, t2, reg)
+	      tag gt, gt_eq: suggestions$merge(gt_sugs, sugs2)
+	      tag eq:        suggestions$merge(eq_sugs, sugs2)
+	      others:
+	      end except when suggest (gtsugs3, eqsugs3: suggestions):
+			      suggestions$merge(gt_sugs, sugs2 || gtsugs3)
+			      suggestions$merge(eq_sugs, sugs2 || eqsugs3)
+			 end
+	   registry$pop(reg, ticket)
+	   if ord_dbg then 
+	      dsmpos_dump(0, "done trying registry$make_higher", t1, t2)
+	      end
+	   if ~use_eq then exit no_eq end
+	   sugs2 := suggestions$make_prec(root1, eq_sym, root2)
+	   registry$push(reg)
+	   begin
+	       if ord_dbg then 
+		  dsmpos_dump(0, "trying registry$make_equal", t1, t2)
+		  end
+	       registry$make_equal(reg, root1, root2)
+	       tagcase dsmpos(use_eq, gt_eq, make_sugs, false, t1, t2, reg)
+		  tag gt, gt_eq: suggestions$merge(gt_sugs, sugs2)
+		  tag eq:        suggestions$merge(eq_sugs, sugs2)
+		  others:
+		  end
+	       end except when suggest (gtsugs3, eqsugs3: suggestions):
+			       suggestions$merge(gt_sugs, sugs2 || gtsugs3)
+			       suggestions$merge(eq_sugs, sugs2 || eqsugs3)
+			  when multi_and_lex:
+			  end
+	   registry$pop(reg, ticket)
+	   if ord_dbg then 
+	      dsmpos_dump(0, "done trying registry$make_equal", t1, t2)
+	      end
+       end except when no_eq, no_sugs, undef: end
+
+    if suggestions$empty(gt_sugs) cand suggestions$empty(eq_sugs)
+       then return(xcomparison$make_undefined())
+       else signal suggest(gt_sugs, eq_sugs)
+       end
+
+    end dsmpos_work
+
+
+% Compares "t1" and "t2" under "reg", trying all the status hypotheses in
+% "hyps".  If they all yield the same comparison, signals "all_work(xc)", where
+% "xc" is that comparison.  If they all yield an undefined comparison, signals
+% "none_work".  Otherwise, returns suggestions according to the parameters.
+
+try_stat_hyps = proc (use_eq, gt_eq, make_sugs, try_lt: bool,
+		      t1, t2: term, reg: registry, hyps: stat_hyps)
+		  returns (suggestions, suggestions)
+		  signals (all_work(xcomparison), none_work)
+    gt_sugs: suggestions := suggestions$[]
+    eq_sugs: suggestions := suggestions$[]
+    all_work: bool := true
+    all_comp: xcomparison := xcomparison$make_undefined()
+    all_sug: bool := true
+    first_sug: bool := true
+    the_gt_sug, the_eq_sug: suggestions
+    for sxs: sx_seq in stat_hyps$elements(hyps) do
+ 	ticket: int := registry$push(reg)
+	sugs2: suggestions := suggestions$[]
+	if ord_dbg then dsmpos_dump(0, "trying registry$set_status", t1, t2) end
+	for sx: stat_ext in sx_seq$elements(sxs) do
+	    registry$set_status(reg, sx.op, sx.stat)
+	    sugs2 := sugs2 || suggestions$make_stat(sx.op, sx.stat)
+	    end except when multi_and_lex: fail("try_stat_hyps") end
+	this_comp: xcomparison :=
+	    dsmpos(use_eq, gt_eq, make_sugs, try_lt, t1, t2, reg)
+	   except when suggest (gtsugs3, eqsugs3: suggestions):
+	               registry$pop(reg, ticket)
+		       if ord_dbg then 
+			  dsmpos_dump(0, "done trying registry$set_status", t1, t2)
+			  end
+		       all_work := false
+		       suggestions$merge(gt_sugs, sugs2 || gtsugs3)
+		       suggestions$merge(eq_sugs, sugs2 || eqsugs3)
+		       if ~all_sug then continue end
+		       if first_sug then
+			  first_sug := false
+			  the_gt_sug := gtsugs3
+			  the_eq_sug := eqsugs3
+			  continue
+			  end
+		       if ~suggestions$similar(gtsugs3, the_gt_sug)
+			    cor ~suggestions$similar(eqsugs3, the_eq_sug) then
+			  all_sug := false
+			  end
+		       continue
+		  end
+	registry$pop(reg, ticket)
+	if ord_dbg then 
+	   dsmpos_dump(0, "done trying registry$set_status", t1, t2)
+	   end
+	all_sug := false
+	if make_sugs then
+	   tagcase this_comp
+	      tag gt, gt_eq: suggestions$merge(gt_sugs, sugs2)
+	                     % NOTE: Is "gt_eq" ok?
+	      tag eq: suggestions$merge(eq_sugs, sugs2)
+	      others:
+	      end
+	   end
+	if ~all_work then continue end
+	if xcomparison$is_undefined(this_comp) then
+	   all_work := false
+	   continue
+	   end
+	if xcomparison$is_undefined(all_comp) then
+	   all_comp := this_comp
+	   continue
+	   end
+	if gt_eq
+	   then tagcase all_comp
+		   tag gt:
+		       tagcase this_comp
+			  tag gt:
+			  tag gt_eq, eq: all_comp := xcomparison$make_gt_eq()
+			  others:        all_work := false
+			  end
+		   tag gt_eq:
+		       tagcase this_comp
+			  tag gt, gt_eq, eq:
+			  others:            all_work := false
+			  end
+		   tag eq:
+		       tagcase this_comp
+			  tag gt, gt_eq: all_comp := xcomparison$make_gt_eq()
+			  tag eq:
+			  others:        all_work := false
+			  end
+		   others:
+		       if this_comp ~= all_comp then all_work := false end
+		   end
+	   else if this_comp ~= all_comp then all_work := false end
+	   end
+	if ~all_work cand ~make_sugs then signal none_work end
+	end
+
+    if all_work then signal all_work(all_comp) end
+    if all_sug then return(the_gt_sug, the_eq_sug) end
+    if suggestions$empty(gt_sugs) cand suggestions$empty(eq_sugs)
+       then signal none_work
+       else return(gt_sugs, eq_sugs)
+       end
+
+    end try_stat_hyps
+
+
+% Returns true if some subterm of "t1" is greater than or equal to "t2" under
+% "reg".  If this is not the case, but suggestions "s" exist that make it so
+% (in accordance with the parameters), signals "suggest(s)".  Otherwise,
+% returns "false".
+
+dsmpos_subterm_is_gt_eq = proc (use_eq, make_sugs: bool,
+				t1, t2: term, reg: registry)
+			    returns (bool) signals (suggest(suggestions))
+    sugs: suggestions := suggestions$[]
+    for t: term in term_seq$elements(t1.subterms) do
+	% ENHANCE: Check this when implementing dsmpos for quantifiers.
+	if ~var_set$is_subset(t2.fvars, t.fvars) then continue end
+	tagcase dsmpos(use_eq, true, make_sugs, false, t, t2, reg)
+	   tag gt, gt_eq, eq: return(true)
+	   others:
+	   end
+	   except when suggest (gt_sugs2, eq_sugs2: suggestions):
+		       suggestions$merge(sugs, gt_sugs2)
+		       suggestions$merge(sugs, eq_sugs2)
+		  end
+	end
+    if suggestions$empty(sugs)
+       then return(false)
+       else signal suggest(sugs)
+       end
+    end dsmpos_subterm_is_gt_eq
+
+
+% Returns true if "t" is greater (under "reg") than "args[k]" for all "k >= j".
+% If this is not the case, but suggestions "s" exist that make it so (in
+% accordance with the parameters), signals "suggest(s)".  Otherwise, returns
+% "false".
+
+dsmpos_gt_rest = proc (use_eq, make_sugs: bool,
+		       t: term, args: term_seq, j: int, reg: registry)
+		   returns (bool) signals (gtsuggest(suggestions))
+    if j > term_seq$size(args) then return(true) end
+    tagcase dsmpos(use_eq, false, make_sugs, false, t, args[j], reg)
+       tag gt: return(dsmpos_gt_rest(use_eq, make_sugs, t, args, j+1, reg))
+       others: return(false)
+       end resignal gtsuggest
+       except when suggest (gtsugs, eqsugs: suggestions):
+		   if dsmpos_gt_rest(use_eq, make_sugs, t, args, j+1, reg)
+		      then signal gtsuggest(gtsugs)
+		      else return(false)
+		      end except when gtsuggest (gtsugs2: suggestions):
+				      signal gtsuggest(gtsugs || gtsugs2)
+				 end
+	      end
+    end dsmpos_gt_rest
+
+
+% Assumes "t1" and "t2" have equivalent top operators.  Returns the result of
+% comparing their arguments as multisets. If they are comparable, returns that
+% xcomparison.  Otherwise, attempts to compute the complete set of suggestions,
+% in accordance with the other parameters, that make the multiset of "t1"s
+% arguments greater than or equal to the multiset of "t2"s arguments.  If such
+% suggestions exist, returns them via the "suggest" signal; otherwise, returns
+% the "undefined" xcomparison.
+
+dsmpos_multiset_compare = proc (use_eq, make_sugs, try_lt: bool,
+				t1, t2: term, reg: registry)
+			    returns (xcomparison)
+			    signals (suggest(suggestions, suggestions))
+
+    % Compute comparison matrix
+    m: multiset_matrix :=
+	multiset_matrix$create(t1.subterms, t2.subterms, reg, try_lt, use_eq)
+       except when done (xc: xcomparison): return(xc) end
+
+    % Return "gt" if every column has a "gt".
+    if multiset_matrix$is_gt(m) then return(xcomparison$make_gt()) end
+
+    % Return "lt" if every row has a "lt".
+    if try_lt cand multiset_matrix$is_lt(m) then 
+       return(xcomparison$make_lt())
+       end
+
+    % Signal "suggest" if suggestions can be found for returning "eq" or "gt".
+    if ~make_sugs then return(xcomparison$make_undefined()) end
+    multiset_matrix$add_suggestions(m, reg)
+    found_gt: bool, gt_sugs: suggestions, found_eq: bool, eq_sugs: suggestions
+	:= multiset_matrix$suggest(m)
+    if found_gt cor found_eq
+       then signal suggest(gt_sugs, eq_sugs)
+       else return(xcomparison$make_undefined())
+       end
+   
+    end dsmpos_multiset_compare
+
+
+% Assumes "t1" and "t2" have top operators that are equivalent in "reg", and
+% that these top operators have lexicographic statuses.  Returns the result of
+% doing a lexicographical comparison of the argument lists of "t1" and "t2",
+% each ordered according to its status.  If the two lists are comparable, that
+% comparison is returned.  If not, attempts to compute suggestions that make
+% the t1-arguments greater than or equal to the t2-arguments, subject to the
+% restrictions of the parameters.  If such suggestions exists, signals
+% "suggest"; otherwise, returns the undefined comparison.
+
+dsmpos_lex_compare = proc (use_eq, gt_eq, make_sugs, try_lt: bool,
+			   t1, t2: term, reg: registry)
+		       returns (xcomparison)
+		       signals (suggest(suggestions, suggestions))
+    arg1: term_seq := t1.subterms
+    if status$is_right_to_left(registry$get_status(reg, t1.root_or_quant))
+       then arg1 := reverse_seq[term](arg1)
+       end
+    arg2: term_seq := t2.subterms
+    if status$is_right_to_left(registry$get_status(reg, t2.root_or_quant))
+       then arg2 := reverse_seq[term](arg2)
+       end
+    return(dsmpos_lex_compare_work(use_eq, gt_eq, make_sugs, try_lt,
+				   t1, t2, arg1, arg2, 1, reg))
+       resignal suggest
+    end dsmpos_lex_compare
+
+
+dsmpos_lex_compare_work = proc (use_eq, gt_eq, make_sugs, try_lt: bool,
+				t1, t2: term, arg1, arg2: term_seq,
+				j: int, reg: registry)
+			    returns (xcomparison)
+			    signals (suggest(suggestions, suggestions))
+
+    if j > term_seq$size(arg1) then
+       if term_seq$size(arg1) = term_seq$size(arg2) then
+	  return(xcomparison$make_eq())
+	elseif gt_eq then return(xcomparison$make_undefined())
+	else return(xcomparison$make_lt())
+	     % QUERY: should we check try_lt here?
+	end
+     elseif j > term_seq$size(arg2) then return(xcomparison$make_gt())
+     end
+
+    gt_sugs: suggestions := suggestions$[]
+    eq_sugs: suggestions := suggestions$[]
+
+    tagcase dsmpos(use_eq, true, make_sugs, try_lt, arg1[j], arg2[j], reg)
+       tag gt: if dsmpos_gt_rest(use_eq, make_sugs, t1, arg2, j+1, reg)
+		  then return(xcomparison$make_gt())
+		  else return(xcomparison$make_undefined())
+		  end
+		  except when gtsuggest (gtsugs: suggestions):
+			      signal suggest(gtsugs, suggestions$[])
+			 end
+
+       tag gt_eq:
+	   tagcase dsmpos_lex_compare_work(use_eq, gt_eq, make_sugs, try_lt,
+					   t1, t2, arg1, arg2, j+1, reg)
+	      tag gt: return(xcomparison$make_gt())
+	      tag gt_eq, eq: if gt_eq then return(xcomparison$make_gt_eq()) end
+	      others:
+		  if ~make_sugs then return(xcomparison$make_undefined()) end
+	      end except when suggest (*): end
+
+	   % Run DSMPOS again to see if 1) this was an EQ or 2) if it signals.
+	   temp_gt_sugs, temp_eq_sugs: suggestions
+	   tagcase dsmpos(use_eq, false, make_sugs, false, 
+		          arg1[j], arg2[j], reg)
+	      tag eq: return(dsmpos_lex_compare_work(use_eq, gt_eq, make_sugs,
+						     false, t1, t2, arg1, arg2,
+						     j+1, reg))
+			 resignal suggest
+	      others: return(xcomparison$make_undefined())
+	      end except when suggest (gtsugs2, eqsugs2: suggestions):
+			      temp_gt_sugs := gtsugs2
+			      temp_eq_sugs := eqsugs2
+			 end
+	   if ~suggestions$empty(temp_gt_sugs)
+	      then if dsmpos_gt_rest(use_eq, make_sugs, t1, arg2, j+1, reg)
+		      then suggestions$merge(gt_sugs, temp_gt_sugs)
+		      end
+		      except when gtsuggest (gtsugs2: suggestions):
+				  suggestions$merge(gt_sugs,
+						    temp_gt_sugs || gtsugs2)
+			     end
+	      end
+	   if ~suggestions$empty(temp_eq_sugs)
+	      then tagcase dsmpos_lex_compare_work(use_eq, gt_eq, make_sugs,
+						   false, t1, t2, arg1, arg2, 
+						   j+1, reg)
+		      tag gt, gt_eq: suggestions$merge(gt_sugs, temp_eq_sugs)
+		      tag eq: suggestions$merge(eq_sugs, temp_eq_sugs)
+		      others: return(xcomparison$make_undefined())
+		      end
+		      except
+			 when suggest (gtsugs2, eqsugs2: suggestions):
+			      suggestions$merge(gt_sugs,
+				  	        temp_eq_sugs || gtsugs2)
+			      suggestions$merge(eq_sugs,
+						temp_eq_sugs || eqsugs2)
+			 end
+	      end
+
+       tag eq: return(dsmpos_lex_compare_work(use_eq, gt_eq, make_sugs, try_lt,
+					      t1, t2, arg1, arg2, j+1, reg))
+		  resignal suggest
+
+       tag lt: if dsmpos_gt_rest(use_eq, false, t2, arg1, j+1, reg)
+		  then return(xcomparison$make_lt())
+		  else return(xcomparison$make_undefined())
+		  end
+
+       tag lt_eq:
+	   tagcase dsmpos_lex_compare_work(use_eq, gt_eq, make_sugs, try_lt,
+					   t1, t2, arg1, arg2, j+1, reg)
+	      tag lt: return(xcomparison$make_lt())
+	      others:
+		  if ~make_sugs then return(xcomparison$make_undefined()) end
+	      end except when suggest (*): end
+
+	   % Run DSMPOS again to see if 1) this was an EQ or 2) if it signals.
+	   temp_eq_sugs: suggestions
+	   tagcase dsmpos(use_eq, false, make_sugs, false, 
+		          arg1[j], arg2[j], reg)
+	      tag eq: return(dsmpos_lex_compare_work(use_eq, gt_eq, make_sugs,
+						     false, t1, t2, arg1, arg2,
+						     j+1, reg))
+			 resignal suggest
+	      others: return(xcomparison$make_undefined())
+	      end except when suggest (gtsugs2, eqsugs2: suggestions):
+			      temp_eq_sugs := eqsugs2
+			 end
+
+	   if ~suggestions$empty(temp_eq_sugs)
+	      then tagcase dsmpos_lex_compare_work(use_eq, gt_eq, make_sugs,
+						   false, t1, t2, arg1, arg2, 
+						   j+1, reg)
+		      tag gt, gt_eq: suggestions$merge(gt_sugs, temp_eq_sugs)
+		      tag eq: suggestions$merge(eq_sugs, temp_eq_sugs)
+		      others: return(xcomparison$make_undefined())
+		      end
+		      except
+			 when suggest (gtsugs2, eqsugs2: suggestions):
+			      suggestions$merge(gt_sugs,
+						temp_eq_sugs || gtsugs2)
+			      suggestions$merge(eq_sugs,
+						temp_eq_sugs || eqsugs2)
+			 end
+	      end
+
+       others: return(xcomparison$make_undefined())
+       end
+       except
+	  when suggest (*):
+	       temp_gt_sugs, temp_eq_sugs: suggestions
+	       begin
+		   dummy: xcomparison :=
+		       dsmpos(use_eq, false, make_sugs, false,
+			      arg1[j], arg2[j], reg)
+		   signal failure("DSMPOS signals when GTEQ true, " ||
+				  "does not when false.")
+		   end
+		  except when suggest (gtsugs2, eqsugs2: suggestions):
+			      temp_gt_sugs, temp_eq_sugs := gtsugs2, eqsugs2
+			 end
+
+	       if ~suggestions$empty(temp_gt_sugs)
+		  then if dsmpos_gt_rest(use_eq, make_sugs, t1, arg2, j+1, reg)
+			  then suggestions$merge(gt_sugs, temp_gt_sugs)
+			  end
+			  except when gtsuggest (gtsugs3: suggestions):
+				      suggestions$merge(gt_sugs,
+							temp_gt_sugs
+							  || gtsugs3)
+				 end
+		  end
+	       if ~suggestions$empty(temp_eq_sugs)
+		  then tagcase dsmpos_lex_compare_work
+				   (use_eq, gt_eq, make_sugs, false,
+				    t1, t2, arg1, arg2, j+1, reg)
+			  tag gt, gt_eq:
+			      suggestions$merge(gt_sugs, temp_eq_sugs)
+			  tag eq: suggestions$merge(eq_sugs, temp_eq_sugs)
+			  others: return(xcomparison$make_undefined())
+			  end
+			  except
+			     when suggest (gtsugs3, eqsugs3: suggestions):
+				  suggestions$merge(gt_sugs,
+						    temp_eq_sugs || gtsugs3)
+				  suggestions$merge(eq_sugs,
+						    temp_eq_sugs || eqsugs3)
+			     end
+		  end
+	  end
+
+    if suggestions$empty(gt_sugs) cand suggestions$empty(eq_sugs)
+       then return(xcomparison$make_undefined())
+       else signal suggest(gt_sugs, eq_sugs)
+       end
+
+    end dsmpos_lex_compare_work
+
+
+% Auxiliary routines for tracing actions of dsmpos.
+
+dsmpos_dump = proc (adjust: int, msg: string, t1, t2: term)
+    own p: printer := tracer$get_printer()
+    own stab: symtab := tracer$get_symtab()
+    own depth: int := 0
+    printer$text(p, "~{")
+    if adjust = -1 then depth := depth - 1 end
+    for i: int in int$from_to(1, depth) do printer$puts(p, "*") end
+    if adjust = 1 then depth := depth + 1 end
+    if adjust = 1 then printer$text(p, "enter dsmpos ")
+     elseif adjust = -1 then printer$text(p, "leave dsmpos ")
+     end
+    if msg ~= "" then
+       printer$text(p, msg)
+       printer$puts(p, " ")
+       end
+    printer$text(p, "for ")
+    term$print(p, t1, stab)
+    printer$text(p, " and ~A")
+    term$print(p, t2, stab)
+    printer$text(p, "~}\n")
+    end dsmpos_dump
+
+dsmpos_dump_sugs = proc (sug1, sug2: suggestions, t1, t2: term)
+    p: printer := tracer$get_printer()
+    stab: symtab := tracer$get_symtab()
+    dsmpos_dump(-1, "suggestions", t1, t2)
+    suggestions$print(p, stab, ">", sug1, 0)
+    suggestions$print(p, stab, "=", sug2, 0)
+    end dsmpos_dump_sugs
+
+dsmpos_dump_xc = proc (xc: xcomparison, t1, t2: term)
+    tagcase xc
+       tag gt:         dsmpos_dump(-1, "(gt)", t1, t2)
+       tag gt_eq:      dsmpos_dump(-1, "(gt_eq)", t1, t2)
+       tag eq:         dsmpos_dump(-1, "(eq)", t1, t2)
+       tag lt:         dsmpos_dump(-1, "(lt)", t1, t2)
+       tag lt_eq:      dsmpos_dump(-1, "(lt_eq)", t1, t2)
+       tag undefined:  dsmpos_dump(-1, "(undefined)", t1, t2)
+       end
+    end dsmpos_dump_xc

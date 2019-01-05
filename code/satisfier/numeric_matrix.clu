@@ -1,0 +1,396 @@
+numeric_matrix = cluster [element: type] is 
+	new, add_0_col, add_row, del_row, get_row, swap_columns, row_pairs,
+	mixed_pairs, num_pairs, row_eq_col, col_eq_rows, row_eq_rows, pivot,
+	coeff, last_in_row, has_same_row, negate_row, negate_col, n_columns,
+	column_elements, row_elements, is_0_row, copy, unparse_row, unparse, 
+	_gcd
+	    where element has 
+		  add, sub, mul: proctype (element, element) returns (element)
+				   signals (overflow),
+		  minus: 	 proctype (element) returns (element)
+				   signals (overflow),
+		  div:   	 proctype (element, element) returns (element)
+				   signals (overflow, zero_divide),
+		  equal, gt, ge, 
+		  lt, le: 	 proctype (element, element) returns (bool),
+		  parse: 	 proctype (string) returns (element)
+				   signals (bad_format, overflow),
+		  unparse: 	 proctype (element) returns (string),
+		  one, zero: 	 proctype () returns (element)
+
+
+    rep         = matrix
+    matrix	= array[column]
+    column 	= array[element]    
+    row		= array[element]
+    
+    
+    % A(m)[i, j] = m[j][i]
+    
+    % I(m): low(m) = 1 <= size(m)
+    %	    size(m[i]) = size(m[j])
+
+    own zero: element := element$zero()
+    own one:  element := element$one()		    
+
+    
+    % Returns a new matrix, with one empty column.
+    
+    new = proc () returns (cvt)
+	return(matrix$[column$[]])
+	end new
+
+
+    % Inserts a column containing all zeroes before the last column of "m".
+
+    add_0_col = proc (m: cvt)
+        last: column := matrix$remh(m)
+	matrix$addh(m, column$fill(1, column$size(last), zero))
+	matrix$addh(m, last)
+	end add_0_col
+
+
+    % Requires: size(r) = size(m)
+    % Effects:  adds "r" to as the last row in "m"
+    
+    add_row = proc (m: cvt, r: row) signals (wrong_size)
+	if row$size(r) ~= matrix$size(m) then signal wrong_size end
+	for nc: int in matrix$indexes(m) do column$addh(m[nc], r[nc]) end
+	end add_row
+    
+
+    % Effects: delete row "nr" from "m"
+    
+    del_row = proc (m: cvt, nr: int) signals (bad_row)
+	for c: column in matrix$elements(m) do
+	    c[nr] := c[column$high(c)]
+	    column$remh(c)
+	    end except when bounds: signal bad_row end
+	end del_row
+    
+    
+    % Returns: row containing the elements of row "nr" in "m"
+    % Signals bounds if "nr" is out of bounds.
+    
+    get_row = proc (m: cvt, nr: int) returns (row) signals (bounds)
+        n: int := column$size(m[1])
+	if nr <= 0 cor n < nr then signal bounds end
+	r: row := row$predict(1, matrix$size(m))
+	for nc: int in int$from_to(1, matrix$size(m)) do
+	    row$addh(r, m[nc][nr])
+	    end
+	return(r)
+	end get_row
+	
+    
+    % Exchanges columns "nc1" and "nc2" in "m".
+    % Signals "bounds" if either "nc1" or "nc2" is out of bounds.
+    
+    swap_columns = proc (m: cvt, nc1, nc2: int) signals (bounds)
+	begin
+	    c: column := m[nc1]
+	    m[nc1] := m[nc2]
+	    m[nc2] := c
+	    end resignal bounds
+        end swap_columns
+    
+
+    % Yields all pairs of integers "nr1" and "nr2" such that rows "nr1" and
+    % "nr2" of "m" have the same elements starting in column "nc2", but
+    % different in at least one element in column "nc1" through "nc2-1".
+	
+    row_pairs = iter (m: cvt, nc1, nc2: int) yields (int, int) signals (bounds)
+	nrows: int := column$size(m[1])
+	for nr1: int in column$indexes(m[1]) do
+	    for nr2: int in int$from_to(nr1 + 1, nrows) do
+		if same_elts(m, nc2, nr1, nr2) 
+		     cand ~same_elts(m, nc1, nr1, nr2) then
+		   yield(nr1, nr2)
+		   end
+		end
+	    end resignal bounds
+	end row_pairs
+
+    
+    % Yields all pairs of integers "nr" and "nc" such that row "nr" of "m" has
+    % zeroes starting in column "nc1", except for a single one in column "nc"
+    % between column "nc2" and the second last column of "m".  Signals "bounds"
+    % if either "nc1" or "nc2" is out of range.
+    
+    mixed_pairs = iter (m: cvt, nc1, nc2: int) yields (int, int)
+		    signals (bounds)
+	for nr: int in column$indexes(m[1]) do
+	    nc: int := row_eq_col(up(m), nc2, nr)
+	       except when none: continue end
+	    nc := row_eq_col(up(m), nc1, nr)
+	       except when none: yield(nr, nc) end
+	    end resignal bounds
+	end mixed_pairs
+    
+
+    % Returns an integer "nc" such that row "nr" of "m" has zeroes starting in
+    % column "start", except for a single one in column "nc" between column
+    % "start" and the second last column of "m".  Signals "none" if no such
+    % "nc" exists.  Signals "bounds" if "start" or "nr" is out of bounds.
+
+    row_eq_col = proc (m: cvt, start, nr: int) returns (int) 
+		   signals (bounds, none)
+	for nc: int in int$from_to(start, rep$size(m) - 1) do
+	    e: element := m[nc][nr]
+	    if e = zero then continue end
+	    if e ~= one then signal none end
+	    for nc1: int in int$from_to(nc + 1, rep$size(m)) do
+		if m[nc1][nr] ~= zero then signal none end
+		end
+	    return(nc)
+	    end resignal bounds
+	signal none
+	end row_eq_col
+							    
+    
+    % Yields all integers "nr1" such that row "nr1" of "m" has the same
+    % elements as row "nr" starting in column "nc".  Signals "bounds" if "nr"
+    % or "nc" is out of bounds.
+    
+    row_eq_rows = iter (m: cvt, nc, nr: int) yields (int) signals (bounds)
+        for nr1: int in column$indexes(m[1]) do
+	    if same_elts(m, nc, nr, nr1) then yield(nr1) end
+	    end resignal bounds
+	end row_eq_rows
+    
+    
+    % Yields all integers "nr" such that row "nr" of "m" has zeroes starting in
+    % column "start", except for a single one in column "nc".  Signals "none"
+    % if no such "nr" exists.  Signals "bounds" if "start", "nc", or "nr" is
+    % out of bounds.
+    
+    col_eq_rows = iter (m: cvt, start, nc: int) yields (int) signals (bounds)
+        for nr: int in column$indexes(m[1]) do
+	    if m[nc][nr] ~= one then continue end
+	    if row_eq_col(up(m), start, nr) = nc then yield(nr) end
+	       except when none: end
+	    end resignal bounds
+	end col_eq_rows					    
+
+
+    % Yields all pairs "nr, e" such that "e" is the last element in row "nr" of
+    % "m", "e" is not zero, all other elements of row "nr" starting in
+    % column "nc2" are zero, and some element between columns "nc1" and "nc2-1"
+    % in row "nr" is not zero.  Signals "bounds" if "nc1" or "nc2" is out of
+    % bounds, or if "nc1 > nc2".
+
+    num_pairs = iter (m: cvt, nc1, nc2: int) yields (int, element)
+		  signals (bounds)
+	
+	if nc1 > nc2 then signal bounds end
+	last_col: column := matrix$top(m)
+	for nr: int in column$indexes(m[1]) do
+	    if zeros_but_last(m, nc1, nc2, nr) then
+	       yield(nr, last_col[nr])
+	       end resignal bounds
+	    end 
+	end num_pairs
+    
+
+    % (Internal procedure) Returns "true" iff row "nr" in "m" contains a 
+    % nonzero element between columns "nc1" and "nc2-1", but only zeroes 
+    % between column "nc2" and "size(m) - 1".
+    
+    zeros_but_last = proc (m: rep, nc1, nc2, nr: int) returns (bool) 
+		       signals (bounds)
+	for nc: int in int$from_to(nc2, matrix$size(m) - 1) do
+	    if m[nc][nr] ~= zero then return(false) end
+	    end resignal bounds
+	for nc: int in int$from_to(nc1, nc2 - 1) do
+	    if m[nc][nr] ~= zero then return(true) end
+	    end
+	return(false)
+        end zeros_but_last
+    
+
+    % Pivots the submatrix of "m" starting in column "start" around the element
+    % "m[rpivot, cpivot]".  Signals "impossible" if this element is zero.
+    % Signals "bounds" if either "rpivot" or "cpivot" is out of bounds, if
+    % "start <= 0", or if "cpivot < start".
+
+    pivot = proc (m: cvt, start: int, cpivot, rpivot: int)
+	      signals (bounds, impossible, overflow)
+	if start <= 0 cor cpivot < start then signal bounds end
+	pivot_col: column := m[cpivot]
+	   resignal bounds
+	a: element := pivot_col[rpivot] 
+	   resignal bounds
+	if a = zero then signal impossible end
+	begin
+	    pivot_col[rpivot] := one/a
+	    % Transform all columns except "pivot_col".
+	    nrows: int := column$size(m[1])
+	    for nc: int in int$from_to(start, matrix$size(m)) do
+		if nc = cpivot then continue end
+		col: column := m[nc]
+		b: element := col[rpivot] 	% value in pivot row
+		for nr: int in int$from_to(1, nrows) do
+		    if nr = rpivot 
+		       then col[nr] := -(b/a)
+		       else col[nr] := col[nr] - (b*pivot_col[nr])/a
+		       end
+		    end
+		end
+	    % Transform pivot column
+	    for nr: int in int$from_to (1, nrows) do
+		if nr = rpivot then continue end
+		pivot_col[nr] := pivot_col[nr]/a
+		end
+	    end resignal overflow
+	end pivot
+
+
+    % Yields the elements in column "nc" of "m".  Signals bounds if
+    % "nc" is not in range.
+    
+    column_elements = iter (m: cvt, nc: int) yields (element) signals (bounds)
+	for e: element in column$elements(m[nc]) do yield(e) end
+	   resignal bounds
+	end column_elements
+    
+    
+    % Yields the elements in row "nr" of "m", starting in column "nc".  Signals
+    % bounds if "nr" is not in range.
+
+    row_elements = iter (m: cvt, nc: int, nr: int) yields (element) 
+	signals (bounds)
+	for i: int in int$from_to(nc, matrix$size(m)) do yield(m[i][nr]) end
+	   resignal bounds
+	end row_elements
+    
+    
+    % (Internal procedure)
+    
+    % Returns "true" iff rows "nr1" and "nr2" of "m" are identical starting
+    % with column "start".  Signals bounds if either "nr1" or "nr2" is not in
+    % range.
+	
+    same_elts = proc (m: rep, start, nr1, nr2: int) returns (bool)
+		  signals (bounds)
+	for nc: int in int$from_to(start, matrix$size(m)) do
+	    c: column := m[nc]
+	    if c[nr1] ~= c[nr2] then return(false) end
+	    end resignal bounds
+	return(true)
+	end same_elts
+    
+    
+    % Returns "m[nr, nc]".  Signals bounds if either "nc" or "nr" is not in
+    % range.
+    
+    coeff = proc (m: cvt, nc, nr: int) returns (element) signals (bounds)
+	return(m[nc][nr]) resignal bounds
+	end coeff
+
+    
+    has_same_row = proc (m: cvt, start: int, r: row) returns (int) 
+		     signals (no_row, wrong_size)
+	if row$size(r) ~= matrix$size(m) then signal wrong_size end
+	for nr: int in int$from_to(1, column$size(m[1])) do
+	    if is_identical(m, start, nr, r) then return(nr) end
+	    end
+	signal no_row
+	end has_same_row
+	
+    
+    % (Internal procedure)
+    % Requires: "r" has the same number of elements as the rows of "m"
+    %		"nr" is the index of a row in "m"
+    % Effects:  returns "true" iff row "nr" in "m" contains "r[start], ..." 
+    %		starting in column "start"
+    
+    is_identical = proc (m: rep, start, nr: int, r: row) returns (bool)
+	for nc: int in int$from_to(start, matrix$size(m)) do
+	    if m[nc][nr] ~= r[nc] then return(false) end
+	    end
+	return(true)
+	end is_identical
+	
+
+    % Returns the last element in row "nr" or "m".  Signals bounds if "nr" is
+    % out of bounds.
+	
+    last_in_row = proc (m: cvt, nr: int) returns (element) signals (bounds)
+	return(matrix$top(m)[nr]) resignal bounds
+	end last_in_row
+
+
+    % Negates the elements in row "nr" in "m".
+
+    negate_row = proc (m: cvt, nr: int) signals (bounds)
+	for nc: int in matrix$indexes(m) do m[nc][nr] := -m[nc][nr] end
+	   resignal bounds
+	end negate_row
+
+
+    % Negates the elements in column "nc" in "m".
+    
+    negate_col = proc (m: cvt, nc: int) signals (bounds)
+	c: column := m[nc]
+	   resignal bounds
+	for i: int in column$indexes(c) do c[i] := -c[i] end
+	end negate_col
+    
+
+    % Returns the number of columns in "m".
+    
+    n_columns = proc (m: cvt) returns (int)
+	return(matrix$size(m))
+	end n_columns
+    
+    
+    % Returns "true" iff all elements in row "nr" starting in column "nc" of
+    % "m" are zero.  Signals "bounds" if "nr" is out of bounds.
+    
+    is_0_row = proc (m: cvt, nc, nr: int) returns (bool) signals (bounds)
+	for e: element in row_elements(up(m), nc, nr) do
+	    if e ~= zero then return(false) end
+	    end resignal bounds
+	return(true)
+	end is_0_row
+
+
+    % Returns a copy of "m".
+    
+    copy = proc (m: cvt) returns (cvt)
+		where element in copy_type
+	return(matrix$copy(m))
+	end copy
+
+    
+    % Returns a string representation for "m".
+    
+    unparse = proc (m: cvt) returns (string)
+	s: string := ""
+	for nr: int in column$indexes(m[1]) do
+	    s := string$append(s || unparse_row(up(m), nr), '\n')
+	    end
+	return(s)
+	end unparse
+    
+    
+    % Returns a string representation for row "nr" of "m".
+    
+    unparse_row = proc (m: cvt, nr: int) returns (string) signals (bounds)
+		where element in unparse_type
+	s: string := ""
+	for c: column in matrix$elements(m) do
+	    s := s || element$unparse(c[nr]) || "   "
+	    end resignal bounds
+	return(s)
+	end unparse_row
+    
+            
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where element in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end numeric_matrix

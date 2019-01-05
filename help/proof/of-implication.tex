@@ -1,0 +1,32 @@
+\doc{Proofs of implications}
+\ref{proof-of-implication}
+\ref{=>-method}
+
+Proofs of implications can be carried out using a simplified form of a proof by
+cases.  The command 
+\begin{verbatim}
+prove t1 => t2 by =>
+\end{verbatim}
+directs LP to prove the subgoal \fq{t2'} using the hypothesis \fq{t1'}, where
+\fq{t1'} and \fq{t2'} are obtained as in a proof by cases, that is, by
+substituting new \llink{constant}{constants} for the free variables of \fq{t1}
+in both \fq{t1} and \fq{t2}.  The name of the hypothesis has the form
+\s{simpleId}\fq{ImpliesHyp.}\s{number}, where \s{simpleId} is the current value
+of the \setlink{name-prefix} setting.
+\p
+For example, given the axioms \fq{a => b} and \fq{b => c}, the command
+\fq{prove a => c by =>} orients the hypothesis \fq{a} into a rewrite rule
+\fq{a -> true} and attempts to prove \fq{c} as a subgoal.  The proof succeeds
+automatically: LP orients the hypothesis into a rewrite rule \fq{a -> true},
+uses it to normalize the first axiom to \fq{b}, orients the result into a
+rewrite rule \fq{b -> true}, and uses it to normalize the second axiom to
+\fq{c}, which establishes the subgoal.
+\p
+The command \fq{resume by =>} directs LP to resume the proof of the current
+conjecture using this method.  It is applicable only when the current
+conjecture has been reduced to an implication.
+\p
+Users should beware of using the \fq{=>} proof method prematurely, because it
+causes LP to replace all free variables in the conjecture by constants, which
+makes it impossible to continue the proof by induction on one of those
+variables. 

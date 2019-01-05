@@ -1,0 +1,21 @@
+\doc{Unification}
+\ref{unification}
+\ref{unifiers}
+\ref{unify}
+
+Two terms are \def{unifiable} if they have a common instance, i.e., if there is
+a \glink{substitution}{substitution} (called a \def{unifier} of the
+terms) that transforms them both into the same term.  When two terms contain
+operators with ac or commutative \llink{operator-theory}{operator theories}, or
+when they contain \llink{quantifier}{quantifiers}, they are unifiable if there
+is a substitution that transforms them into terms that are equivalent modulo
+these theories and changes of bound variables.
+\p
+A set of unifiers for two terms is \def{complete} if every unifier of the two
+terms is a substitution instance of some unifier in the set.  A unifier of two
+terms is a \def{most general unifier} if, whenever it is (equivalent to) a
+substitution instance of another unifier, that other unifier is also
+(equivalent to) a substitution instance of it.  For any two unifiable terms
+containing ac and/or commutative operators, there is a finite set of most
+general unifiers that is complete.
+

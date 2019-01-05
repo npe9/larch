@@ -1,0 +1,338 @@
+#extend
+
+% An "axiom_system" is an abstraction of the common properties of systems (of
+% type "systype") of deduction rules, equations, induction rules, operator
+% theories, and rewrite rules.  It usually (i.e., except for "op_system")
+% consists of lists of propositions of type "atype".  Annotations for each
+% proposition indicate whether it is active and/or immune.
+
+axiom_system = cluster [atype, systype: type] is
+	add, change_immunity, delete, delete_op, delete_subset, display, 
+	elements, fetch, get_ops, named_subset, size, subsystem_ops, 
+	subsystem_vars, write
+	    where systype has elements: itertype (systype) yields (prop),
+		  atype has get_name: proctype (atype) returns (name)
+					signals (none)
+
+    usual_type = { t | t has get_new: proctype (systype) returns (prop_list),
+			     lists: itertype (systype) yields (prop_list)}
+    
+    prop = proposition[atype]
+    prop_list = linked_list[prop]
+    prop_arr = array[prop]
+    prop_seq = sequence[prop]
+    item = struct[prop: prop, label: string]
+    item_list = list[item]
+    
+    rep = null
+    
+
+    % Adds "a" as a new axiom to "asys" with activity and immunity given by
+    % "ai" (except does not make axioms with no ancestors ancestor immune).
+    % Puts "a" the end of the list of new axioms if "last" is true; otherwise
+    % inserts "a" at the beginning of the list.
+
+    add = proc (asys: systype, a: atype, ai: ai_settings, last: bool)
+		where systype in usual_type
+	pr: prop := prop$create(a, ai)
+	if ai.immune = immunity_anc cand a.name.depth < 2 then
+	   pr.immune := immunity_off
+	   end except when none: fail("axiom_system$add") end
+	if last
+	   then prop_list$addh(asys.new, pr)
+	   else prop_list$addl(asys.new, pr)
+	   end
+	end add
+
+
+    % Sets the immunity of all axioms in "asys" named by "ns" to "immune".
+    % Moves deimmunized axioms to "asys.new".  ASSUMES: "ns" contains the
+    % appropriate axiom type.
+
+    change_immunity = proc (asys: systype, ns: name_set, immune: immunity)
+		where systype in usual_type
+	for plist: prop_list in systype$lists(asys) do
+	    for pr: prop in prop_list$elements(plist) do
+		if pr.immune ~= immune 
+		     cand name_set$contains_name(ns, pr.prop.name) then
+		   if immune.level < pr.immune.level cand plist ~= asys.new then
+		      prop_list$move_current_to_end(plist, asys.new)
+		      end
+		   if immune = immunity_anc cand pr.prop.name.depth < 2
+		      then pr.immune := immunity_off
+		      else pr.immune := immune
+		      end
+		   end except when none: fail("axiom_system$change_immunity") end
+		end
+	    end
+	end change_immunity
+
+
+    % Deletes and returns the axiom named "n" from "asys".  Signals "missing"
+    % if there is no such axiom.
+
+    delete = proc (asys: systype, n: name) returns (prop) signals (missing)
+		where systype in usual_type
+	for plist: prop_list in systype$lists(asys) do
+	    for pr: prop in prop_list$elements(plist) do
+		if pr.prop.name = n then return(prop_list$delete(plist)) end
+		end except when none: fail("axiom_system$delete") end
+	    end
+	signal missing
+	end delete
+
+
+    % Deletes all axioms in "asys" that contain "op".  Returns a "prop_list"
+    % containing the deleted axioms.
+
+    delete_op = proc (asys: systype, op: operator) returns (prop_list)
+		where systype in usual_type,
+		      atype has get_ops: proctype (atype) returns (op_set)
+	dlist: prop_list := prop_list$[]
+	for plist: prop_list in systype$lists(asys) do
+	    for pr: prop in prop_list$elements(plist) do
+		if op_set$exists(pr.prop.ops, op) then
+		   prop_list$move_current_to_end(plist, dlist)
+		   end
+		end
+	    end
+	return(dlist)
+	end delete_op
+
+
+    % Deletes all axioms in "asys" named by "ns".  Returns a "prop_list"
+    % containing the deleted axioms.  ASSUMES: "ns" contains the appropriate
+    % axiom type.
+
+    delete_subset = proc (asys: systype, ns: name_set) returns (prop_list)
+		where systype in usual_type
+	dlist: prop_list := prop_list$[]
+	for plist: prop_list in systype$lists(asys) do
+	    for pr: prop in prop_list$elements(plist) do
+		if name_set$contains_name(ns, pr.prop.name) then
+		   prop_list$move_current_to_end(plist, dlist)
+		   end except when none: fail("axiom_system$delete_subset") end
+		end
+	    end
+	return(dlist)
+	end delete_subset
+
+
+    % Displays the facts in "ns".
+    % ENHANCE: display hardwired axioms
+
+    display = proc (p: printer, asys: systype, label1: string, ns: name_set, 
+	            stab: symtab) signals (interrupt)
+		where atype in display_type
+	max_indent = 12
+	items: item_list := item_list$[]
+	indent: int := 0
+	for pr: prop in systype$elements(asys) do
+	    if ~name_set$contains_name(ns, pr.prop.name) then continue end
+	    label: string := name$unparse(pr.prop.name)
+	    if pr.immune.level > immunity_off.level cor ~pr.active then
+	       label := label || "("
+	       if pr.immune.level = immunity_anc.level then 
+		  label := label || "i"
+		elseif pr.immune.level = immunity_on.level then
+		  label := label || "I"
+		end
+	       if ~pr.active then label := label || "P" end
+	       label := label || ")"
+	       end
+	    label := label || ": "
+	    item_list$addh(items, item${prop: pr, label: label})
+	    len: int := string$size(label)
+	    if len <= max_indent then indent := int$max(indent, len) end
+	    end	except when none: fail("axiom_system$display") end
+	if item_list$empty(items) then return end
+	printer$text(p, "\n" || label1 || ":\n\n")
+	item_list$sort(items, name_lt)
+	for i: item in item_list$elements(items) do
+	    if front_end$interrupt() then signal interrupt end
+	    printer$text(p, "~{~2I")
+	    printer$puts(p, padr(i.label, indent))
+	    atype$print(p, i.prop.prop, stab)
+	    printer$text(p, "~}\n")
+	    end
+	printer$newline(p)
+	end display
+    
+    
+    % (Internal procedure) Returns "true" if "i1.prop.prop.name" collates
+    % before "i2.prop.prop.name".
+
+    name_lt = proc (i1, i2: item) returns (bool)
+	return(name$lt(i1.prop.prop.name, i2.prop.prop.name))
+	   except when none: fail("axiom_system$name_lt") end
+	end name_lt
+    
+
+    % Yields the propositions in "asys".
+
+    elements = iter (asys: systype) yields (prop)
+		where systype in usual_type
+	for plist: prop_list in systype$lists(asys) do
+	    for pr: prop in prop_list$elements(plist) do yield(pr) end
+	    end
+	end elements
+
+
+    % Returns the proposition named "n" from "asys".  Signals "missing" if
+    % there is no such proposition.
+
+    fetch = proc (asys: systype, n: name) returns (prop) signals (missing)
+	for pr: prop in systype$elements(asys) do
+	    if pr.prop.name = n then return(pr) end
+	    end except when none: fail("axiom_system$fetch") end
+	signal missing
+	end fetch
+    
+    
+    % Returns the set of operators in "asys".
+
+    get_ops = proc (asys: systype) returns (op_set)
+		where systype in usual_type,
+		      atype has get_ops: proctype (atype) returns (op_set)
+	os: op_set := op_set$[]
+	for pr: prop in elements(asys) do op_set$merge(os, pr.prop.ops) end
+	return(os)
+	end get_ops
+
+
+    % Returns a sequence containing all facts in "asys" named by "ns".
+    % ASSUMES: "ns" contains the appropriate axiom type.
+
+    named_subset = proc (asys: systype, ns: name_set) returns (axiom_seq)
+		where systype in usual_type
+	axiom_seq = sequence[atype]
+	axiom_arr = array[atype]
+	axioms: axiom_arr := axiom_arr$[]
+	for plist: prop_list in systype$lists(asys) do
+	    for pr: prop in prop_list$elements(plist) do
+		if name_set$contains_name(ns, pr.prop.name) then
+		   axiom_arr$addh(axioms, pr.prop)
+		   end except when none: fail("axiom_system$named_subset") end
+		end
+	    end
+	return(axiom_seq$a2s(axioms))
+	end named_subset
+
+
+    % Returns the number of axioms in "asys".
+
+    size = proc (asys: systype) returns (int)
+		where systype in usual_type
+	n: int := 0
+	for plist: prop_list in systype$lists(asys) do
+	    n := n + prop_list$size(plist)
+	    end
+	return(n)
+	end size
+    
+    
+    % Returns the set of operators in the subsystem of "asys" consisting of
+    % those axioms with names in "names".  ASSUMES: "ns" contains the
+    % appropriate axiom type.
+    
+    subsystem_ops = proc (asys: systype, names: name_set) returns (op_set)
+		where systype in usual_type,
+		      atype has get_ops: proctype (atype) returns (op_set)
+	ops: op_set := op_set$[]
+	for pr: prop in elements(asys) do
+	    if name_set$contains_name(names, pr.prop.name) then 
+	       op_set$merge(ops, pr.prop.ops)
+	       end except when none: fail("axiom_system$subsystem_ops") end
+	    end
+	return(ops)
+	end subsystem_ops
+
+
+    % Returns the set of variables in the subsystem of "asys" consisting of
+    % those axioms with names in "names".  ASSUMES: "ns" contains the
+    % appropriate axiom type.
+
+    subsystem_vars = proc (asys: systype, names: name_set) returns (var_set)
+		where systype in usual_type,
+		      atype has get_vars: proctype (atype) returns (var_set)
+	vars: var_set := var_set$[]
+	for pr: prop in elements(asys) do
+	    if name_set$contains_name(names, pr.prop.name) then 
+	       var_set$merge(vars, pr.prop.vars)
+	       end except when none: fail("axiom_system$subsystem_vars") end
+	    end
+	return(vars)
+	end subsystem_vars
+
+
+    % Writes commands to re-read the axioms named by "ns", along with enough
+    % "set" commands to preserve their root names, activity, and immunity.
+    % Assumes that "ai.active" and "ai.immune" are the settings established by
+    % the last write; mutates "ai" to contain the settings established by this
+    % write.
+
+    write = proc (p: printer, asys: systype, label: string, ns: name_set, 
+	          stab: symtab, ai: ai_settings)
+		where atype in display_type
+
+	items: item_list := item_list$[]
+	for pr: prop in systype$elements(asys) do
+	    if ~name_set$contains_name(ns, pr.prop.name) then continue end
+	    item_list$addh(items, item${prop: pr, label: ""})
+	    end except when none: fail("axiom_system$write") end
+	if item_list$empty(items) then
+	   printer$text(p, "%~ No~ " || slower(label) || ".\n\n")
+	   return
+	   end
+	printer$text(p, "%~ " || label || "\n\n")
+	item_list$sort(items, name_lt)
+	assert_line: int := 0		% Nonzero when "assert" printed
+	last_name: string := ""
+	for i: item in item_list$elements(items) do
+	    pr: prop := i.prop
+            pname: string := name$unparse(pr.prop.name.root)
+	       except when none: fail("axiom_system$write") end
+            if pname ~= last_name then
+	       assert_line := write_break(p, assert_line)
+	       printer$puts(p, "set name " || pname)
+	       printer$newline(p)
+               last_name := pname
+	       end
+	    if pr.active ~= ai.active then
+	       assert_line := write_break(p, assert_line)
+	       printer$puts(p, "set activity " || on_off(pr.active))
+	       printer$newline(p)
+	       ai.active := pr.active
+	       end
+	    if pr.immune ~= ai.immune then
+	       assert_line := write_break(p, assert_line)
+	       printer$puts(p, "set immunity " || pr.immune.name)
+	       printer$newline(p)
+	       ai.immune := pr.immune
+	       end
+	    if assert_line = 0
+	       then assert_line := p.total_lines + 1
+	            printer$text(p, "~{~2Iassert~1A")
+	       else printer$text(p, ";\n")
+	       end
+	    atype$print(p, pr.prop, stab)
+            end
+        write_break(p, assert_line)
+	printer$text(p, "\n\n")
+	end write
+
+    
+    % Writes a terminating ".." for a group of axioms if an "assert" has been 
+    % written and the axioms spilled over onto following lines.  Returns 0 to
+    % indicate that a new "assert" must be written for the next axiom.
+    
+    write_break = proc (p: printer, assert_line: int) returns (int)
+	if assert_line > 0 then
+	   printer$text(p, "~}\n")
+	   if p.total_lines > assert_line then printer$text(p, "  ..\n") end
+	   end
+	return(0)
+	end write_break
+    
+
+    end axiom_system

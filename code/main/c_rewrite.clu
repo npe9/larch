@@ -1,0 +1,10 @@
+#extend
+
+% Processes the "rewrite" command.
+    
+c_rewrite = proc (i: interactive) signals (error)
+    normalize_work(i, false)
+       resignal error
+    end c_rewrite
+    
+    

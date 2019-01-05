@@ -1,0 +1,568 @@
+#extend
+
+% A "precedence" imposes a partial ordering on operators.  It contains a
+% directed graph in which two operators "a" and "b" can be connected in one of
+% three ways ("a > b", "a = b", or "a >= b") or can be unconnected.  To permit
+% efficient comparisons, the transitive closure of the graph is computed after
+% each addition of an edge, as follows.
+
+%       Adding  	 To		Gives
+
+%	a = b 				b = a
+
+% 			b R c
+%		     >    =    >=
+%		  +----+-----+----+
+%	     	> |  > |  >  | >  |
+%                 +----+-----+----+
+%	a R b   = |  > |  =  | >= |     Table gives  a R c
+%                 +----+-----+----+
+%	       >= |  > |  >= | >= |
+%                 +----+-----+----+
+
+% 			b R a
+%		     >    =    >=
+%		  +----+-----+----+
+%	     	> |  I |  I  | I  |
+%                 +----+-----+----+
+%	a R b   = |  I |  =  | =  |     Table gives  a R b  or  "Inconsistent"
+%                 +----+-----+----+
+%	       >= |  I |  =  | =  |
+%                 +----+-----+----+
+
+% A precedence graph is consistent: it does not contain both "a > b" and "b >
+% a" for some "a" and "b".  Information that would make the graph inconsistent
+% cannot added to the precedence.  Once information is entered in a precedence
+% graph, it cannot be deleted.
+
+% A precedence also contains sets of "bottom" and "top" operators.  If "a" and
+% "b" are not related in the precedence graph and "a" is a bottom operator and
+% "b" is not, or "b" is a top operator and "a" is not, then then the "compare"
+% operation will automatically add "a < b" to the precedence graph.  Bottom and
+% top operators can be added to and deleted from the precedence.  The action
+% taken by the "compare" command to commit an ordering relation made on the
+% basis of bottom and top operators ensures that adding or deleting a top or
+% bottom operator does not undo any previously-existing relations.
+
+% Precedences on operators are used by simplification orderings on terms.
+
+
+precedence = cluster is
+	new, bottom, commit, compare, delete_bottom, delete_op, delete_top, 
+	display, equivalent_ops, is_bottom, is_top, make_equal, make_higher, 
+	make_higher_or_equal, pop, push, top, write, copy, _gcd, decode,
+	encode
+
+
+    % The "graph" in the rep is kept transitively closed so that we can compare
+    % two operators in nearly constant time.  The "bottom" and "top" sets are
+    % the sets of bottom and top operators in the precedence.
+    
+    % Rep invariants:
+    % (1) "graph" is transitively closed
+    % (2) "bottom" and "top" are disjoint
+
+    rep = record[graph: p_graph, bottom, top: op_set]
+
+
+    % Returns a new precedence containing no operator.
+
+    new = proc () returns (cvt)
+	return(rep${graph: p_graph$[], bottom, top: op_set$[]})
+	end new
+
+
+    % Declares "ops" to be at the bottom of the precedence "p".  Signals
+    % "top(op)" if some "op" in "ops" is in "p.top".
+
+    bottom = proc (p: cvt, ops: op_set) signals (top(operator))
+	signal top(op_set$any_element(op_set$intersection(p.top, ops)))
+	   except when empty: end
+        p.bottom := p.bottom + ops
+	end bottom
+
+
+    % Commits all additions made to the precedence.  Signals "mismatch" if "np"
+    % does not equal the height of the current stack.  Signals "empty" if the
+    % stack is empty.
+    
+    commit = proc (p: cvt, np: int)  signals (empty, mismatch)
+	p_graph$commit(p.graph, np)
+	   resignal empty, mismatch
+	end commit
+    
+    
+    % Returns the result ("gt", "gt_eq", "eq", "lt_eq", "lt", or "undefined")
+    % of comparing "op1" and "op2" in "p".  
+
+    compare = proc (p: cvt, op1, op2: operator) returns (xcomparison)
+	if op1 = op2 then return(xcomparison$make_eq()) end
+	tagcase p_graph$edge_value(p.graph, op1, op2)
+	   tag gt: return(xcomparison$make_gt())
+	   tag gt_eq: return(xcomparison$make_gt_eq())
+	   tag eq: return(xcomparison$make_eq())
+	   end except when missing: end
+	tagcase p_graph$edge_value(p.graph, op2, op1)
+	   tag gt: return(xcomparison$make_lt())
+	   tag gt_eq: return(xcomparison$make_lt_eq())
+	   tag eq: return(xcomparison$make_eq())
+	   end except when missing: end
+	if op_set$exists(p.bottom, op1) then
+	   if ~op_set$exists(p.bottom, op2) 
+		cor op1 = op_true() cor op1 = op_false() then    % FIX??
+	      make_higher(up(p), op2, op1)
+	      tracer$committed_bottom(op2, op1)		% FIX??
+	      return(xcomparison$make_lt())
+	      end
+	 elseif op_set$exists(p.top, op1) then
+	   if ~op_set$exists(p.top, op2) then
+	      make_higher(up(p), op1, op2)		% FIX??
+	      tracer$committed_top(op1, op2)
+	      return(xcomparison$make_gt())
+	      end
+	 elseif op_set$exists(p.bottom, op2) then
+	   make_higher(up(p), op1, op2)
+	   tracer$committed_bottom(op1, op2)		% FIX??
+	   return(xcomparison$make_gt())
+	 elseif op_set$exists(p.top, op2) then
+	   make_higher(up(p), op2, op1)
+	   tracer$committed_top(op2, op1)		% FIX??
+	   return(xcomparison$make_lt())
+	 end
+	return(xcomparison$make_undefined())
+	end compare
+
+					    
+    % Deletes "op" from the set of bottom operators in "p".
+
+    delete_bottom = proc (p: cvt, op: operator) signals (missing)
+	op_set$delete(p.bottom, op) resignal missing
+	end delete_bottom
+
+
+    % Deletes "op" from "p".
+
+    delete_op = proc (p: cvt, op: operator)
+	p_graph$delete_node(p.graph, op) except when missing: end
+	op_set$delete(p.bottom, op) except when missing: end
+	op_set$delete(p.top, op) except when missing: end
+	end delete_op
+
+
+    % Deletes "op" from the set of top operators in "p".
+
+    delete_top = proc (p: cvt, op: operator) signals (missing)
+	op_set$delete(p.top, op) resignal missing
+	end delete_top
+
+
+    % Displays on "pr" the current information in "p" for the operators in
+    % "ops".  Specifically, for each set of equivalent operators, prints all
+    % the operators that they are greater than or equal to, and then those that
+    % they are strictly greater than.  Also displays the sets of top and bottom
+    % operators.
+
+    display = proc (p: cvt, pr: printer, ops: op_set, stab: symtab)
+		signals (interrupt)
+	if op_set$empty(ops) then return end
+	greater, lesseq, less: op_set
+	for greater1, lesseq1, less1: op_set in relations(p) do
+	    if front_end$interrupt() then signal interrupt end
+	    greater := op_set$intersection(greater1, ops)
+	    if op_set$empty(greater) then continue end
+	    lesseq := dominant_ops(p.graph, op_set$intersection(lesseq1, ops))
+	    less := dominant_ops(p.graph, op_set$intersection(less1, ops))
+	    if op_set$size(greater) > 1 then
+	       printer$text(pr, "~{~2I")
+	       printed: bool := false
+	       for op: operator in op_set$elements(greater) do
+		   if printed then printer$text(pr, " = ") end
+		   operator$print(pr, op, stab)
+		   printed := true
+		   end
+	       printer$text(pr, "~}\n")
+	       end
+	    op1: operator := op_set$any_element(greater)
+	    if ~op_set$empty(lesseq) then
+	       printer$text(pr, "~{~2I")
+	       operator$print(pr, op1, stab)
+	       printer$text(pr, " >= ")
+	       display_op_set(pr, lesseq, stab)
+	       printer$text(pr, "~}\n")
+	       end
+	    if ~op_set$empty(less) then
+	       printer$text(pr, "~{~2I")
+	       operator$print(pr, op1, stab)
+	       printer$text(pr, " > ")
+	       display_op_set(pr, less, stab)
+	       printer$text(pr, "~}\n")
+	       end
+	    end
+	printer$newline(pr)
+	opa: op_arr := op_set$s2arr(op_set$intersection(p.bottom, ops))
+	print_arr_with_ids[operator](pr, "bottom", opa, stab)
+	opa := op_set$s2arr(op_set$intersection(p.top, ops))
+	print_arr_with_ids[operator](pr, "top", opa, stab)
+	end display
+
+
+    display_op_set = proc (pr: printer, ops: op_set, stab: symtab)
+	if op_set$size(ops) = 0 then printer$puts(pr, "( )")
+	 elseif op_set$size(ops) = 1 then
+	   operator$print(pr, op_set$any_element(ops), stab)
+	 else printer$text(pr, "~{(~J")
+	      printed: bool := false
+	      opa: op_arr := op_set$s2arr(ops)
+	      quicksort[operator](opa, 1, op_arr$size(opa), operator$lt)
+	      for op: operator in op_arr$elements(opa) do
+		  if printed then printer$text(pr, ", ") end
+		  operator$print(pr, op, stab)
+		  printed := true
+		  end
+	      printer$text(pr, ")~}")
+	 end
+	end display_op_set
+       
+       
+    % Yields the operators that are equivalent to "op" in "p", including "op"
+    % itself.
+
+    equivalent_ops = iter (p: cvt, op: operator) yields (operator)
+	yield(op)
+	for succ: operator, s: sym in p_graph$successors(p.graph, op) do
+	    if sym$is_eq(s) then yield(succ) end
+	    end
+	end equivalent_ops
+
+
+    % Returns "true" if "op" is at the bottom of "p".
+
+    is_bottom = proc (p: cvt, op: operator) returns (bool)
+	return(op_set$exists(p.bottom, op))
+	end is_bottom
+
+
+    % Returns "true" if "op" is at the top of "p".
+
+    is_top = proc (p: cvt, op: operator) returns (bool)
+	return(op_set$exists(p.top, op))
+	end is_top
+
+
+    % Unites the equivalence classes of "op1" and "op2" in "p".  Does not
+    % change "p", and signals "ordered(opa, opb)", if "opa < opb" is in "p" and
+    % "{opa, opb} = {op1, op2}".
+
+    make_equal = proc (p: cvt, op1, op2: operator)
+		   signals (ordered(operator, operator))
+	if op1 = op2 then return end
+	tagcase p_graph$edge_value(p.graph, op1, op2)
+	   tag eq: return
+	   tag gt: signal ordered(op2, op1)
+	   tag gt_eq:
+	   end except when missing: end
+	tagcase p_graph$edge_value(p.graph, op2, op1)
+	   tag eq: return
+	   tag gt: signal ordered(op1, op2)
+	   tag gt_eq:
+	   end except when missing: end
+	closure_edge(p.graph, op1, eq_sym, op2)
+	closure_edge(p.graph, op2, eq_sym, op1)
+	end make_equal
+
+
+    % Adds "op1 > op2" to "p" and closes "p" under transitivity.  Does nothing
+    % if "op1 > op2" is already in "p".  Signals "same" if "op1" and "op2" are
+    % the same operator.  Does not change "p" and signals "inconsistent" if
+    % "op2 >= op1" is in "p".
+
+    make_higher = proc (p: cvt, op1, op2: operator) 
+		    signals (same, inconsistent)
+	if op1 = op2 then signal same end
+	if p_graph$is_edge(p.graph, op2, op1) then signal inconsistent end
+	tagcase p_graph$edge_value(p.graph, op1, op2)
+	   tag gt: return
+	   tag eq: signal inconsistent
+	   tag gt_eq:
+	   end except when missing: end
+	closure_edge(p.graph, op1, gt_sym, op2)
+	end make_higher
+
+
+    % Adds "op1 >= "op2" to "p" and closes "p" under transitivity.  Signals
+    % "inconsistent" if "op2 > op1".  Signals "redundant" if "op1 > op2" or
+    % "op1 = op2" in "p".
+
+    make_higher_or_equal = proc (p: cvt, op1, op2: operator)
+			     signals (inconsistent, redundant)
+	if op1 = op2 then signal redundant end
+	if p_graph$is_edge(p.graph, op1, op2) then signal redundant end
+	tagcase p_graph$edge_value(p.graph, op2, op1)
+	   tag gt_eq: make_equal(up(p), op1, op2)
+	   tag gt:    signal inconsistent
+	   tag eq:    signal redundant
+	   end except when missing: end
+	closure_edge(p.graph, op1, gt_eq_sym, op2)
+	end make_higher_or_equal
+
+    
+    % Pops the state of "p.graph".  Signals "mismatch" if "np" does not equal
+    % the height of the current stack.  Signals "empty" if the stack is empty.
+    
+    pop = proc (p: cvt, np: int) signals (empty, mismatch)
+	p_graph$pop(p.graph, np)
+	   resignal empty, mismatch
+	end pop
+    
+    
+    % Pushes the state of "p.graph".  Returns the height of the stack.
+    
+    push = proc (p: cvt) returns (int)
+	return(p_graph$push(p.graph))
+	end push
+    
+
+    % Declares "ops" to be be at the top of the precedence "p". Signals
+    % "bottom(op)" if some "op" in "ops" is in "p.bottom".
+
+    top = proc (p: cvt, ops: op_set) signals (bottom(operator))
+	signal bottom(op_set$any_element(op_set$intersection(p.bottom, ops)))
+	   except when empty: end
+        p.top := p.top + ops
+	end top
+
+
+    % Writes LP commands to recreate the current information in "p" for the
+    % operators in "ops".
+
+    write = proc (p: cvt, pr: printer, ops: op_set, stab: symtab)
+	if op_set$empty(ops) then return end
+	greater, less, lesseq: op_set
+	for greater1, lesseq1, less1: op_set in relations(p) do
+	    greater := op_set$intersection(greater1, ops)
+	    if op_set$empty(greater) then continue end
+	    lesseq := dominant_ops(p.graph, op_set$intersection(lesseq1, ops))
+	    less := dominant_ops(p.graph, op_set$intersection(less1, ops))
+	    if op_set$size(greater) > 1 then
+	       line: int := pr.total_lines
+	       printer$text(pr, "register height ~2I~{")
+	       printed: bool := false
+	       for op: operator in op_set$elements(greater) do
+		   if printed then printer$text(pr, " = ") end
+		   operator$print(pr, op, stab)
+		   printed := true
+		   end
+	       printer$text(pr, "~}\n")
+	       if pr.total_lines > line + 1 then printer$text(pr, "..\n") end
+	       end
+	    op1: operator := op_set$any_element(greater)
+	    if ~op_set$empty(lesseq) then
+	       line: int := pr.total_lines
+	       printer$text(pr, "register height ~{")
+	       operator$print(pr, op1, stab)
+	       printer$text(pr, "~2I >= ")
+	       display_op_set(pr, lesseq, stab)
+	       printer$text(pr, "~}\n")
+	       if pr.total_lines > line + 1 then printer$text(pr, "..\n") end
+	       end
+	    if ~op_set$empty(less) then
+	       line: int := pr.total_lines
+	       printer$text(pr, "register height ~{")
+	       operator$print(pr, op1, stab)
+	       printer$text(pr, "~2I > ")
+	       display_op_set(pr, less, stab)
+	       printer$text(pr, "~}\n")
+	       if pr.total_lines > line + 1 then printer$text(pr, "..\n") end
+	       end
+	    end
+	printer$newline(pr)
+	opa: op_arr := op_set$s2arr(op_set$intersection(p.bottom, ops))
+	write_arr_with_ids[operator](pr, "register bottom", opa, stab)
+	opa := op_set$s2arr(op_set$intersection(p.top, ops))
+	write_arr_with_ids[operator](pr, "register top", opa, stab)
+	printer$newline(pr)
+	end write
+
+
+    % (Internal procedure) Yields triples of sets of operators, such that all
+    % those in the first set are equivalent, and are all greater than or equal
+    % to all those in the second, and are strictly greater than all those in
+    % the third.  The set of all such pairs yielded completely describes the
+    % precedence graph in "p".  An attempt is made to yield the triples in a
+    % "maximal-first" order.
+
+    relations = iter (p: rep) yields (op_set, op_set, op_set)
+	max: op_set := maximal_nodes(p.graph)
+	already_done: op_set := op_set$[]
+	for op_eq, op_gt_eq, op_gt: op_set
+	      in relation_work(p.graph, max, already_done) do
+	    yield(op_eq, op_gt_eq, op_gt)
+	    end
+	end relations
+
+
+    % (Internal procedure) For each operator in "tbd", divides its successors
+    % into three classes: those that are equal to, greater than or equal to, or
+    % strictly greater than it in "r".  Yields those three classes, adds the
+    % operators in the "=" class to "already_done", the set of previously
+    % considered operators, and adds operators in the ">=" and ">" classes to a
+    % set of operators to be considered later.  When all operators in "tbd"
+    % have been considered, invokes itself recursively to consider the deferred
+    % operators.
+
+    relation_work = iter (r: p_graph, tbd: op_set, already_done: op_set)
+		      yields (op_set, op_set, op_set)
+	tbd2: op_set := op_set$[]
+	for op: operator in op_set$elements(tbd) do
+	    if op_set$exists(already_done, op) then continue end
+	    op_eq: op_set := op_set$[op]
+	    op_gt_eq: op_set := op_set$[]
+	    op_gt: op_set := op_set$[]
+	    for to: operator, val: sym in p_graph$successors(r, op) do
+		tagcase val
+		   tag eq: op_set$insert_unique(op_eq, to)
+			   op_set$insert(already_done, to)
+		   tag gt_eq: op_set$insert_unique(op_gt_eq, to)
+			      op_set$insert(tbd2, to)
+		   tag gt: op_set$insert_unique(op_gt, to)
+			   op_set$insert(tbd2, to)
+		   end except when exists: end
+		end
+	    yield(op_eq, op_gt_eq, op_gt)
+	    op_set$insert(already_done, op)
+	    end
+	tbd2 := tbd2 - already_done
+	if op_set$empty(tbd2) then return end
+	for op_eq2, op_gt_eq2, op_gt2: op_set
+	      in relation_work(r, tbd2, already_done) do
+	    yield(op_eq2, op_gt_eq2, op_gt2)
+	    end
+	end relation_work
+
+
+    % (Internal procedure)  Returns the set of operators in "r" that have no
+    % predecessors via ">" or ">=" edges.
+
+    maximal_nodes = proc (r: p_graph) returns (op_set)
+	max: op_set := op_set$[]
+	for op: operator in p_graph$nodes(r) do
+	    for from: operator, val: sym in p_graph$predecessors(r, op) do
+		if ~sym$is_eq(val) then exit not_maximal end
+		end except when not_maximal: continue end
+	    op_set$insert_unique(max, op)
+	    end
+	return(max)
+	end maximal_nodes
+    
+    
+    % (Internal procedure) Returns a maximal subset of "ops", each element of
+    % which has no predecessors in "ops" via ">", ">=", or "=" edges.
+
+    dominant_ops = proc (r: p_graph, ops: op_set) returns (op_set)
+	ops1: op_set := op_set$copy1(ops)
+	for op: operator in op_set$elements(ops) do
+	    for from: operator, val: sym in p_graph$predecessors(r, op) do
+		if op_set$exists(ops1, from) then exit redundant end
+		end except when redundant: op_set$delete(ops1, op) end
+	    end
+	return(ops1)
+	end dominant_ops
+
+
+    % Returns a new precedence containing a copy of the value of "p". (It
+    % suffices to copy the graph and sets in the rep using copy1 because the
+    % elements in the graph and sets are entirely immutable.)
+
+    copy = proc (p: cvt) returns (cvt)
+	return(rep${graph: p_graph$copy(p.graph), 
+		    bottom: op_set$copy1(p.bottom),
+		    top: op_set$copy1(p.top)})
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    
+    % (Internal procedure) Adds the edge "op1 s op2" to "pg" and transitively
+    % closes "pg" according to the first table.  Signals "inconsistent" if the
+    % addition of this edge would make "pg" inconsistent.
+
+    closure_edge = proc (pg: p_graph, op1: operator, s: sym, op2: operator)
+		     signals (inconsistent)
+	if ~p_graph$is_node(pg, op1) then p_graph$insert_node(pg, op1) end
+	if ~p_graph$is_node(pg, op2) then p_graph$insert_node(pg, op2) end
+	begin
+	    opposite: sym := p_graph$edge_value(pg, op2, op1)
+	    if sym$is_gt(opposite) then signal inconsistent end
+	    tagcase s
+	       tag gt: signal inconsistent
+	       tag eq:
+	       tag gt_eq: fail("precedence$%closure_edge: unexpected edge")
+	       end
+	    end except when missing: end
+	begin
+	    current: sym := p_graph$edge_value(pg, op1, op2)
+	    if current = s then return end
+	    if ~sym$is_gt_eq(current) then signal inconsistent end
+	    end except when missing: end
+	p_graph$change_edge(pg, op1, s, op2)
+	for pred: operator, s1: sym in p_graph$predecessors(pg, op1) do
+	    if pred ~= op2 then
+	       new_sym: sym := trans_sym(s1, s)
+	       new_sym := max_sym(new_sym, p_graph$edge_value(pg, pred, op2))
+		  except when missing: end
+	       p_graph$change_edge(pg, pred, new_sym, op2)
+	       end
+	    for succ: operator, s2: sym in p_graph$successors(pg, op2) do
+		if pred = succ then continue end
+		new_sym: sym := trans_sym(s1, trans_sym(s, s2))
+		new_sym := max_sym(new_sym, p_graph$edge_value(pg, pred, succ))
+		   except when missing: end
+		p_graph$change_edge(pg, pred, new_sym, succ)
+		end
+	    end
+	for succ: operator, s2: sym in p_graph$successors(pg, op2) do
+	    if op1 = succ then continue end
+	    new_sym: sym := trans_sym(s, s2)
+	    new_sym := max_sym(new_sym, p_graph$edge_value(pg, op1, succ))
+	       except when missing: end
+	    p_graph$change_edge(pg, op1, new_sym, succ)
+	    end
+	end closure_edge
+
+
+    % (Internal procedure) Returns the "sym" such that "op1 sym op3" follows
+    % from transitivity applied to "op1 s1 op2 s2 op3"
+
+    trans_sym = proc (s1, s2: sym) returns (sym)
+	if s1 = s2 then return(s1) end
+	if sym$is_gt(s1) cor sym$is_gt(s2) then return(gt_sym) end
+	return(gt_eq_sym)
+	end trans_sym
+
+
+    % (Internal procedure) Returns the "sym" such that "op1 sym op2" is the
+    % strongest conclusion that follows from "op1 s1 op2" and "op1 s2 op2".
+
+    max_sym = proc (s1, s2: sym) returns (sym)
+	if sym$is_gt(s1) cor sym$is_gt(s2) then return(gt_sym) end
+	if sym$is_eq(s1) cor sym$is_eq(s2) then return(eq_sym) end
+	return(gt_eq_sym)
+	end max_sym
+
+    
+    end precedence

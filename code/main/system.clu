@@ -1,0 +1,3334 @@
+#extend
+
+% A "system" manages the axioms for a theory: equations, rewrite rules,
+% deduction rules, induction rules, and operator theories.  It is responsible
+% for ordering equations into rewrite rules, for keeping the current conjecture
+% and nonimmune equations, rewrite rules, and deduction rules normalized with
+% respect to the active rewrite rules, for applying active deduction rules to
+% nonimmune equations and rewrite rules, and for performing forward inferences.
+
+% Each "system" contains a subsystem "esys" of equations, "rsys" of rewrite
+% rules, "dsys" of deduction rules, "isys" of induction rules, and "osys" of
+% operator theories.  These subsystems are subdivided further, as described
+% below, so as to maintain certain invariants, coded as follows by two or three
+% letters.  The first letter I stands for "invariant".  The second letter
+% identifies the operations of "critical pairing" (C), "deduction" (D),
+% "flattening" (F), "normalization" (N), and "ordering" (O).  The third letter
+% identifies the object to which the operation has been applied: "current
+% conjecture" (C), "deduction rules" (D), "equations" (E), or "rewrite rules"
+% (R).  If the third letter is absent, it is understood to be D+E+R.
+
+% Code	Invariant
+% ----	---------
+
+% IF	"dsys + esys + rsys" flattened by "osys"
+
+% IDE	"dsys.used + osys" applied to "esys.unoriented + esys.incompatible"
+% IDR	"dsys.used + osys" applied to "rsys - rsys.new"
+
+% ICR	current conjecture normalized by "rsys.unused + rsys.used"
+% IND	"dsys - dsys.new" normalized by "rsys.used"
+% INE	"esys - esys.new" normalized by "rsys.used"
+% INR	"rsys - rsys.new" normalized by "rsys.unused + rsys.used"
+
+% IOE	"esys.incompatible" unorderable by any registry
+
+% ICR	critical pair equations have been computed for all pairs of rewrite 
+%       rules from "rsys.unused + rsys.used" except for those pairs in
+%	"rsys.overlaps"
+
+
+% In more detail, the system is subdivided into the following parts.
+
+% "dsys"	 Invariants						Code
+% ------	 ----------						----
+% "new"		 flattened						IF
+% "normalized"	 flattened, normalized by "rsys.used"			IF, IND
+% "used"	 flattened, normalized by "rsys.used"			IF, IND
+%		 applied to "esys.unoriented + esys.incompatible"	IDE
+%		 applied to "rsys.unused + rsys.used"			IDR
+
+
+% "esys"	 Invariants						Code
+% ------	 ----------						----
+% "new"		 flattened						IF
+% "normalized"	 flattened, normalized by "rsys.used"			IF, INE
+% "unoriented"	 flattened, normalized by "rsys.used"			IF, INE
+%		 subjected to deduction by "dsys.used + osys"		IDE
+%		 (possibly orderable by [extension to] registry)
+% "incompatible" flattened, normalized by "rsys.used"			IF, INE
+%		 subjected to deduction by "dsys.used + osys"		IDE
+%		 unorderable by any registry				IOE
+% "big"		 flattened, normalized by "rsys.used"			IF, INE
+%		 size greater than "esys.beta"
+
+
+% "osys"	 Invariants						Code
+% ------	 ----------						----
+% "new"		 used to flatten all terms in "dsys + esys + rsys"	IF
+%		 free theories applied to "rsys.unused + rsys.used"	IDR
+%		 and to "esys.unoriented + esys.incompatible"		IDE
+
+
+% "rsys"	 Invariants						Code
+% ------	 ----------						----
+% "new"		 flattened						IF
+% "normalized"	 flattened, normalized by "rsys.unused + rsys.used"	IF, INR
+%		 subjected to deduction by "dsys.used + osys"		IDR
+% "unused"	 flattened, normalized by "rsys.unused + rsys.used"	IF, INR
+%		 subjected to deduction by "dsys.used + osys"      	IDR
+% "used"	 flattened, normalized by "rsys.unused + rsys.used"	IF, INR
+%		 subjected to deduction by "dsys.used + osys"		IDR
+%		 used to normalize "rsys - rsys.new"			IF, INR
+
+
+% The completion and ordering procedures are based on the following tasks,
+% which are designed to achieve certain goals while maintaining (and
+% strengthening, as indicated below) the above invariants.  Tasks T1 through T6
+% are designed to put the system into a "stable" state in which the invariants
+% are easier to state.  Task T7 orders equations into rewrite rules using the
+% current registry.  Tasks T8A through T8D can be performed in any order.
+% Unless otherwise noted, each task can be interrupted only at the beginning of
+% each pass through its main loop (if interrupted in the middle of a pass, the
+% entire pass must be repeated).
+
+% T1. "process_new_rewrite_rules"
+% ---------------------------------
+%
+% Goal:  "rsys.new" is empty
+% INR.1: "rsys" normalized by "rsys.unused + rsys.used"
+% IDR.1: "dsys.used + osys" applied to "rsys"
+% Signals: "inconsistent" if an inconsistency is detected
+%
+% Action: For each rewrite rule "rr" in "rsys.new"
+% (a) if "rr" is immune, move it to "rsys.normalized", and loop
+% (b) if "rr.left" is reducible, convert the reduced rewrite rule into an
+%     equation, move it to "esys.new", and loop
+% (c) normalize "rr.right" and "rr.conditions"
+% (d) discard "rr" if its conditions normalize to "false"
+% (e) apply "dsys.used + osys" to "rr"
+% (f) discard "rr" and loop if a reversible deduction rule was applied
+% (g) move "rr" to "rsys.normalized"
+
+
+% T2. "internormalize_rewriting_system"
+% -------------------------------------
+%
+% Goal:  "rsys.new + rsys.normalized" is empty
+% INC.1: current conjecture normalized by "rsys"
+% INR.2: "rsys" normalized by "rsys"
+% Signals: "proved" if current conjecture normalizes to an identity
+%          "inconsistent" if an inconsistency is detected
+%
+% Action: For each rewrite rule "rr" in "rsys.normalized"
+% (a) if "rr" is inactive, move it to "rsys.used", and goto (j)
+% (b) if "rr" reduces the current conjecture, normalize the current conjecture
+%     by "rsys.unused + rsys.used + {rr}"; signal proved if an identity results
+% (c) reduce "rr1.left" by "rr" for all nonimmune rewrite rules "rr1" in 
+%     "rsys - {rr}", converting any rewrite rules that reduce to equations,
+%     removing pairs involving them from "rsys.overlaps", and moving them to
+%     "esys.new"
+% (d) move "rr" from "rsys.normalized" to "rsys.unused"
+% (e) reduce "rr1.right" by "rr" for all nonimmune rewrite rules "rr1" in 
+%     "rsys"
+% (f) normalize "rr1.right" and "rr1.conditions" by "rsys.unused + rsys.used" 
+%     for all rewrite rules "rr1" reduced in (e)
+% (g) delete all rewrite rules that normalize to identities, for example,
+%     because their conditions normalize to "false"
+% (h) apply "dsys.used + osys" to all rewrite rules normalized in (f)
+% (i) delete all rewrite rules to which reversible deduction rules were applied
+% (j) update "rsys.overlaps" for all rewrite rules affected in (f) and (h)
+% (k) add "<rr, rr1>" to "rsys.overlaps" for all rewrite rules "rr1" in
+%     "rsys.unused + rsys.used"
+
+
+% T3. "apply_unused_rewrite_rules"
+% --------------------------------
+
+% Goal:  "rsys" = "rsys.used"
+% INE.3: "esys - esys.new" normalized by "rsys"
+% IND.3: "dsys - dsys.new" normalized by "rsys"
+% ICR.3: critical pair equations have been computed for all pairs of rewrite 
+%        rules from "rsys" except for those pairs in "rsys.overlap"
+%
+% Action
+% (a) reduce all nonimmune equations in "esys - esys.new" by "rsys.unused"
+% (b) move any reduced equations to "esys.new"
+% (c) reduce all nonimmune deduction rules in "dsys - dsys.new" by 
+%     "rsys.unused"
+% (d) move any reduced deduction rules to "dsys.new"
+% (e) move all rewrite rules in "rsys.unused" to "rsys.used"
+%
+% Not interruptable (lest we be forced to repeat work).
+
+
+% T4. "process_new_deduction_rules"
+% ---------------------------------
+%
+% Goal:  "dsys.new + dsys.normalized" is empty
+% IND.4: "dsys" normalized by "rsys"
+% IDE.4: "dsys + osys" applied to "esys.unoriented + esys.incompatible"
+% IDR.4: "dsys + osys" applied to "rsys"
+%
+% Action: For each deduction rule "dr" in "dsys.new + dsys.normalized"
+% (a) if "dr" is in "dsys.new" and not immune, normalize it by "rsys"
+% (b) if "dr" degenerates, move equational consequences to "esys.new" and loop;
+%     if "dr" is already in "dsys.normalized" or "dsys.used", loop
+% (c) move "dr" to "dsys.normalized"
+% (d) if "dr" is active, apply it to all nonimmune rewrite rules in "rsys" and 
+%     to all nonimmune equations in "esys.unoriented + esys.incompatible" 
+%     (NOTE: "dr" must be normalized in step (a) before applying it to 
+%     normalized equations or rewrite rules)
+% (e) delete any equations and rewrite rules to which a reversible deduction
+%     applies
+% (f) move any consequences obtained in (d) to "esys.new"
+% (g) move "dr" to "dsys.used"
+%
+% Interruptable before actions (a) and (d).
+
+
+% T5. "process_new_equations"
+% ---------------------------
+%
+% Goal:  "esys.new" is empty
+% INE.5: "esys" normalized by "rsys"
+%
+% Action: For each equation "eq" in "esys.new"
+% (a) if "eq" is not immune, normalize it by "rsys"
+% (b) discard "eq" if it reduces to an identity
+% (c) move "eq" to "esys.normalized"
+%
+% Interruptable before action (a).
+
+
+% T6. "process_normalized_equations"
+% ----------------------------------
+%
+% Goal:  "esys.normalized" is empty
+% IDE.6: "dsys + opsys" applied to "esys - esys.big"
+% Signals: "inconsistent" if an inconsistency was detected
+%          "new_eq" if a new equation has been deduced
+%
+% Action: For each equation "eq" in "esys.normalized"
+% (a) if "eq" is big, move it to "esys.big" and loop
+% (b) if "eq" is not immune, apply all active deduction rules in "dsys + osys"
+%     to "eq"
+% (c) move any consequences obtained in (b) to "esys.new"
+%     (FIX: Need some way to prevent infinite loop here.)
+% (d) loop if a reversible deduction rule was applied
+% (e) move "eq" to "esys.incompatible" if it is incompatible
+% (f) move "eq" to "esys.unoriented"
+
+
+% The system is now "stable".  The following invariants hold.
+
+% IF: "dsys + esys + rsys" flattend by "osys"
+% IN: "dsys + esys + rsys + conjecture" normalized by "rsys"
+% ID: "dsys + osys" applied to "rsys + esys - esys.big"
+% IC: critical pair equations have been computed for all pairs of rewrite 
+%     rules from "rsys" except for those pairs in "rsys.overlaps"
+
+
+% T7. "process_unoriented_equations"
+% ----------------------------------
+%
+% Goal: no equation in "esys.unoriented" can be ordered by the current registry
+%
+% Action: For each equation "eq" in "esys.unoriented"
+% (a) if "eq" is orderable using the current registry, convert it into a
+%     rewrite rule, move it to "rsys.normalized", and restart at Task T2
+% (b) if "eq" is incompatible, move it to "esys.incompatible"
+% ENHANCE: move passed-over equations to end of list
+
+
+% The following tasks can be performed in any order once tasks T1 through T8
+% have finished.
+
+
+% T8A. "extend_registry"
+% ----------------------
+
+% Goal: "esys.unoriented" contains only equations whose ordering has been
+%       explicitly postponed by the user or that are unorderable by any
+%	extension to the registry
+%
+% Action: For each equation "eq" in "esys.unoriented"
+% (a) order "eq" into a rewrite rule by extending the registry (either 
+%     automatically or with user confirmation), move it to "rsys.normalized",
+%     and restart at Task T2
+% (b) loop if user postpones ordering "eq" or "eq" is unorderable
+
+    
+% T8B. "process_incompatible_equations"
+% ------------------------------------
+%
+% Goal: "esys.incompatible" contains only equations whose ordering has been
+%       explicitly postponed by the user
+%
+% Action: For each equation "eq" in "esys.incompatible"
+% (a) remove "eq" from "esys.incompatible", divide it into two equations using
+%     a new user-supplied operator, move the resulting equations to 
+%     "esys.normalized", and restart at Task T6
+% (b) loop if user postpones dividing "eq"
+%
+% NOTE: This task is not used by the noninteractive ordering procedure.
+
+
+% T8C. "find_all_critical_pairs"
+% --------------------------
+%
+% Goal: "rsys.overlaps" is empty
+% ICR:  critical pair equations have been computed between all pairs of rewrite
+%       rules in "rsys"
+%
+% Action: While "rsys.overlaps" is nonempty do:
+% (a) pick a pair "<rr1, rr2>" from "rsys.overlaps" with the minimum value of
+%     "rr1.left.size + rr2.left.size"
+% (b) compute all critical pair equations between "rr1" and "rr2"
+% (c) if new equations are not immune by default, normalize the critical pair
+%     equations by "rsys"
+% (d) discard any identities
+% (e) remove "<rr1, rr2>" from "rsys.overlaps"
+% (f) loop if no critical pair equations remain
+% (g) name the critical pair equations, add them to "esys.normalized", and
+%     restart at Task T6
+%
+% NOTE: This task is not used by the ordering procedures.
+%
+% ENHANCE: put more information in each "overlap_pair" to indicate which
+% superposition to try next
+    
+
+% T8D. "process_big_equations"
+% ----------------------------
+%
+% Goal: "esys.big" is empty
+%
+% Action: If "esys.big" is nonempty,
+% (a) move equations with smallest size from "esys.big" to "esys.normalized"
+% (b) increase "esys.beta" and restart at Task T6
+
+
+% The following two tasks are designed to finish the jobs of ordering and/or
+% completing the system.
+
+
+% T9. "check_for_equations"
+% -------------------------
+%
+% Goal: "esys" is empty
+% Signals: "unorderable"
+%
+% Action: If "esys" is nonempty (because the user postponed ordering or
+% dividing an equation), signal "unorderable".
+%
+% ENHANCE: Previously, this task took the following actions to backtrack the
+% ordering procedures:
+% (a) backtrack the automatic ordering procedure if it is in use
+% (b) restart at Task T8A or T8B
+% (c) signal "unorderable" if it is not possible to backtrack
+% However, backtracking seemed to degrade performance without providing any
+% noticeable benefits, and so it was wired out.  In the future, we may wish to
+% remove the dead code that performed the backtracking.
+
+
+% T10. "reconsider_deleted_equations"
+% -----------------------------------
+%
+% Goal: critical pairs have been computed between all rewrite rules
+%
+% Action: reset "rsys.overlaps" if "discard" is true and restart at Task 8C
+%
+% NOTE: This is action is necessary to ensure the correctness of the completion
+% procedure.  It is used only by the completion procedure.
+
+
+
+% The following actions occur upon explicit user command.
+    
+
+% Activate
+% --------
+%
+% Action:
+% (a) Move activated deduction rules in "dsys.used" to "dsys.normalized".
+% (b) Move activated rewrite rules in "rsys.used" to "rsys.normalized".
+% (c) Move deactivated rewrite rules in "rsys.unused" to "rsys.used".
+
+    
+% Assert
+% ------
+%
+% Action:
+% (a) Flatten asserted equations and add to "esys.new".
+% (b) Flatten asserted deduction rules and add to "dsys.new".
+% (c) Add asserted theory for (a list of) operators to "osys".  If theory is
+%     AC or commutative, 
+%     - Reflatten all equations that contain an operator in the list and move 
+%       them to "esys.new" (so that they can be renormalized).
+%     - Reflatten all deduction rules that contain an operator in the list and
+%       move them to "dsys.new".
+%     - Reflatten all rewrite rules that contain an operator in the list and
+%       move them to "esys.new" (so that they can be reordered).
+%       ENHANCE: Can we do something less drastic to rewrite rules?
+%     If theory is free, 
+%     - Move to "esys.normalized" all equations in "esys.unoriented" and 
+%       "esys.incompatible" that have an operator in the list at the root of 
+%       their lhs or rhs (so that they can be checked for inconsistency).
+%     - Move to "rsys.normalized" all rewrite rules in "rsys.unused" and 
+%       "rsys.used" that have an operator in the list at the root of their lhs
+%       or rhs (so that they can be checked for inconsistency).
+
+
+% Deimmunize
+% ----------
+%
+% Action:
+% (a) Move deimmunized equations to "esys.new".
+% (b) Move deimmunized rewrite rules to "rsys.new".
+% (c) Move deimmunized deduction rules to "dsys.new".
+
+    
+% Delete
+% ------
+%
+% Action:
+% (a) Set "discard" true upon deletion of equation, rewrite rule.
+% (b) Reflatten equations, rewrite rules, and deduction rules that contain an
+%     operator which is no longer AC or commutative.
+
+
+
+system = cluster is
+	new, 
+	get_automatic_ordering, set_automatic_ordering,
+	get_automatic_registry, set_automatic_registry,
+	get_completion_mode, set_completion_mode,
+	get_default_ai, set_default_ai,
+	get_display_mode, set_display_mode,
+	get_goal, set_goal,
+	get_hardwired_usage, set_hardwired_usage,
+	get_ops,
+	get_ordering, set_ordering,
+	get_osys,
+	get_reduction_mode, set_reduction_mode,
+	get_rewriting_limit, set_rewriting_limit,
+	get_terminates,
+	set_toOrder,
+	get_write_mode, set_write_mode,
+	abort_registry_changes,
+	add_deduction_rule, add_formula, add_induction_rule, add_op_theory, 
+	add_theory,					% Experimental
+	apply_drs, apply_rrs, begin_registry_changes,
+	change_activity, change_immunity, 
+	commit_registry_changes, critical_pairs, deduce_formula_from,
+	delete, delete_extreme_op, delete_operator, display, 
+	display_ground_facts, display_ordering,
+	display_unifiers, do_tasks, find_instantiations,
+	find_names, fix, flatten_eq, flatten_fact, 
+	flatten_term, forget_pairs, ground_literals, implies_ir,
+	induction_rules, instantiate, instantiate_formula, instantiate_term, 
+	is_convergent, is_locally_complete, is_locally_confluent, 
+	lookup_induction_rule, lookup_op_theory, 
+	normalize_formula_by, reduce_formula_by,
+	reductions, register_equal, register_extreme_ops, register_higher,
+	register_higher_or_equal, register_polynomials, register_status,
+	reset_registry, reset_status, zap, size, subsystem_ids,
+	unorder, write, push, pop, copy, copy1, r_gets_r, _gcd, decode, encode
+	
+    % The rep for a system contains the following information in addition to
+    % the subsystems "dsys", "esys", "isys", "osys", and "rsys".
+    
+    % "automatic_ordering": if "true", equations will be ordered automatically
+    % into rewrite rules whenever the system is stabilized.  Otherwise the user
+    % must issue an explicit "order" or "complete" command.
+
+    % "automatic_registry": if "true", the registry will be extended
+    % automatically when needed to order an equation into a rewrite rule.
+    % Otherwise the user will be prompted to approve extensions to the
+    % registry.
+
+    % "completion_mode": identifies the sequence of tasks to be used in
+    % response to a "complete" command.
+
+    % "cp_work": two sequences of rewrite rules, and two indices into these
+    % sequences, used to drive the computation of critical pairs in response to
+    % the "critical-pairs" command
+    
+    % "current_task_mode": identifies the sequence of tasks currently being
+    % used in response to a "complete" or "order" command.
+
+    % "default_ai: the default activity and immunity for new facts
+    
+    % "discard": "true" if one or more equations or rewrite rules have been
+    % discarded.  
+
+    % "display_mode": the "unparse_mode" used by the "display" command
+
+    % "goal": the current conjecture, if it exists and is a formula (set by the
+    % "prover")
+
+    % "locally_confluent": true if "sys.rsys" is locally confluent
+    
+    % "reg": a registry for use by the registered ordering procedures
+    
+    % "task_num": the number of the task currently being executed.  When the
+    % task returns, control goes to the next task in the current task sequence.
+    % When a task signals that it has created more work for an earlier task in
+    % the sequence, control goes to that task.
+
+    % "write_mode": the "unparse_mode" used by the "write" command.
+    
+    % The rep formerly contained the following additional fields, which
+    % permitted LP to backtrack the ordering mechanism either automatically or
+    % under user control.  Backtracking was removed from LP because the
+    % automatic procedure succeeded too rarely to justify its cost, and the
+    % manual procedure was less natural than an "undo" command that undid the
+    % last user command as opposed to the last addition to the registry.
+    
+    % "auto_choice": the number of the next suggestion that the automatic
+    % ordering procedure should try when attempting to orient an equation.
+    % Formerly used by the backtracking mechanism in the automatic ordering
+    % procedure.
+    
+    % "history": a stack containing the state of the system just prior to each
+    % extension to the registry.  The ordering procedures can extend the
+    % registry, either automatically or interactively, to orient an equation.
+    % The automatic ordering procedure formerly used the history stack to
+    % backtrack when it ran out of choices for ordering equations.  The
+    % interactive ordering procedure formerly used the history stack to enable
+    % the user to "undo" the system to its state just prior to previous
+    % extensions to the registry.  The system state consists of the entire rep
+    % except for the history stack itself and the "current_task_mode" (which
+    % the user may have changed).  The "history" stack is cleared whenever the
+    % user changes the system or begins a proof in order to prevent subsequent
+    % ordering actions from undoing these actions (i.e., in set_goal,
+    % set_ordering, add_*, delete, delete_operator,
+
+    
+    rep = record[automatic_ordering: bool,     	  % "order" needed if false
+    		 automatic_registry: bool,	  % governs extensions to reg
+		 completion_mode		  % default current_task_mode
+		   : named_task_mode,
+    		 cp_work: cp_work,		  % rrs for critical pair comp.
+		 current_task_mode     	  	  % current list of tasks
+		   : named_task_mode,
+		 default_ai: ai_settings,	  % defaults for new facts
+		 discard: bool,			  % true if eq or rr discarded
+		 display_mode: unparse_mode,	  % for "display" command
+    		 dsys: deduction_system, 	  % deduction rules
+		 esys: equation_system, 	  % equations
+		 goal: goal,	  	  	  % current conjecture
+		 gsys: ground_system,		  % Experimental: ground facts
+		 isys: induction_system,	  % induction rules
+		 locally_confluent: bool, 	  % true if rsys locally confl.
+		 osys: op_system,		  % operator theories
+		 reg: registry,			  % ordering information
+		 rsys: rewriting_system,	  % rewrite rules
+		 stack: sys_arr,		  % Experimental: pushed sys's
+		 task_num: int,			  % current task
+		 toOrder: name_set,		  % names of eqs to order
+		 tsys: theory_system,		  % Experimental: theories
+		 write_mode: unparse_mode]	  % for "write" command
+
+    cp_work = record[n1, n2: int, r1, r2: rr_seq]
+    sys_arr = array[system]			  % Experimental: for stack
+    
+    
+    % We define a sequence containing all known task sequences, and store
+    % indices into this sequence in the rep of system, to avoid "gc_dump"ing
+    % procedure objects.  NOTE: "undo" has been removed as a possible signal.
+
+    task_seq = sequence[task]
+    task = proctype (rep, printer, symtab)
+	     signals (inconsistent(equation), interrupt, new_rr, new_eq, 
+		      order_eq, proved, suspend, unorderable)
+    task_seq_lib = sequence[task_seq]
+    
+
+    % The "standard" task sequence is designed to reduce user interaction
+    % during completion to a minimum.  The "expert" task sequence provides more
+    % direct control over the completion procedure by enabling users to extend
+    % the registry and thereby order more equations into rewrite rules before
+    % starting to compute critical pairs.  The "big" task sequence goes further
+    % by attempting to order big equations before starting to compute critical
+    % pairs.
+
+    own stabilize_tasks: task_seq :=
+	    task_seq$[process_new_rewrite_rules,
+		      internormalize_rewriting_system,
+		      apply_unused_rewrite_rules,
+		      process_new_deduction_rules,
+		      process_new_equations,
+		      process_normalized_equations]
+		
+    own first_tasks: task_seq := stabilize_tasks || 
+				 task_seq$[process_unoriented_equations]
+
+    own last_tasks: task_seq :=
+            task_seq$[check_for_equations, reconsider_deleted_equations]
+	    
+    own standard_tasks: task_seq := 
+            first_tasks ||
+            task_seq$[process_incompatible_equations,
+	    	      find_all_critical_pairs,
+		      extend_registry,
+		      process_big_equations] ||
+	    last_tasks
+	    
+    own expert_tasks: task_seq := 
+            first_tasks ||
+            task_seq$[extend_registry,
+	    	      process_incompatible_equations,
+	    	      find_all_critical_pairs,
+		      process_big_equations] ||
+	    last_tasks
+
+    own big_tasks: task_seq := 
+            first_tasks ||
+            task_seq$[extend_registry,
+	    	      process_incompatible_equations,
+		      process_big_equations,
+	    	      find_all_critical_pairs] ||
+	    last_tasks
+
+    own order_tasks: task_seq :=
+            first_tasks ||
+	    task_seq$[extend_registry,
+	              process_incompatible_equations,
+		      process_big_equations,
+		      check_for_equations]
+
+    own cp_tasks1: task_seq := 
+    	    first_tasks || task_seq$[extend_registry, do_cp_work]
+
+    own cp_tasks2: task_seq := 
+    	    stabilize_tasks || task_seq$[do_cp_work] 
+    
+
+    % Returns a new system containing the hardwired axioms.
+
+    new = proc () returns (cvt)
+	return(rep${automatic_ordering: setting$value_b(
+					    default_automatic_ordering),
+	            automatic_registry: setting$value_b(
+					    default_automatic_registry),
+		    completion_mode: setting$value_task(
+					 default_completion_mode),
+	    	    cp_work: cp_work${n1: 1, n2: 1, 
+		    		      r1: rr_seq$[], r2: rr_seq$[]},
+		    default_ai: default_ai_settings(),
+		    current_task_mode: setting$value_task(
+					   default_completion_mode),
+		    discard: false,
+		    display_mode: setting$value_unp(default_display_mode),
+	    	    dsys: deduction_system$[],
+		    esys: equation_system$[], 
+	    	    goal: goal$make_none(nil),
+		    gsys: ground_system$[],			%% Experimental
+		    isys: induction_system$[],
+		    locally_confluent: true, 
+		    osys: op_system$[],
+		    reg: registry$[],
+		    rsys: rewriting_system$[],
+		    stack: sys_arr$[],				%% Experimental
+		    task_num: 1,
+		    toOrder: name_set$universal(),
+		    tsys: theory_system$[],			%% Experimental
+		    write_mode: setting$value_unp(default_write_mode)})
+	end new
+
+
+    % (Internal procedure) Returns "ai_settings" with the default values
+    % for activity and immunity.
+    
+    default_ai_settings = proc () returns (ai_settings)
+	return(ai_settings${active: setting$value_b(default_activity),
+			    immune: setting$value_imm(default_immunity)})
+	end default_ai_settings
+    
+
+    % Returns "true" if equations are ordered automatically into rewrite rules.
+    
+    get_automatic_ordering = proc (sys: cvt) returns (bool)
+	return(sys.automatic_ordering)
+	end get_automatic_ordering
+    
+    
+    % Sets "sys.automatic_ordering" to "b".
+    
+    set_automatic_ordering = proc (sys: cvt, b: bool)
+	sys.automatic_ordering := b
+	end set_automatic_ordering
+    
+    
+    % Returns "sys.automatic_registry".
+
+    get_automatic_registry = proc (sys: cvt) returns (bool)
+	return(sys.automatic_registry)
+	end get_automatic_registry
+
+
+    % Sets "sys.automatic_registry" to "b".
+
+    set_automatic_registry = proc (sys: cvt, b: bool)
+	sys.automatic_registry := b
+	end set_automatic_registry
+
+
+    % Returns "sys.completion_mode".
+    
+    get_completion_mode = proc (sys: cvt) returns (named_task_mode)
+	return(sys.completion_mode)
+	end get_completion_mode
+    
+
+    % Sets "sys.completion_mode" to "m".
+    
+    set_completion_mode = proc (sys: cvt, m: named_task_mode)
+	sys.completion_mode := m
+	end set_completion_mode
+    
+
+    % Gets the default activity and immunity for new facts.
+    
+    get_default_ai = proc (sys: cvt) returns (ai_settings)
+	return(ai_settings$copy(sys.default_ai))
+	end get_default_ai
+    
+
+    % Sets the default activity and immunity for new facts to "ai".
+    
+    set_default_ai = proc (sys: cvt, ai: ai_settings)
+	sys.default_ai := ai
+	end set_default_ai
+    
+
+    % Returns "sys.display_mode".
+    
+    get_display_mode = proc (sys: cvt) returns (unparse_mode)
+	return(sys.display_mode)
+	end get_display_mode
+    
+
+    % Sets "sysdisplay_mode" to "upm".
+    
+    set_display_mode = proc (sys: cvt, upm: unparse_mode)
+	sys.display_mode := upm
+	end set_display_mode
+    
+
+    % Returns "sys.goal".
+    
+    get_goal = proc (sys: cvt) returns (goal)
+	return(sys.goal)
+	end get_goal
+    
+    
+    % Sets "sys.goal" to "g".
+
+    set_goal = proc (sys: cvt, g: goal)
+	sys.goal := g
+	sys.task_num := 1
+	end set_goal
+
+    
+    % Returns "sys.rsys.hardwired_usage".
+    
+    get_hardwired_usage = proc (sys: cvt) returns (int)
+	return(sys.rsys.hardwired_usage)
+	end get_hardwired_usage
+	
+
+    % Sets "sys.rsys.hardwired_usage" to "n".
+    
+    set_hardwired_usage = proc (sys: cvt, n: int)
+	sys.rsys.hardwired_usage := n
+	end set_hardwired_usage
+    
+
+    % Returns the set of operators in "sys".  This set is a new object;
+    % mutating it will have no effect on "sys".  WARNING: This set does not
+    % include operators in the prover.
+
+    get_ops = proc (sys: cvt) returns (op_set)
+	return(sys.dsys.ops + sys.esys.ops + sys.isys.ops + sys.osys.ops + 
+	       sys.rsys.ops)
+	end get_ops
+
+
+    % Returns the ordering of "sys.rsys".
+
+    get_ordering = proc (sys: cvt) returns (ordering)
+	return(sys.rsys.ordering)
+	end get_ordering
+
+
+    % Sets "sys.rsys.ordering" to "ord".  Signals "termination_may_be_lost" if
+    % changing the ordering makes it impossible to continue a proof of
+    % termination for the rewriting system.
+
+    set_ordering = proc (sys: cvt, ord: ordering)
+		     signals (termination_may_be_lost)
+        if sys.rsys.ordering = ord then return end
+	sys.task_num := 1
+	sys.reg.n_polys := ord.size
+	   except when not_poly: end
+	rewriting_system$set_ordering(sys.rsys, sys.osys, ord, sys.reg)
+	   resignal termination_may_be_lost
+	end set_ordering
+    
+    
+    % Returns "sys.osys".  This procedure is a temporary hack used to extend
+    % the implementation of "term$similar" to handle quantifiers.
+
+    get_osys = proc (sys: cvt) returns (op_system)
+	return(sys.osys)
+	end get_osys
+    
+
+    % Returns "sys.rsys.reduction_mode".
+    
+    get_reduction_mode = proc (sys: cvt) returns (reduction_mode)
+	return(sys.rsys.reduction_mode)
+	end get_reduction_mode
+    
+
+    % Sets "sys.rsys.reduction_mode" to "m".
+    
+    set_reduction_mode = proc (sys: cvt, m: reduction_mode)
+	sys.task_num := 1
+	sys.rsys.reduction_mode := m
+	end set_reduction_mode
+    
+
+    % Returns "sys.rsys.rewriting_limit".
+    
+    get_rewriting_limit = proc (sys: cvt) returns (int)
+	return(sys.rsys.rewriting_limit)
+	end get_rewriting_limit
+    
+
+    % Sets "sys.rsys.rewriting_limit" to "n".
+    
+    set_rewriting_limit = proc (sys: cvt, n: int)
+	sys.rsys.rewriting_limit := n
+	end set_rewriting_limit
+    
+
+    % Returns "sys.rsys.terminates".
+    
+    get_terminates = proc (sys: cvt) returns (bool)
+	return(sys.rsys.terminates)
+	end get_terminates
+    
+
+    % Sets "sys.toOrder".
+    
+    set_toOrder = proc (sys: cvt, ns: name_set)
+	sys.task_num := 1
+	sys.toOrder := ns
+	end set_toOrder
+    
+
+    % Returns "sys.write_mode".
+    
+    get_write_mode = proc (sys: cvt) returns (unparse_mode)
+	return(sys.write_mode)
+	end get_write_mode
+    
+
+    % Sets "sys.write_mode" to "upm".
+    
+    set_write_mode = proc (sys: cvt, upm: unparse_mode)
+	sys.write_mode := upm
+	end set_write_mode
+    
+
+    % Aborts the changes being made to "sys.reg" with the "ticket" returned
+    % by the previous invocation of "begin_registry_changes".
+    
+    abort_registry_changes = proc (sys: cvt, ticket: int)
+ 	registry$pop(sys.reg, ticket)
+	   except when mismatch, empty: fail("system$abort_registry_changes")
+		  end
+	end abort_registry_changes
+    
+
+    % Flattens "dr" and adds it as a new deduction rule to "sys.dsys" with
+    % activity and immunity given by "ai".
+    
+    add_deduction_rule = proc (sys: cvt, dr: deduction_rule, ai: ai_settings)
+	dr := deduction_rule$reflat(dr, sys.osys)
+	   except when same: end
+	deduction_system$add(sys.dsys, dr, ai, true)
+	beta: int := 0
+	for t: term in term_seq$elements(dr.hypotheses) do
+	    beta := int$max(beta, t.size)
+	    end
+	for t: term in term_seq$elements(dr.conclusions) do
+	    beta := int$max(beta, t.size)
+	    end
+	equation_system$increase_beta(sys.esys, beta)
+	sys.task_num := 1
+	end add_deduction_rule
+
+
+    % Flattens "fo" and adds it as a new formula to "sys.esys" with activity
+    % and immunity given by "ai".  Puts "fo" the end of the list of new
+    % formulas if "last" is true; otherwise inserts "fo" at the beginning of
+    % the list.  Maintains the invariant that user-entered equations are not
+    % "big" by raising the "big_size" (beta) of "sys.esys".
+
+    add_formula = proc (sys: cvt, fo: formula, ai: ai_settings, last: bool)
+	fo := formula$reflat(fo, sys.osys)
+	   except when same: end
+	equation_system$add(sys.esys, fo, ai, last)
+	equation_system$increase_beta(sys.esys, formula$size(fo))
+	sys.task_num := 1
+	end add_formula
+
+
+    % (Experimental internal procedure)  If "t" is ground, adds it to "gsys".
+    
+    add_ground_fact = proc (gsys: ground_system, tsys: theory_system, t: term)
+	if var_set$empty(t.vars) then 
+	   statistics$start_satisfier()
+	   ground_system$add(gsys, tsys, t)
+	   statistics$stop_satisfier()
+	   end
+	end add_ground_fact
+
+
+    % Adds "ir" to "sys.isys".  Signals "subsumed" if "ir" is subsumed by some
+    % other induction rule in "sys".  Signals "inconsistent" if it is
+    % inconsistent with some othter induction rule in "sys".
+    
+    add_induction_rule = proc (sys: cvt, ir: induction_rule) 
+			   signals (subsumed, inconsistent)
+	induction_system$add(sys.isys, ir)
+	   resignal subsumed, inconsistent
+	end add_induction_rule
+    
+
+    % Adds the operator theory "ot" to "sys.osys".  Sets the status of an AC or
+    % commutative operator to multiset.  If necessary, assigns a new polynomial
+    % interpretation to "ot.op" consistent with its declaration as an AC or
+    % commutative operator.  Signals "inconsistent", and does not change
+    % "sys.osys", if "ot" is inconsistent with some other theory in "sys.osys".
+    % Signals "subsumed" if "ot" is subsumed by some other theory in
+    % "sys.osys".  ASSUMES: "ot" is not the empty theory.
+    
+    add_op_theory = proc (sys: cvt, ot: op_theory) 
+		      signals (inconsistent(op_theory), subsumed)
+	if op_theory$is_empty(ot) then fail("system$add_op_theory") end
+	mstat: status := status$make_multiset(nil)
+	if op_theory$is_ac(ot) cor op_theory$is_commutative(ot) then
+	   registry$set_status(sys.reg, ot.op, mstat)
+	   end except when multi_and_lex, status_defined: 
+			   reset_status(up(sys), ot.op)
+			   registry$set_status(sys.reg, ot.op, mstat)
+		      end
+	sys.task_num := 1
+	op_system$add(sys.osys, ot)
+	   resignal inconsistent, subsumed
+	pi: poly_interp := registry$lookup_polys(sys.reg, ot.op)
+	for p: polynomial in poly_interp$elements(pi) do
+	    poly_interp$check_legality(ot, p)
+	       except when not_ac, not_c:
+			   registry$set_polys(sys.reg, ot.op, 
+			       		      poly_interp$default(2))
+			   tracer$new_polys(ot)
+		      end
+	    end
+	if op_theory$is_free(ot)
+	   then equation_system$recheck_inconsistencies(sys.esys, ot.ops)
+		rewriting_system$recheck_inconsistencies(sys.rsys, ot.ops)
+	   else reflatten(sys, op_set$[ot.op])
+	   end
+	end add_op_theory
+    
+    
+    % (Experimental) Adds the numeric theory "nt" to "sys.tsys".
+    
+    add_theory = proc (sys: cvt, nt: numeric_theory, stab: symtab) 
+		   signals (inconsistent)
+        theory_system$add(sys.tsys, nt)
+	inconsistent: bool := false
+	for ot: op_theory in numeric_theory$implied_theories(nt) do
+	    ot.name := symtab$new_subname(stab, nt.name)
+	    add_op_theory(up(sys), ot)
+	       except when inconsistent (*): inconsistent := true
+		      when subsumed:
+		      end
+	    end
+	if inconsistent then signal inconsistent end
+	end add_theory
+
+
+    % Applies the deduction rules named by "ns1" to the equations and rewrite
+    % rules named by "ns2".
+    
+    apply_drs = proc (sys: cvt, ns1, ns2: name_set, stab: symtab)
+		  signals (no_drs, no_targets)
+	drs: dr_seq := deduction_system$named_subset(sys.dsys, ns1)
+	if dr_seq$empty(drs) then signal no_drs end
+	eqs: eq_seq := equation_system$named_subset(sys.esys, ns2) ||
+		       rewriting_system$named_subset(sys.rsys, ns2)
+	if eq_seq$empty(eqs) then signal no_targets end
+	result_eqs: eq_prop_list := eq_prop_list$[]
+	result_drs: dr_prop_list := dr_prop_list$[]
+	for eq: equation in eq_seq$elements(eqs) do
+	    for dr: deduction_rule in dr_seq$elements(drs) do
+		eq_prop_list$append(result_eqs, apply_dr(dr, eq, sys.osys, 
+							 sys.default_ai, stab))
+		   except 
+		      when delete (eqpl: eq_prop_list):
+		           eq_prop_list$append(result_eqs, eqpl)
+			   if eq.is_rr
+			      then rewriting_system$delete(sys.rsys, eq.name)
+				   sys.locally_confluent := false
+			      else equation_system$delete(sys.esys, eq.name)
+			      end
+		      when drs (drpl: dr_prop_list):
+		       	   dr_prop_list$append(result_drs, drpl)
+		      when no_results:
+		      end
+		end
+	    end
+	eq_prop_list$append(sys.esys.new, result_eqs)
+	dr_prop_list$append(sys.dsys.new, result_drs)
+	sys.task_num := 1
+	end apply_drs
+
+
+    % Normalizes (rewrites, if "normalize" is false) the equations, rewrite
+    % rules, and deduction rules named by "ns1" using the rewrite rules
+    % obtained from facts named by "ns2" using the conventions of "build_rsys".
+    % Facts that occur in both sets are not rewritten.
+    
+    apply_rrs = proc (sys: cvt, ns1, ns2: name_set, stab: symtab, 
+	              normalize, reverse: bool) signals (no_rrs, no_targets)
+	rsys: rewriting_system := sys.rsys
+	rsys1: rewriting_system := build_rsys(sys, ns2, reverse)
+	if rewriting_system$is_empty(rsys1) then signal no_rrs end
+	dsys: deduction_system := sys.dsys
+	esys: equation_system := sys.esys
+	osys: op_system := sys.osys
+	result_eqs: eq_prop_list := eq_prop_list$[]
+	result_drs: dr_prop_list := dr_prop_list$[]
+	result_rrs: rr_prop_list := rr_prop_list$[]
+	targets_exist: bool := false
+	for eq: equation 
+	      in eq_seq$elements(equation_system$named_subset(esys, ns1)) do
+	    if name_set$contains_eq(ns2, eq) then continue end
+	    targets_exist := true
+	    immunize: bool := false
+	    eq1: equation
+	    if normalize
+	       then eq1 := formula$normal_form(eq, rsys1, osys, stab, false)
+	       else eq1 := formula$reduce(eq, rsys1, osys, stab, false)
+	       end except when already_normal_form: continue
+			  when might_loop (eq2: equation):
+			       eq1 := eq2
+			       immunize := true
+			  end
+	    eqp: eq_prop := equation_system$delete(esys, eq.name)
+	       except when missing: fail("system$apply_rrs") end
+	    eqp.prop := eq1
+	    if immunize then eqp.immune := immunity_on end
+	    tracer$normalized_eq(eq, eq1, immunize)
+	    eq_prop_list$addh(result_eqs, eqp)
+	    end
+	for rr: rewrite_rule 
+	      in rr_seq$elements(rewriting_system$named_subset(rsys, ns1)) do
+	    if name_set$contains_rr(ns2, rr) then continue end
+	    targets_exist := true
+	    immunize: bool := false
+	    eq1: equation
+	    if normalize
+	       then eq1 := formula$normal_form(rr, rsys1, osys, stab, false)
+	       else eq1 := formula$reduce(rr, rsys1, osys, stab, false)
+	       end except when already_normal_form: continue
+			  when might_loop (eq2: equation):
+			       eq1 := eq2
+			       immunize := true
+			  end
+	    eqp: eq_prop := rewriting_system$delete(rsys, rr.name)
+	       except when missing: fail("system$apply_rrs") end
+	    eqp.prop := eq1
+	    if immunize then eqp.immune := immunity_on end
+	    tracer$normalized_eq(rr, eq1, immunize)
+	    if eq1.is_rr
+	       then rr_prop_list$addh(result_rrs, eqp)
+	       else eq_prop_list$addh(result_eqs, eqp)
+	       end
+	    end
+	for dr: deduction_rule 
+	      in dr_seq$elements(deduction_system$named_subset(dsys, ns1)) do
+	    targets_exist := true
+	    dr1: deduction_rule
+	    if normalize
+	       then dr1 := deduction_rule$normalize(dr, rsys1, osys, stab)
+	       else dr1 := deduction_rule$reduce(dr, rsys1, osys, stab)
+	       end except when already_normal_form: continue
+			  when formulas (eqs: eq_seq):
+			       eqpl: eq_prop_list := eq_prop_list$[]
+			       for eq: equation in eq_seq$elements(eqs) do
+				   eq.name := symtab$new_subname(stab, dr.name)
+				   eq_prop_list$addh
+				       (eqpl, eq_prop$create(eq, sys.default_ai))
+				   end
+			       deduction_system$delete(dsys, dr.name)
+				  except when missing: fail("system$apply_rrs")
+					 end
+			       tracer$converted_dr(dr, eqpl)
+			       eq_prop_list$append(result_eqs, eqpl)
+			       continue
+			  end
+	    drp: dr_prop := deduction_system$delete(dsys, dr.name)
+	       except when missing: fail("system$apply_rrs") end
+	    drp.prop := dr1
+	    tracer$normalized_dr(dr, dr1, false)
+	    dr_prop_list$addh(result_drs, drp)
+	    end
+
+
+	eq_prop_list$append(esys.new, result_eqs)
+	dr_prop_list$append(dsys.new, result_drs)
+	rr_prop_list$append(rsys.new, result_rrs)
+	if interactive$get_experimental() then
+	   for eqp: eq_prop in eq_prop_list$elements(result_eqs) do
+	       add_ground_fact(sys.gsys, sys.tsys, eqp.prop.formula)
+	       end
+	   for drp: dr_prop in dr_prop_list$elements(result_drs) do
+	       add_ground_fact(sys.gsys, sys.tsys,
+			       deduction_rule$dr2e(drp.prop).formula)
+	       end
+	   for rrp: rr_prop in rr_prop_list$elements(result_rrs) do
+	       add_ground_fact(sys.gsys, sys.tsys, rrp.prop.formula)
+	       end
+	   end
+	sys.task_num := 1
+	end apply_rrs
+
+    
+    % Begins making changes to "sys.reg".  Returns a ticket to be used with
+    % the subsequent invocation of either "abort_registry_changes" or
+    % "commit_registry_changes".
+    
+    begin_registry_changes = proc (sys: cvt) returns (int)
+ 	return(registry$push(sys.reg))
+	end begin_registry_changes
+	
+
+    % Sets the activity of all rewrite rules, deduction rules, and equations in
+    % "sys" with names in "ns" to "active".   Moves activated deduction
+    % rules in "dsys.used" to "dsys.normalized".  Moves activated rewrite rules
+    % in "rsys.used" to "rsys.normalized".  Moves deactivated rewrite rules in
+    % "rsys.unused" to "rsys.used".
+    
+    change_activity = proc (sys: cvt, ns: name_set, active: bool)
+	deduction_system$change_activity(sys.dsys, ns, active)
+	equation_system$change_activity(sys.esys, ns, active)
+	rewriting_system$change_activity(sys.rsys, ns, active)
+	sys.task_num := 1
+	end change_activity
+
+
+    % Sets the immunity of all rewrite rules, deduction rules, and equations in
+    % "sys" with names in "ns" to "immune".  Moves deimmunized facts to list of
+    % new facts (so that they can be renormalized).
+
+    change_immunity = proc (sys: cvt, ns: name_set, immune: immunity)
+	deduction_system$change_immunity(sys.dsys, ns, immune)
+	equation_system$change_immunity(sys.esys, ns, immune)
+	rewriting_system$change_immunity(sys.rsys, ns, immune)
+	sys.task_num := 1
+	end change_immunity
+
+
+    % Commits the changes being made to "sys.reg" with the "ticket" returned
+    % by the previous invocation of "begin_registry_changes".
+    
+    commit_registry_changes = proc (sys: cvt, ticket: int)
+ 	registry$commit(sys.reg, ticket)
+	   except when mismatch, empty: fail("system$commit_registry_changes") 
+		  end
+	end commit_registry_changes
+
+
+    % Computes critical pairs.
+    
+    critical_pairs = proc (sys: cvt, ns1, ns2: name_set, stab: symtab)
+		       signals (no_rr1, no_rr2)
+	rr_list = list[rewrite_rule]
+	rules1: rr_seq := rewriting_system$named_subset(sys.rsys, ns1)
+	if rr_seq$empty(rules1) then signal no_rr1 end
+	rules2: rr_seq := rewriting_system$named_subset(sys.rsys, ns2)
+	if rr_seq$empty(rules2) then signal no_rr2 end
+	% Sort rewrite rules by size of left-hand-sides
+        r_list: rr_list := rr_list$s2l(rules1)
+        rr_list$sort(r_list, rewrite_rule$smaller_left)
+        rules1 := rr_list$l2s(r_list)
+        r_list := rr_list$s2l(rules2)
+        rr_list$sort(r_list, rewrite_rule$smaller_left)
+        rules2 := rr_list$l2s(r_list)
+	sys.cp_work := cp_work${n1: 1, n2: 1, r1: rules1, r2: rules2}
+	sys.task_num := 1
+	end critical_pairs
+    
+    
+    % Returns true if "fo" follows from "sys" and some deduction rule named by
+    % "ns", i.e., if "fo" matches a conclusion of some deduction rule named by
+    % "ns" and the hypotheses of the deduction rule, under the matching
+    % substitution, reduce to identities.
+    
+    deduce_formula_from = proc (fo: formula, sys: cvt, stab: symtab, 
+	                        ns: name_set) returns (bool)
+        for drp: dr_prop in deduction_system$elements(sys.dsys) do
+	    dr: deduction_rule := drp.prop
+	    if ~name_set$contains_name(ns, dr.name) then continue end
+	    if deduction_rule$deduce_term(dr, fo.formula, sys.rsys, 
+		                          sys.osys, stab) then return(true)
+	       end
+	    end
+	return(false)
+	end deduce_formula_from
+
+
+    % Deletes the axioms specified by "ns" from "sys".  Signals
+    % "reflatten_conj" if an operator theory is deleted.
+    % ENHANCE: Trace number of items deleted.
+    % ENHANCE experimental feature: What should we delete from ground system?
+    
+    delete = proc (sys: cvt, ns: name_set) signals (reflatten_conj)
+	tracer$remember_size(up(sys))
+	reflat: bool := false
+	if ns.has_drs then
+	   deduction_system$delete_subset(sys.dsys, ns)
+	   end except when missing: end
+	if ns.has_eqs then
+	   equation_system$delete_subset(sys.esys, ns)
+	   sys.discard := true
+	   end except when missing: end
+	if ns.has_irs then
+	   induction_system$delete_subset(sys.isys, ns)
+	   end except when missing: end
+	if ns.has_rrs then
+	   rewriting_system$delete_subset(sys.rsys, ns)
+	   sys.discard := true
+	   sys.locally_confluent := false
+	   end except when missing: end
+	if ns.has_ots then
+	   % NOTE: We delete "ots" after "rrs" lest deleting an "ot" turns
+	   % a "rr" back into an "eq"
+	   ops: op_set := op_system$delete_subset(sys.osys, ns)
+	   reflat := true
+	   reflatten(sys, ops)
+	   sys.discard := true
+	   end except when missing: end
+	% ENHANCE: Modify tracer$new_items so that it can be used here.
+	tracer$sys_size(up(sys), 1)
+	sys.task_num := 1
+	if reflat then signal reflatten_conj end
+	end delete
+
+    
+    % Deletes all axioms in "sys" that contain the operator "op".
+
+    delete_operator = proc (sys: cvt, op: operator)
+	deduction_system$delete_op(sys.dsys, op)
+	   except when missing: end
+	begin
+	    equation_system$delete_op(sys.esys, op)
+	    sys.discard := true
+	    end except when missing: end
+	induction_system$delete_op(sys.isys, op)
+	   except when missing: end
+	begin
+	    op_system$delete_op(sys.osys, op)
+	    sys.discard := true
+	    end except when missing: end
+	begin
+	    rewriting_system$delete_op(sys.rsys, op)
+	    sys.discard := true
+	    sys.locally_confluent := false
+	    end except when missing: end
+	sys.task_num := 1
+	end delete_operator
+
+    
+    % Deletes "op" from the list of bottom or top operators in "sys.reg".
+    
+    delete_extreme_op = proc (sys: cvt, op: operator) signals (missing)
+	registry$delete_extreme_op(sys.reg, op)
+	   resignal missing
+	sys.task_num := 1
+	end delete_extreme_op
+
+    
+    % Displays all axioms in "sys" named by "ns".
+    % ENHANCE experimental feature: Display state of ground system.
+
+    display = proc (p: printer, sys: cvt, ns: name_set, stab: symtab)
+		signals (interrupt)
+	stab.unparse_mode := sys.display_mode
+	begin
+	    if interactive$get_experimental() then
+	       theory_system$display(p, sys.tsys, ns, stab)
+	       end
+	    induction_system$display(p, sys.isys, ns, stab)
+	    op_system$display(p, sys.osys, ns, stab)
+	    deduction_system$display(p, sys.dsys, ns, stab)
+	    equation_system$display(p, sys.esys, ns, stab)
+	    rewriting_system$display(p, sys.rsys, ns, stab)
+	    end resignal interrupt
+	end display
+    
+
+    % Displays all axioms in "sys" named by "ns".
+    % ENHANCE experimental feature: Display state of ground system.
+
+    display_ground_facts = proc (p: printer, sys: cvt, stab: symtab)
+			     signals (interrupt)
+	stab.unparse_mode := sys.display_mode
+	ground_system$display(p, sys.gsys, stab)
+	   resignal interrupt
+	end display_ground_facts
+    
+
+    % Displays information from the registry about the current ordering for the
+    % operators in "ops".
+    
+    display_ordering = proc (p: printer, sys: cvt, ops: op_set, stab: symtab)
+			 signals (interrupt)
+	if ordering$is_poly(sys.rsys.ordering)
+	   then printer$text(p, "\nPolynomial interpretations:\n\n")
+		poly_interp$display(p, ops, sys.reg)
+	   else registry$display(sys.reg, p, ops, stab)
+	   end resignal interrupt
+	end display_ordering
+
+
+    % Displays all unifiers of "t1" and "t2".
+    
+    display_unifiers = proc (p: printer, t1, t2: term, stab: symtab, sys: cvt)
+	print_unifiers(p, flatten(t1, sys.osys), flatten(t2, sys.osys),
+		       stab, sys.osys)
+	end display_unifiers
+    
+
+    % Performs the tasks indicated by "mode" to stabilize the system (i.e., to
+    % ensure that all active rewrite and deduction rules have been applied to
+    % all nonimmune facts), or also to order equations into rewrite rules or to
+    % complete the system.  If "sys.automatic_registry" is true, extends the
+    % registry automatically when necessary to order an equation; otherwise
+    % extends the registry by interacting with the user.  If "sys.rsys.ord" is
+    % a termination ordering, attempts to preserve the termination of the set
+    % of rewrite rules.  This operation can be interrupted.  Signals as
+    % follows:
+    
+    % "inconsistent(e)": derived inconsistent equation "e"
+    % "interrupt":       user typed ^G
+    % "proved":		 current conjecture reduced to an identity
+    % "suspend":	 user typed "interrupt" in response to ordering request
+    % "unorderable":	 automatic ordering cannot order all equations
+
+    do_tasks = proc (sys: cvt, mode: named_task_mode, p: printer, stab: symtab)
+		 signals (inconsistent(equation), interrupt, 
+		     	  proved, suspend, unorderable)
+	own process_e: int := index_in_seq[task](process_new_equations, 
+	                                         first_tasks)
+	own process_r: int := index_in_seq[task]
+				  (internormalize_rewriting_system, 
+				   first_tasks)
+		
+	% Figure out which tasks to execute
+	completion: bool := false
+	ns: name_set := sys.toOrder
+	sys.toOrder := name_set$universal()
+	ts: task_seq
+	tagcase mode.which
+	   tag big:       ts := big_tasks
+			  completion := true
+	   tag expert:    ts := expert_tasks
+			  completion := true
+	   tag order:     ts := order_tasks
+			  sys.toOrder := ns
+	   tag stabilize: if sys.automatic_ordering
+			     then ts := order_tasks
+			     else ts := stabilize_tasks
+			     end
+	   tag standard:  ts := standard_tasks
+			  completion := true
+	   tag cp:        if sys.automatic_ordering
+			     then ts := cp_tasks1
+			     else ts := cp_tasks2
+			     end
+	   end
+	if completion then
+	   if is_locally_complete(up(sys)) then return end
+	   overlaps$keep(sys.rsys.overlaps, true, sys.rsys)
+	   end
+        if mode ~= sys.current_task_mode then
+	   sys.current_task_mode := mode
+	   sys.task_num := 1
+	   end
+	
+	% Execute tasks
+	if front_end$interrupt() then signal interrupt end
+	while sys.task_num <= task_seq$size(ts) do
+	    begin
+		num: int := sys.task_num
+		sys.task_num := 1
+		ts[num](sys, p, stab)
+		sys.task_num := num + 1
+		end
+	       resignal interrupt, suspend, unorderable
+	       except
+		  when inconsistent (e: equation):
+		       if ts = cp_tasks1 cor ts = cp_tasks2 then
+			  tracer$interrupting_cps()
+			  end
+		       signal inconsistent(e)
+		  when new_eq: sys.task_num := process_e
+		  when new_rr: sys.task_num := process_r
+		  when order_eq:
+		       sys.task_num :=
+			   int$min(index_in_seq[task](extend_registry, ts),
+				   index_in_seq[task]
+				       (process_incompatible_equations, ts))
+		  when proved:
+		       if ts = cp_tasks1 cor ts = cp_tasks2 then
+			  tracer$interrupting_cps()
+			  end
+		       signal proved
+		  end
+	    end
+	tracer$sys_size(up(sys), 1)
+	if completion then sys.locally_confluent := true end
+	end do_tasks
+
+
+    % Assumes esys and rsys are flattened.
+
+    % Finds instantiations of the rewrite rules and formulas named by "ns2" by
+    % special literals in ns1.  Yields the results of the instantiations
+    % normalized by rsys.  Asserts the normalized results, but does nothing to
+    % use the new facts (i.e., does not call prover$make_inferences).
+
+    find_instantiations = iter (i: interactive, ns1, ns2: name_set)
+			    yields(fo_arr) signals (interrupt)
+	sys: rep := down(i.sys)
+	stab: symtab := i.symtab
+	rsys: rewriting_system := sys.rsys
+	done: term_set := term_set$[]
+	while true do
+	    found: bool := false
+	    % Find the rewrite rule with the largest ground left side.
+	    grrp: rr_prop
+	    for grrp_candidate: rr_prop in rewriting_system$elements(rsys) do
+		rr: rewrite_rule := grrp_candidate.prop
+		if ~name_set$contains_rr(ns1, rr) then continue end
+		left: term := rr.left
+		if is_ground_term(left) cor is_ground_literal(left) then
+		   if term_set$exists(done, left) then continue end
+		   if ~found cor grrp.prop.left.size > left.size then
+		      grrp := grrp_candidate
+		      end
+		   found := true
+		   end
+		end
+	    if ~found then return end
+	    term_set$insert(done, grrp.prop.left)
+	    % Apply rr above to result of instantiate's below before
+	    % normalizing to prevent the rule being instantiated from
+	    % normalizing the result to an identity.
+	    fa: fo_arr := fo_arr$[]
+	    glhs: term := flatten(grrp.prop.left, sys.osys)
+	    rr1: rewriting_system := rewriting_system$one_rule(grrp.prop, rsys)
+	    for rrp: rr_prop in rewriting_system$elements(rsys) do
+		rr: rewrite_rule := rrp.prop
+		if ~name_set$contains_rr(ns2, rr) then continue end
+		for sigma: substitution 
+		      in find_matches(glhs, rr.left, sys.osys, stab) do
+		    if OS_check_interrupt() then signal interrupt end
+		    fo: formula := formula$instantiate(rr, sigma, sys.osys, stab)
+		       except when same: continue end
+		    fo := formula$normal_form(fo, rr1, sys.osys, stab, false)
+		       except when already_normal_form:
+			      when might_loop (f: formula): fo := f
+			      end
+		    fo_arr$addh(fa, fo)
+		    end
+		end
+	    for eqp: eq_prop in equation_system$elements(sys.esys) do
+		eq: equation := eqp.prop
+		if ~name_set$contains_eq(ns2, eq) then continue end
+		for sigma: substitution 
+		      in find_matches(glhs, eq.formula,	sys.osys, stab) do
+		    if OS_check_interrupt() then signal interrupt end
+		    fo: formula := formula$instantiate(eq, sigma, sys.osys, stab)
+		       except when same: continue end
+		    fo := formula$normal_form(fo, rr1, sys.osys, stab, false)
+		       except when already_normal_form:
+			      when might_loop(f: formula): fo := f
+			      end
+		    fo_arr$addh(fa, fo)
+		    end
+		end
+	    printer$text(i.p, "number of instantiations is " || 
+		              int$unparse(fo_arr$size(fa)) ||"\n")
+	    non_triv: fo_arr := fo_arr$[]
+	    for fo: formula in fo_arr$elements(fa) do
+		orig_fo: formula := fo
+		if sys.default_ai.immune ~= immunity_on then
+		   fo := formula$normal_form(fo, rsys, sys.osys, stab, false)
+		      except when already_normal_form, might_loop(*): end
+		   end
+		identity: bool := formula$is_identity(fo)
+		if ~identity then
+		   fo.name := symtab$new_name(stab)
+		   if ~formula$same_object(orig_fo, fo) then
+		      orig_fo.name := fo.name
+		      end
+		   system$add_formula(up(sys), fo, sys.default_ai, true)
+		   fo_arr$addh(non_triv, orig_fo)
+		   end
+		end
+	    tracer$found_instantiations(grrp.prop.name, non_triv)
+	    yield(non_triv)
+	    end
+	end find_instantiations
+
+
+    % (Internal iterator) helper for find_instantiations
+    % Assumes rrs and t are flattened.
+
+    find_matches = iter (glhs, t: term, osys: op_system, stab: symtab)
+		     yields (substitution)
+	t := flatten(t, osys)
+	for st: term in subterms(t, false) do
+	    for sigma: substitution in match(glhs, st, osys, stab) do
+		yield(sigma)
+		end except when no_match: end
+	    end
+	end find_matches
+    
+
+    % Yields the names of all facts in "sys" with the attribute "fa".
+    
+    find_names = iter (sys: cvt, fa: fact_attribute) yields (name)
+	tagcase fa
+	   tag dr:
+	       for drp: dr_prop in deduction_system$elements(sys.dsys) do
+		   yield(drp.prop.name)
+		   end
+	   tag eq:
+	       for eqp: eq_prop in equation_system$elements(sys.esys) do
+		   yield(eqp.prop.name)
+		   end
+	   tag ir:
+	       for irp: ir_prop in induction_system$elements(sys.isys) do
+		   yield(irp.prop.name)
+		   end
+	   tag ot:
+	       for otp: ot_prop in op_system$elements(sys.osys) do
+		   yield(otp.prop.name)
+		   end
+	   tag rr:
+	       for rrp: rr_prop in rewriting_system$elements(sys.rsys) do
+		   yield(rrp.prop.name)
+		   end
+	   tag all:
+	       for drp: dr_prop in deduction_system$elements(sys.dsys) do
+		   yield(drp.prop.name)
+		   end
+	       for eqp: eq_prop in equation_system$elements(sys.esys) do
+		   yield(eqp.prop.name)
+		   end
+	       for irp: ir_prop in induction_system$elements(sys.isys) do
+		   yield(irp.prop.name)
+		   end
+	       for otp: ot_prop in op_system$elements(sys.osys) do
+		   yield(otp.prop.name)
+		   end
+	       for rrp: rr_prop in rewriting_system$elements(sys.rsys) do
+		   yield(rrp.prop.name)
+		   end
+
+	   tag activity (a: bool):
+	       for drp: dr_prop in deduction_system$elements(sys.dsys) do
+		   if a = drp.active then yield(drp.prop.name) end
+		   end
+	       for eqp: eq_prop in equation_system$elements(sys.esys) do
+		   if a = eqp.active then yield(eqp.prop.name) end
+		   end
+	       for irp: ir_prop in induction_system$elements(sys.isys) do
+		   if a = irp.active then yield(irp.prop.name) end
+		   end
+	       for otp: ot_prop in op_system$elements(sys.osys) do
+		   if a = otp.active then yield(otp.prop.name) end
+		   end
+	       for rrp: rr_prop in rewriting_system$elements(sys.rsys) do
+		   if a = rrp.active then yield(rrp.prop.name) end
+		   end
+
+	   tag immunity (a: immunity):
+	       for drp: dr_prop in deduction_system$elements(sys.dsys) do
+		   if a = drp.immune then yield(drp.prop.name) end
+		   end
+	       for eqp: eq_prop in equation_system$elements(sys.esys) do
+		   if a = eqp.immune then yield(eqp.prop.name) end
+		   end
+	       for irp: ir_prop in induction_system$elements(sys.isys) do
+		   if a = irp.immune then yield(irp.prop.name) end
+		   end
+	       for otp: ot_prop in op_system$elements(sys.osys) do
+		   if a = otp.immune then yield(otp.prop.name) end
+		   end
+	       for rrp: rr_prop in rewriting_system$elements(sys.rsys) do
+		   if a = rrp.immune then yield(rrp.prop.name) end
+		   end
+
+	   tag c_o (ops: op_spec):
+	       for drp: dr_prop in deduction_system$elements(sys.dsys) do
+		   if has_op(drp.prop.ops, ops) then yield(drp.prop.name) end
+		   end
+	       for eqp: eq_prop in equation_system$elements(sys.esys) do
+		   if has_op(eqp.prop.ops, ops) then yield(eqp.prop.name) end
+		   end
+	       for irp: ir_prop in induction_system$elements(sys.isys) do
+		   if has_op(irp.prop.ops, ops) then yield(irp.prop.name) end
+		   end
+	       for otp: ot_prop in op_system$elements(sys.osys) do
+		   if has_op(otp.prop.ops, ops) then yield(otp.prop.name) end
+		   end
+	       for rrp: rr_prop in rewriting_system$elements(sys.rsys) do
+		   if has_op(rrp.prop.ops, ops) then yield(rrp.prop.name) end
+		   end
+
+	   tag c_v (vs: var_spec):
+	       for drp: dr_prop in deduction_system$elements(sys.dsys) do
+		   if has_var(drp.prop.vars, vs) then yield(drp.prop.name) end
+		   end
+	       for eqp: eq_prop in equation_system$elements(sys.esys) do
+		   if has_var(eqp.prop.vars, vs) then yield(eqp.prop.name) end
+		   end
+	       for rrp: rr_prop in rewriting_system$elements(sys.rsys) do
+		   if has_var(rrp.prop.vars, vs) then yield(rrp.prop.name) end
+		   end
+
+	   tag c_m (t: term):
+	       osys: op_system := sys.osys
+	       t := flatten(t, osys)
+	       for drp: dr_prop in deduction_system$elements(sys.dsys) do
+		   p: term := deduction_rule$dr2e(drp.prop).formula
+		   if matches_subterm(p, t, osys) then yield(drp.prop.name) end
+		   end
+	       for eqp: eq_prop in equation_system$elements(sys.esys) do
+		   p: term := eqp.prop.formula
+		   if matches_subterm(p, t, osys) then yield(eqp.prop.name) end
+		   end
+	       for rrp: rr_prop in rewriting_system$elements(sys.rsys) do
+		   p: term := rrp.prop.formula
+		   if matches_subterm(p, t, osys) then yield(rrp.prop.name) end
+		   end
+	   end
+	end find_names
+
+    has_op = proc (ops: op_set, spec: op_spec) returns (bool)
+	return(op_set$exists(ops, operator${id: spec.id, sig: spec.sig.value}))
+	   except when wrong_tag: end
+	for op: operator in op_set$elements(ops) do
+	    if identifier$similar(op.id, spec.id) then return(true) end
+	    end
+	return(false)
+	end has_op
+
+
+    has_var = proc (vs: var_set, spec: var_spec) returns (bool)
+	id: identifier := spec.id
+	return(var_set$exists(vs, variable${id: id, sort: spec.sort.value}))
+  	   except when wrong_tag: end
+	for v: variable in var_set$elements(vs) do
+	    if v.id = id then return(true) end
+	    end
+	return(false)
+	end has_var
+
+    % Eliminates an existential quantifier over "v" from the facts named by 
+    % "ns" and substitutes "t" for the occurrences of "v" bound by that
+    % quantifier.  Assumes that "t" is a proper skolem term.  Signals 
+    % if the elimination cannot be performed.
+    
+    fix = proc (sys: cvt, v: variable, t: term, ns: name_set, stab: symtab)
+	    signals (missing, ambiguous, need_vars)
+        found: bool := false
+	need_vars: bool := false
+        e1, e2: equation 
+	begin  % Look for equation to fix
+	    eqs: eq_seq := equation_system$named_subset(sys.esys, ns)
+	    e1, e2 := equation_to_fix(eqs, v, t, sys.osys, stab)
+	    found := true
+	    end	resignal ambiguous
+	   except when none:
+		  when need_vars: need_vars := true
+		  end
+	begin % Look for rewrite rule to fix
+	    rrs: rr_seq := rewriting_system$named_subset(sys.rsys, ns)
+	    e1, e2 := equation_to_fix(rrs, v, t, sys.osys, stab)
+	    if found then signal ambiguous end
+	    found := true
+	    end resignal ambiguous
+	   except when none:
+		  when need_vars: need_vars := true
+		  end
+	% ENHANCE: Look for deduction rule to fix
+	if need_vars then signal need_vars end
+	if ~found then signal missing end
+	immunized: bool := false
+	e2 := formula$normal_form(e2, sys.rsys, sys.osys, stab, false)
+	   except when already_normal_form:
+		  when might_loop (e3: equation):
+		       e2 := e3
+		       immunized := true
+		  end
+	identity: bool := formula$is_identity(e2)
+	if ~identity then
+	   ai: ai_settings := sys.default_ai
+	   if immunized then
+	      ai := ai_settings$copy(ai)
+	      ai.immune := immunity_on
+	      end
+	   e2.name := symtab$new_name(stab)
+	   equation_system$add(sys.esys, e2, sys.default_ai, true)
+	   end
+	tracer$fixed_eq(e1, e2, identity, immunized)
+	sys.task_num := 1
+	end fix
+    
+    
+    % (Internal procedure) Instantiates those equations in "eqs" that contain
+    % free variables in the domain of "sigma" by "sigma" and adds the results,
+    % if changed and not an identity, to "sys.esys.new".
+
+    equation_to_fix = proc (eqs: eq_seq, v: variable, tv: term, 
+	    		    osys: op_system, stab: symtab)
+			returns (equation, equation)
+			signals (none, ambiguous, need_vars)
+	found: bool := false
+	need_vars: bool := false
+	e1, e2: equation
+	for e: equation in eq_seq$elements(eqs) do
+	    e2 := exists_elimination(e, v, tv, true, osys, stab)
+	       resignal ambiguous
+	       except when need_vars: need_vars := true 
+	              when missing: continue 
+		      end
+	    if found then signal ambiguous end
+	    found := true
+	    e1 := e
+	    end
+	if need_vars then signal need_vars end
+	if found then return(e1, e2) end
+	signal none
+	end equation_to_fix
+
+
+    % Returns the flattened form of "eq" with respect to "sys.osys".
+    
+    flatten_eq = proc (eq: equation, sys: cvt) returns (equation)
+	return(formula$reflat(eq, sys.osys))
+	   except when same: return(eq) end
+	end flatten_eq
+
+    
+    % Returns the flattened form of "f" with respect to "sys.osys".
+    
+    flatten_fact = proc (f: fact, sys: cvt) returns (fact)
+	tagcase f
+	   tag dr (dr: deduction_rule):
+	       return(fact$make_dr(deduction_rule$reflat(dr, sys.osys)))
+	   tag eq (eq: equation):
+	       return(fact$make_eq(formula$reflat(eq, sys.osys)))
+	   tag rr (rr: rewrite_rule):
+	       return(fact$make_rr(rewrite_rule$reflat(rr, sys.osys)))
+	   others: return(f)
+	   end except when same: return(f) end
+	end flatten_fact
+
+    
+    % Returns the flattened form of "t" with respect to "sys.osys".
+    
+    flatten_term = proc (t: term, sys: cvt) returns (term)
+	return(flatten(t, sys.osys))
+	end flatten_term
+
+
+    % Throws away the list of critical pairs yet to be computed.  Useful when
+    % we are not running Knuth-Bendix and want to conserve space.
+
+    forget_pairs = proc (sys: cvt)
+	overlaps$keep(sys.rsys.overlaps, false, sys.rsys)
+	sys.task_num := 1
+	end forget_pairs
+
+
+    % Yields ground literals appearing in rewrite rules named by "ns" and of
+    % the form
+    %		[~]GL /\ [~]GL -> false
+    %		[~]GL \/ [~]GL -> true
+    % where GL is the ground literal and [~] is an optional negation.
+    % Each special literal is yielded the number of times it appears in the
+    % named rewrite rules.
+    % Also yields the number of conjuncts/disjuncts in the LHS that GL appears.
+    %
+    % Requires: Caller never modifies sys during iteration.
+
+    ground_literals = iter (sys: cvt, ns: name_set) yields(term, int)
+	for rrp: rr_prop in rewriting_system$elements(sys.rsys) do
+	    rr: rewrite_rule := rrp.prop
+	    if ~name_set$contains_rr(ns, rr) then continue end
+	    root: operator := rr.left.root except when wrong_tag: continue end
+	    if (root = op_and() cand rr.right = term_false()) cor
+	       (root = op_or() cand rr.right = term_true()) cor
+	       (root = op_implies() cand rr.right = term_true())
+	       then uft: term := rr.left	% unflatten(rr.left)
+	            uft_args: term_arr
+			:= term_arr$predict(1, term_seq$size(uft.args))
+		    for ufta: term in term_seq$elements(uft.args) do
+		        sn: term := strip_not(ufta)
+			   except when wrong_tag: sn := ufta end
+			if ~is_ground_literal(sn) then exit next_rrp end
+		        term_arr$addh(uft_args, sn)
+			end
+		    for ufta: term in term_arr$elements(uft_args) do
+		        yield(ufta, term_arr$size(uft_args))
+			end
+	       end except when next_rrp: end
+	    end
+	end ground_literals
+
+
+    % Returns "true" if "sys" contains an induction rule that implies "ir".
+    
+    implies_ir = proc (sys: cvt, ir: induction_rule) returns (bool)
+	return(induction_system$implies(sys.isys, ir))
+	end implies_ir
+    
+    
+    % Instantiates the axioms named by "ns" by the substitution "sigma".
+    
+    instantiate = proc (sys: cvt, sigma: substitution, ns: name_set,
+			stab: symtab) signals (none)
+	eqs: eq_seq := equation_system$named_subset(sys.esys, ns)
+	rrs: rr_seq := rewriting_system$named_subset(sys.rsys, ns)
+	drs: dr_seq := deduction_system$named_subset(sys.dsys, ns)
+	if eq_seq$size(eqs) + eq_seq$size(rrs) + dr_seq$size(drs) = 0 then
+	   signal none
+	   end
+	instantiate_eqs(sys, eqs, sigma, stab)
+	instantiate_eqs(sys, rrs, sigma, stab)
+	instantiate_drs(sys, drs, sigma, stab)
+	sys.task_num := 1
+	end instantiate
+    
+    
+    % (Internal procedure) Eliminates all accessible prenex-universal
+    % quantifiers that bind a variable in the domain of "sigma" from the
+    % equations in "eqs", and then applies "sigma" to the equations in "eqs".
+    % Adds the results, if changed and not an identity, to "sys.esys.new".
+
+    instantiate_eqs = proc (sys: rep, eqs: eq_seq, sigma: substitution,
+			    stab: symtab)
+	if eq_seq$empty(eqs) then return end
+	for eq1: equation in eq_seq$elements(eqs) do
+	    if ~var_set$intersect(eq1.vars, sigma.domain) then continue end
+	    eq2: equation := all_elimination(eq1, sigma, true, sys.osys, stab)
+	       except when missing: eq2 := eq1 end
+	    if formula$same_object(eq1, eq2) then
+	       tracer$instantiated_eq(eq1, eq2, false, false, false)
+	       continue
+	       end
+	    immunized: bool := false
+	    named: bool := false
+	    if sys.default_ai.immune ~= immunity_on then
+	       rsys: rewriting_system := sys.rsys
+	       if eq1.is_rr then
+		  rsys := rewriting_system$copy(rsys)
+		  rewriting_system$delete(rsys, eq1.name)
+		     except when missing: fail("system$%instantiate_eqs") end
+		  end
+	       % When ancestor-immunity is on, we need to supply the name that
+	       % eq2 will get so that it can be protected against reduction by
+	       % its ancestors.
+	       named := sys.default_ai.immune = immunity_anc
+	       if named then eq2.name := symtab$new_subname(stab, eq1.name) end
+	       eq2 := formula$normal_form(eq2, rsys, sys.osys, stab, named)
+		  except when already_normal_form:
+			 when might_loop (eq3: equation):
+			      eq2 := eq3
+			      immunized := true
+			 end
+	       end
+	    identity: bool := formula$is_identity(eq2)
+	    if ~identity then
+	       ai: ai_settings := sys.default_ai
+	       if immunized then
+		  ai := ai_settings$copy(ai)
+		  ai.immune := immunity_on
+		  end
+	       if ~named then
+		  eq2.name := symtab$new_subname(stab, eq1.name)
+		  end
+	       equation_system$add(sys.esys, eq2, sys.default_ai, true)
+	       end
+	    tracer$instantiated_eq(eq1, eq2, identity, true, immunized)
+	    end
+	end instantiate_eqs
+
+
+    % (Internal procedure) Instantiates the deduction rules in "drs" by "sigma"
+    % and adds the results, if different, to the system.
+
+    instantiate_drs = proc (sys: rep, drs: dr_seq, sigma: substitution,
+			    stab: symtab)
+	if dr_seq$empty(drs) then return end
+	for dr1: deduction_rule in dr_seq$elements(drs) do
+	    dr2: deduction_rule :=
+		deduction_rule$instantiate(dr1, sigma, sys.osys, stab)
+	       except when same:
+		           tracer$instantiated_dr(dr1, dr1, false, false)
+			   continue
+		      end
+            dr2.name := symtab$new_subname(stab, dr1.name)
+	    deduction_system$add(sys.dsys, dr2, sys.default_ai, true)
+	    tracer$instantiated_dr(dr1, dr2, false, true)
+	    end
+	end instantiate_drs
+    
+    
+    % Returns an unnamed formula obtained by applying the substitution "sigma"
+    % to "f".  Signals "same" if "sigma" does not change "f".
+    
+    instantiate_formula = proc (f: formula, sigma: substitution, sys: cvt,
+	    			stab: symtab) returns (formula) signals (same)
+	return(formula$instantiate(f, sigma, sys.osys, stab))
+	   resignal same
+	end instantiate_formula
+
+
+    % Returns a term obtained by applying the substitution "sigma"
+    % to "t".  
+    
+    instantiate_term = proc (t: term, sigma: substitution, sys: cvt,
+	    		     stab: symtab) returns (term)
+	return(flatten(substitution$apply(sigma, t, stab), sys.osys))
+	end instantiate_term
+
+
+    % Returns "true" iff "sys.rsys" is convergent.
+
+    is_convergent = proc (sys: cvt) returns (bool)
+	return(sys.locally_confluent cand sys.rsys.terminates)
+	end is_convergent
+
+
+    % Returns "true" iff "sys" is locally complete, i.e., iff there are no 
+    % equations in "sys" and the rewrite rules in "sys" are locally confluent.
+
+    is_locally_complete = proc (sys: cvt) returns (bool)
+	return(sys.locally_confluent cand equation_system$is_empty(sys.esys))
+	end is_locally_complete
+
+
+    % Returns "true" iff the rewriting system in "sys" is locally confluent.
+    % NOTE: Be sure to set this false when rewrite rules are added or deleted.
+    % Does this attribute belong in rsys?
+    
+    is_locally_confluent = proc (sys: cvt) returns (bool)
+	return(sys.locally_confluent)
+	end is_locally_confluent
+
+
+    % Returns the unique induction rule with a name in "ns" for the sort "so"
+    % from "sys.isys".  Signals "none" if there is no such induction rule.
+    % Signals "ambiguous" if there is more than one.
+    
+    lookup_induction_rule = proc (sys: cvt, so: sort, ns: name_set)
+			      returns (induction_rule)
+			      signals (ambiguous, none)
+	return(induction_system$lookup_induction_rule(sys.isys, so, ns))
+	   resignal none, ambiguous
+	end lookup_induction_rule
+
+    
+    % Yields the induction rules with a name in "ns" for the sort "so"
+    % from "sys.isys".
+    
+    induction_rules = iter (sys: cvt, so: sort, ns: name_set)
+			yields (induction_rule)
+	for ir: induction_rule
+	      in induction_system$induction_rules(sys.isys, so, ns) do
+	    yield(ir)
+	    end
+	end induction_rules
+
+    
+    % Returns the operator theory of "op" in "sys".
+    
+    lookup_op_theory = proc (sys: cvt, op: operator) returns (op_theory)
+	return(op_system$lookup_theory(sys.osys, op))
+	end lookup_op_theory
+    
+
+    % Returns a normal form of "fo" with respect to the set of rewrite rules
+    % obtained by "build_rsys" and "osys".  Signals "already_normal_form" if
+    % "fo" is in normal form.  Signals "might_loop(fo1)" if the built rewriting
+    % system is not known to terminate and "fo" reduces to "fo1" in
+    % "rsys.rewriting_limit" steps.
+    
+    normalize_formula_by = proc (fo: formula, sys: cvt, stab: symtab,
+				 ns: name_set, reverse: bool)
+			     returns (formula) signals (already_normal_form,
+							might_loop(formula))
+	rsys: rewriting_system := build_rsys(sys, ns, reverse)
+	return(formula$normal_form(fo, rsys, sys.osys, stab, false))
+	   resignal already_normal_form, might_loop
+	end normalize_formula_by
+
+
+    % (Internal procedure) Returns a rewriting system containing the hardwired
+    % rewrite rules together with
+    % (a) if "reverse" is false, all rewrite rules (active or not) in "sys"
+    %     together with all equations (active or not) in "sys" named by "ns" 
+    %     that can be oriented from left to right (with that orientation), or
+    % (b) if "reverse" is true, all rewrite rules and equations (active or not)
+    %     in "sys" named by "ns" that can be oriented from right to left (with 
+    %     that orientation).
+    
+    build_rsys = proc (sys: rep, ns: name_set, reverse: bool)
+		   returns(rewriting_system)
+	rsys: rewriting_system
+	rr: rewrite_rule
+	if reverse
+	   then rsys := rewriting_system$named_subsystem(sys.rsys, name_set$[])
+                for rrp: rr_prop in rewriting_system$elements(sys.rsys) do
+		    rr := rrp.prop
+		    if ~name_set$contains_name(ns, rr.name) then continue end
+		    rr := rewrite_rule$reverse(rr)
+		       except when impossible: continue end
+		    rewriting_system$add_active(rsys, rr, sys.osys)
+		    end
+	   else rsys := rewriting_system$named_subsystem(sys.rsys, ns)
+	   end
+	if ~ns.has_eqs then return(rsys) end
+	for eqp: eq_prop in equation_system$elements(sys.esys) do
+	    e: equation := eqp.prop
+	    if ~name_set$contains_name(ns, e.name) then continue end
+	    if interactive$get_conditional() then
+	       if reverse
+		  then rr := rewrite_rule$e2cr_reversed(e)
+		  else rr := rewrite_rule$e2cr(e)
+		  end
+	       rewriting_system$add_active(rsys, rr, sys.osys)
+	       continue
+	       end except when impossible:
+			  when already_oriented: fail("system$%build_rsys")
+			  end
+	    if reverse
+	       then rr := rewrite_rule$e2r_reversed(e)
+	       else rr := rewrite_rule$e2r(e)
+	       end except when already_oriented: fail("system$%build_rsys")
+		          when invalid_rule: continue
+		          end
+	    rewriting_system$add_active(rsys, rr, sys.osys)
+	    end
+	return(rsys)
+	end build_rsys
+
+
+    % The same as "normalize_formula_by", except that the formula is
+    % rewritten a single time.
+    
+    reduce_formula_by = proc (fo: formula, sys: cvt, stab: symtab,
+			      ns: name_set, reverse: bool)
+			  returns (formula) signals (already_normal_form)
+	rsys: rewriting_system := build_rsys(sys, ns, reverse)
+	return(formula$reduce(fo, rsys, sys.osys, stab, false))
+	   resignal already_normal_form
+	end reduce_formula_by
+
+
+    % Yields the reductions of "t" with respect to "sys.rsys".
+    
+    reductions = iter (t: term, sys: cvt, stab: symtab) yields (term) 
+                   signals (might_loop)
+	t1: term := flatten(t, sys.osys)
+	if ~term$same_object(t, t1) then yield(t1) end
+	for t2: term in rewriting_system$reductions(t1, sys.rsys, sys.osys,
+						    stab, name$orphan()) do
+	    yield(t2)
+	    end resignal might_loop
+	end reductions
+    
+    
+    % Registers the operators in "ops" as having the same height in "sys.reg".
+    % Signals "ordered(op1, op2)" if "op2 > op1" in "sys.reg" for some "op1"
+    % and "op2" in "ops".  Signals "multi_and_lex(op1, op2)" if the equivalence
+    % class of one of "op1" or "op2" contains an operator with multiset status
+    % and the equivalence class of the other contains an operator with
+    % lexicographic status.
+    
+    register_equal = proc (sys: cvt, ops: op_set)
+		       signals (ordered(operator, operator),
+				multi_and_lex(operator, operator))
+	first: bool := true
+	last_op: operator
+	for op: operator in op_set$elements(ops) do
+	    if ~first then registry$make_equal(sys.reg, last_op, op) end
+	       resignal ordered
+	       except when multi_and_lex: signal multi_and_lex(last_op, op) end
+	    first := false
+	    last_op := op
+	    end
+	sys.task_num := 1
+	end register_equal
+
+    
+    % Registers "ops" as being at the bottom of the registry if "bottom" is
+    % true and at the top of the registry if "bottom" is false.  Signals
+    % "bottom(op)" if "op" cannot be at the bottom because it is already at the
+    % top or "top(op)" if "op" cannot be at the top because it is already at
+    % the bottom.
+
+    register_extreme_ops = proc (sys: cvt, ops: op_set, bottom: bool)
+			     signals (bottom(operator), top(operator))
+	registry$extreme_ops(sys.reg, ops, bottom)
+	   resignal bottom, top
+	sys.task_num := 1
+	end register_extreme_ops
+		
+
+    % Registers the operators in "higher" as being higher than those in "lower"
+    % in "sys.reg".  Signals "same(op)" if "op" occurs in both sets.  Signals
+    % "inconsistent(op1, op2)" if "op1 < op2" is in "sys.reg" for some "op1" in
+    % "higher" and "op2" in "lower".
+
+    register_higher = proc (sys: cvt, higher, lower: op_set)
+			signals (inconsistent(operator, operator),
+				 same(operator))
+	for high: operator in op_set$elements(higher) do
+	    for low: operator in op_set$elements(lower) do
+		registry$make_higher(sys.reg, high, low)
+		   except when same: signal same(high)
+			  when inconsistent: signal inconsistent(high, low)
+			  end
+		end
+	    end
+	sys.task_num := 1
+	end register_higher
+
+    
+    % Registers the operators in "higher" as being higher than or equal to
+    % those in "lower" in "sys.reg".  Signals "ordered(op1, op2)" if "op2 >
+    % op1" is in "sys.reg" for some "op1" in "higher" and "op2" in "lower".
+    % Signals "multi_and_lex(op1, op2)" if the equivalence class of one of
+    % "op1" or "op2" contains an operator with multiset status and the
+    % equivalence class of the other contains an operator with lexicographic
+    % status.
+
+    register_higher_or_equal = proc (sys: cvt, higher, lower: op_set)
+				 signals (ordered(operator, operator),
+					  multi_and_lex(operator, operator))
+	for high: operator in op_set$elements(higher) do
+	    for low: operator in op_set$elements(lower) do
+		registry$make_higher_or_equal(sys.reg, high, low)
+		   except when inconsistent:
+			       signal ordered(high, low)
+			  when multi_and_lex:
+			       signal multi_and_lex(high, low)
+			  when redundant:
+			  end
+		end
+	    end
+	sys.task_num := 1
+	end register_higher_or_equal
+
+    
+    % Registers "pi" as a polynomial interpretation for "op".
+    
+    register_polynomials = proc (sys: cvt, op: operator, pi: poly_interp)
+			     signals (in_rule)
+	if op_set$exists(sys.rsys.ops, op) then signal in_rule end
+	registry$set_polys(sys.reg, op, pi)
+	sys.task_num := 1
+	end register_polynomials
+    
+
+    % Registers "ops" to have status "stat".
+    
+    register_status = proc (sys: cvt, ops: op_arr, stat: status)
+			signals (multi_and_lex(operator),
+				 status_defined(operator))
+	for op: operator in op_arr$elements(ops) do
+	    registry$set_status(sys.reg, op, stat)
+	       except when multi_and_lex: signal multi_and_lex(op)
+		      when status_defined: signal status_defined(op)
+		      end
+	    end
+	sys.task_num := 1
+	end register_status
+    
+
+    % Resets "sys.reg".
+    
+    reset_registry = proc (sys: cvt) signals (lost_termination)
+	sys.reg := registry$[]
+	if sys.rsys.terminates cand rewriting_system$size(sys.rsys) > 0 then
+	   % CONSIDER: Weaken this: termination will be lost only if the
+	   % current ordering is a registered ordering that does not
+	   % order the current rewrite rules with an empty registry.
+	   % Even then, termination is lost only when a new rewrite rule
+	   % is added.
+	   rewriting_system$no_termination(sys.rsys)
+	   signal lost_termination
+	   end
+	end reset_registry
+    
+
+    % Resets the status of all operators equivalent to "op" in the registry to
+    % undefined.  Turns all rewrite rules involving operators with newly
+    % undefined status back into equations.
+
+    reset_status = proc (sys: cvt, op: operator)
+	ops: op_set := registry$reset_status(sys.reg, op)
+	if op_set$empty(ops) then return end
+	for rlist: rr_prop_list in rewriting_system$lists(sys.rsys) do
+	    for rrp: rr_prop in rr_prop_list$elements(rlist) do
+		if ~op_set$intersect(ops, rrp.prop.ops) then continue end
+		sys.locally_confluent := false
+		rewriting_system$move_to_top(sys.rsys, rlist,
+					     sys.esys.unoriented)
+		rrp.prop := formula$r2e(rrp.prop)
+		tracer$rr2eq(rrp.prop)
+		end
+	    end
+	end reset_status
+    
+
+    % (Experimental procedure) Returns a satisfying assignment for the
+    % variable-free facts in the system together with "neq".  Signals "none" if
+    % there is no satisfying assignment.  Signals "interrupt" if the user
+    % interrupts the procedure.  ASSUMES: "neq" is variable-free.
+    
+    % IMPROVE: The first "signal none" should really be "signal contradiction".
+    
+    zap = proc (sys: cvt, neq: equation, stab: symtab) returns (model)
+	    signals (interrupt, none, overflow)
+	statistics$start_satisfier()
+	% Assert previously accumulated ground facts
+	ground_system$transform(sys.gsys, sys.tsys)
+	   except when contradiction: statistics$stop_satisfier()
+				      signal none
+		  when overflow:      statistics$stop_satisfier()
+				      signal overflow
+		  end
+	% Now try to satisfy "neq".
+	ground_system$save(sys.gsys)
+	m: model := satisfy(sys, term_seq$[neq.formula])
+ 	   except when contradiction: ground_system$undo(sys.gsys)
+	      			      statistics$stop_satisfier()
+				      signal none
+		  when overflow: ground_system$undo(sys.gsys)
+	      			 statistics$stop_satisfier()
+				 signal overflow
+		  end
+	ground_system$undo(sys.gsys)
+	statistics$stop_satisfier()
+	return(m)
+	end zap
+
+
+    % (Experimental procedure)
+    
+    % Check:    ts is an array of variable-free boolean terms
+    % Modifies: sys.gsys
+    % Ensures:  if signals then Th(sys') is inconsistent
+    %           sys^ \union ts |=| sys'
+    %	        if Th(sys.gsys') is inconsistent then signals
+    %           result |= Th(sys.gsys')
+
+    % IMPROVE: do something better with tsys, overflow
+    %	       fix map between literals, terms so that case_splits can be terms
+
+    satisfy = proc (sys: rep, formulas: term_seq) returns (model)
+		signals (contradiction, overflow)
+        action = oneof[push, pop: null, assert: term_seq, try: literal]
+	actions = array[action]
+	acts: actions := actions$[action$make_assert(formulas)]
+	depth: int := 0
+	while true do
+	    begin
+		tagcase actions$remh(acts)
+		   tag assert (ts: term_seq):
+		       for t: term in term_seq$elements(ts) do
+			   ground_system$add(sys.gsys, sys.tsys, t)
+			   end
+		       ground_system$transform(sys.gsys, sys.tsys)
+		   tag try (lit: literal):
+		       ground_system$assert(sys.gsys, sys.tsys, lit)
+		   tag push:
+		       ground_system$save(sys.gsys)
+		       depth := depth + 1
+		       continue
+		   tag pop:
+		       ground_system$undo(sys.gsys)
+		       depth := depth - 1
+		       continue
+		   end
+		splits: lit_seq :=
+		    ground_system$get_case_split(sys.gsys, sys.tsys, depth)
+		for lit: literal in lit_seq$elements(splits) do
+		    actions$addh(acts, action$make_pop(nil))
+		    actions$addh(acts, action$make_try(lit))
+		    actions$addh(acts, action$make_push(nil))
+		    end
+		end except when contradiction:
+				if depth = 0 then signal contradiction end
+				% Roll back to last pop
+				while ~action$is_pop(actions$top(acts)) do
+				    actions$remh(acts)
+				    end
+		   	   when none: % No more case splits
+				t: term := sys.gsys.interesting_term
+				   except when none: exit satisfiable end
+				ts: term_seq := find_sat_matches(sys, t)
+				actions$addh(acts, action$make_assert(ts))
+			   end
+	    end resignal overflow
+	   except when satisfiable:
+		       m: model := ground_system$get_model(sys.gsys, sys.tsys)
+		       % FIX: Model may depend on structure that the following
+		       % loop removes from the ground system.  The code is ok
+		       % for now, as long neither get_case_splits or 
+		       % find__sat_matches returns a term with new structure.
+		       while depth > 0 do
+			   ground_system$undo(sys.gsys)
+			   depth := depth - 1
+			   end
+		       return(m)
+		  when bounds:
+		       signal contradiction
+		  end
+	end satisfy
+
+
+    % (Experimental procedure)  Eventually this will return a sequence of
+    % boolean-valued ground terms that result from matching "t" against 
+    % "maximal" subterms of facts in "sys".  Here, "maximal" means that the
+    % subterm contains all variables occurring freely in the fact, as well as
+    % something like the "biggest" subterm to avoid generating too many 
+    % matches. 
+    
+    find_sat_matches = proc (sys: rep, t: term) returns (term_seq)
+	return(term_seq$[])
+	end find_sat_matches
+
+    
+    % Returns the numbers of equations, rewrite rules, and deduction rules in
+    % "sys".
+
+    size = proc (sys: cvt) returns (int, int, int)
+	return(equation_system$size(sys.esys),
+	       rewriting_system$size(sys.rsys),
+	       deduction_system$size(sys.dsys))
+	end size
+    
+    
+    % Returns the sets of sorts, operators, and variables in the subsystem of
+    % "sys" consisting of those axioms with names in "names".
+
+    subsystem_ids = proc (sys: cvt, names: name_set)
+		      returns (sort_set, op_set, var_set)
+	ops: op_set := deduction_system$subsystem_ops(sys.dsys, names) +
+		       equation_system$subsystem_ops(sys.esys, names) +
+		       induction_system$subsystem_ops(sys.isys, names) +
+		       op_system$subsystem_ops(sys.osys, names) +
+		       rewriting_system$subsystem_ops(sys.rsys, names)
+	vars: var_set := deduction_system$subsystem_vars(sys.dsys, names) +
+			 equation_system$subsystem_vars(sys.esys, names) +
+			 rewriting_system$subsystem_vars(sys.rsys, names)
+	sorts: sort_set := sort_set$[]
+	for v: variable in var_set$elements(vars) do
+	    sort_set$insert(sorts, v.sort)
+	       except when exists: end
+	    end
+	for op: operator in op_set$elements(ops) do
+	    sort_set$insert(sorts, op.rng)
+	       except when exists: end
+	    for so: sort in sort_seq$elements(op.dom) do
+		sort_set$insert(sorts, so)
+		   except when exists: end
+		end
+	    end
+	return(sorts, ops, vars)
+	end subsystem_ids
+
+
+
+
+    % Turns all rewrite rules in "ns" into new equations.  Returns the number
+    % of rewrite rules turned into equations.
+
+    unorder = proc (sys: cvt, ns: name_set) returns (int)
+	eqs: eq_prop_list := rewriting_system$delete_subset(sys.rsys, ns)
+	   except when missing: return(0) end
+	n: int := eq_prop_list$size(eqs)
+	for eqp: eq_prop in eq_prop_list$elements(eqs) do
+	    eqp.prop := formula$r2e(eqp.prop)
+	    sys.locally_confluent := false
+	    end
+	eq_prop_list$append(sys.esys.new, eqs)
+	sys.task_num := 1
+	return(n)
+	end unorder
+
+
+    % Writes commands to "p" that enable LP to re-read all facts in "sys" named
+    % by "ns".
+    
+    write = proc (p: printer, sys: cvt, ops: op_set, ns: name_set,
+		  stab: symtab)
+	stab.unparse_mode := sys.write_mode
+	registry$write(sys.reg, p, ops, stab)
+	ai: ai_settings := default_ai_settings()
+	induction_system$write(p, sys.isys, ns, stab, ai)
+	op_system$write(p, sys.osys, ns, stab, ai)
+	deduction_system$write(p, sys.dsys, ns, stab, ai)
+	equation_system$write(p, sys.esys, ns, stab, ai)
+	rewriting_system$write(p, sys.rsys, ns, stab, ai)
+	stab.unparse_mode := sys.display_mode
+	end write
+    
+
+    % Only called when interactive$get_experimental() is true.
+    
+    push = proc (sys: cvt)
+	sys1: rep := rep$copy1(sys)
+	rep$r_gets_r(sys, sys1)
+	sys.cp_work := cp_work$copy(sys.cp_work)
+	sys.dsys := deduction_system$copy(sys.dsys)
+	sys.esys := equation_system$copy(sys.esys)
+	statistics$start_satisfier()
+	ground_system$save(sys.gsys)
+	statistics$stop_satisfier()
+	sys.isys := induction_system$copy(sys.isys)
+	sys.osys := op_system$copy(sys.osys)
+	registry$push(sys.reg)
+	sys.rsys := rewriting_system$copy(sys.rsys)
+	sys.toOrder := name_set$copy(sys.toOrder)
+	sys_arr$addh(sys.stack, up(sys1))
+	end push
+
+    
+    % Only called when interactive$get_experimental() is true.
+    
+    pop = proc (sys: cvt)
+	registry$pop(sys.reg, sys_arr$size(sys.stack))
+	   except when empty, mismatch: fail("system$pop") end
+	rep$r_gets_r(sys, down(sys_arr$remh(sys.stack)))
+	   except when bounds: fail("system$pop") end
+	statistics$start_satisfier()
+        ground_system$undo(sys.gsys)
+	statistics$stop_satisfier()
+	end pop
+ 
+
+    % Returns a new system that contains a copy of all information in "sys".
+    
+    % CONSIDER: When there are multiple systems, setting some settings may
+    % affect all systems and setting others may affect only a single system.
+
+    copy = proc (sys: cvt) returns (cvt)
+	return(rep$copy(sys))
+	end copy
+    
+
+    % Returns a new system that shares information with "sys".
+
+    copy1 = proc (sys: cvt) returns (cvt)
+	return(rep$copy1(sys))
+	end copy1
+    
+
+    % Replaces "sys1" by "sys2".
+    
+    r_gets_r = proc (sys1, sys2: cvt)
+	rep$r_gets_r(sys1, sys2)
+	end r_gets_r
+    
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (cvt)
+	       signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    % The following internal procedures perform tasks for "do_tasks".  Each
+    % task procedure takes four arguments.
+    
+    % sys	The rep for the "system".
+
+    % pr	A "printer" used by the interactive ordering procedures to
+    %		communicate with the user.
+
+    % FIX: Eliminate "pr" by using the tracer in the ordering procedures.
+    
+    % stab	A "symtab" used to name new equations obtained as consequences
+    %		of deduction rules, as critical pairs, or by dividing an
+    %		incompatible equation.  Also used to name new operators 
+    %		introduced by the user to divide incompatible equations and 
+    %		for tracing.
+
+    % The task procedures can issue one of the following signals:
+    
+    % inconsistent(e)
+    
+    %		The equational theory defined by "sys.esys + sys.rsys" is
+    %		inconsistent because (a) all terms are provably equal or (b)
+    %		two gound terms, consisting only of free operators in "sys",
+    %		are provably equal.  If an equation "e" has one of the
+    %		following forms, then the theory is inconsistent and
+    %		"inconsistent(e)" is signalled: (1) the terms on either side of
+    %		"e" have different free operators at their roots; (2) the term
+    %		on one side of "e" is a variable and the other term has a
+    %		free operator at its root or does not contain that variable; or
+    %		(3) both sides of "e" are variables, and the variables are
+    %		different.
+
+    % interrupt	The user has hit the "interrupt" key.  After an "interrupt"
+    %		signal, the completion and ordering procedures can be resumed 
+    %		by reinvoking them.
+    
+    % new_eq	The task has added an equation to "sys.esys.normalized".
+
+    % new_rr	The task has added a rewrite rule to "sys.rsys.normalized".
+    
+    % order_eq	The task has discovered that there are more equations to order.
+    
+    % proved	"sys.goal" has been proved.
+
+    % suspend	The user has requested (via one of the procedures that 
+    %		maintain the ordering) that the completion or interactive
+    %		ordering procedure suspend operation.  The procedure can be
+    % 		resumed by reinvoking it.
+
+    % unorderable
+    
+    %		There is no extension to the registry that orders all
+    %		equations.
+    
+
+    % (Internal procedure) Task T1
+    
+    process_new_rewrite_rules = proc (sys: rep, pr: printer, stab: symtab)
+				  signals (inconsistent(formula), interrupt)
+	rsys: rewriting_system := sys.rsys
+	if rr_prop_list$empty(rsys.new) then return end
+	tracer$processing_new_rrs(up(sys))
+	esys: equation_system := sys.esys
+	osys: op_system := sys.osys
+	while true do
+	    if front_end$interrupt() then signal interrupt end
+	    rrp: rr_prop := rr_prop_list$first(rsys.new)
+	    if rrp.immune = immunity_on then 
+	       rewriting_system$move_to_top(rsys, rsys.new, rsys.normalized)
+	       if interactive$get_experimental() then
+		  add_ground_fact(sys.gsys, sys.tsys, rrp.prop.formula)
+		  end
+	       continue
+	       end
+	    begin
+		anc: bool := rrp.immune = immunity_anc
+		rr: rewrite_rule := rrp.prop
+		rrp.prop := formula$normalize_rr(rr, rsys, osys, stab, anc)
+		   except when might_loop (rr1: rewrite_rule):
+			       rrp.immune := immunity_on
+			       rrp.prop := rr1
+			  end
+		if formula$is_identity(rrp.prop) then
+		   tracer$removed_identity(rr)
+		   rr_prop_list$remh(rsys.new)
+		   continue
+		   end
+		tracer$normalized_rr(rr, rrp.prop, rrp.immune = immunity_on)
+		end except when already_normal_form: end
+	    if interactive$get_experimental() then
+	       add_ground_fact(sys.gsys, sys.tsys, rrp.prop.formula)
+	       end
+	    if rrp.prop.is_rr
+	       then rewriting_system$move_to_top(rsys, rsys.new, rsys.normalized)
+	            do_deductions(sys, rrp, stab)
+	       else rewriting_system$move_to_top(rsys, rsys.new, esys.new)
+		    sys.locally_confluent := false
+	       end resignal inconsistent
+	       except when delete: rr_prop_list$remh(rsys.normalized)
+		      when new_eqs:
+		      end
+	    end except when empty: end
+	tracer$sys_size(up(sys), 2)
+	end process_new_rewrite_rules
+
+    
+    % (Internal procedure) Applies "sys.dsys" to "eqp", unless it is immune.
+    % Adds deduced formulas to "sys.esys.new".  Adds deduced deduction rules to
+    % "sys.dsys.new".  Immunizes and deactivates "eqp", and signals
+    % "inconsistent", if "eqp" is inconsistent.  Signals "delete" if "eqp" is
+    % provable from the resulting formulas or if it an identity.  Signals
+    % "new_eqs" if a formula was deduced.
+    
+    do_deductions = proc (sys: rep, eqp: eq_prop, stab: symtab)
+		      signals (delete, inconsistent(formula), new_eqs)
+	eqs: eq_prop_list, drs: dr_prop_list :=
+	    deduction_system$deduce(sys.dsys, sys.osys, stab, eqp, sys.default_ai)
+	   except when inconsistent:
+		       eqp.immune := immunity_on
+		       eqp.inconsistent := true
+		       eqp.active := false
+		       signal inconsistent(eqp.prop)
+		  when delete (eqpl: eq_prop_list, drpl: dr_prop_list):
+		       eq_prop_list$append(sys.esys.new, eqpl)
+		       dr_prop_list$append(sys.dsys.new, drpl)
+		       sys.locally_confluent := false
+		       signal delete
+		  when immune: return
+		  end
+	% Normalize results of deduction rules before adding them to "sys.esys"
+	% in order to avoid infinite loops from applying "when a yield b" and
+	% "when b yield a" to "a".
+	for eqp1: eq_prop in eq_prop_list$elements(eqs) do
+	    eqp1.prop := 
+		formula$normal_form(eqp1.prop, sys.rsys, sys.osys, stab, false)
+	       except when already_normal_form:
+		      when might_loop (fo: formula): eqp1.prop := fo end
+	    if formula$is_identity(eqp1.prop) then 
+	       eq_prop_list$delete(eqs)
+	       continue
+	       end
+	    for elist: eq_prop_list in equation_system$lists(sys.esys) do
+		for eqp2: eq_prop in eq_prop_list$elements1(elist) do
+		    if eqp1.prop = eqp2.prop then
+		       eq_prop_list$delete(eqs)
+		       exit deleted
+		       end
+		    end
+		end except when deleted: end
+	    end
+	new_eqs: bool := ~eq_prop_list$empty(eqs)
+	eq_prop_list$append(sys.esys.new, eqs)
+	dr_prop_list$append(sys.dsys.new, drs)
+	if new_eqs then signal new_eqs end
+	end do_deductions
+
+
+    % (Internal procedure) Task T2
+
+    internormalize_rewriting_system = proc (sys: rep, pr: printer,
+					    stab: symtab)
+					signals (inconsistent(formula),
+						 interrupt, proved)
+	rsys: rewriting_system := sys.rsys
+	if ~rr_prop_list$empty(rsys.new) then
+	   fail("system$%internormalize: precondition not met")
+	   end
+	if rr_prop_list$empty(rsys.normalized) then
+	   reduce_conjecture(sys, stab)
+	   end resignal proved
+	tracer$internormalizing(up(sys))
+	osys: op_system := sys.osys
+	while true do
+	    if front_end$interrupt() then signal interrupt end
+	    rrp: rr_prop := rr_prop_list$first(rsys.normalized)
+	    if ~rrp.active then
+	       rewriting_system$move_to_top(rsys, rsys.normalized, rsys.used)
+	       overlaps$add_pairs(rsys.overlaps, rrp, sys.rsys)
+	       continue
+	       end
+	    rewriting_system$move_to_top(rsys, rsys.normalized, rsys.unused)
+	    reduce_conjecture(sys, stab)
+	       except when proved:
+			   rr_prop_list$point_to_last(rsys.unused)
+			   rewriting_system$move_to_bottom(rsys, rsys.unused,
+							   rsys.normalized)
+			   signal proved
+		      end
+		   
+	    % Create rewriting system with "rrp.prop" as its only rewrite rule
+	    % and with the same "reduction_mode" as "rsys".
+	    rsys1: rewriting_system :=
+		rewriting_system$one_rule(rrp.prop, rsys)
+
+	    % Normalize each rewrite rule in "rsys" (other than "rrp.prop")
+	    % that is reducible by "rrp.prop" with respect to "rsys".
+	    for rrp1: rr_prop in rewriting_system$elements(rsys) do
+		if rrp1.immune = immunity_on cor rrp1 = rrp then continue end
+		rr: rewrite_rule := rrp1.prop
+		begin
+		    anc: bool := rrp1.immune = immunity_anc
+		    rr1: rewrite_rule := 
+		    	formula$reduce(rr, rsys1, osys, stab, anc)
+		    if formula$is_identity(rr1) then exit identity end
+		    tracer$reduced_rr(rr, rr1)
+		    if ~rr1.is_rr then exit unordered(rr1) end
+		    rr2: rewrite_rule := rr1
+		    begin
+			reduced: bool := true
+			aside: bool := rewriting_system$put_aside(rsys, rrp1)
+			rr2 := formula$normalize_rr(rr1, rsys, osys, stab, anc)
+			   except when might_loop (rr3: rewrite_rule):
+				       rrp1.immune := immunity_on
+				       rr2 := rr3
+				  when already_normal_form: reduced := false
+				  end
+			if aside then rewriting_system$put_back(rsys, rrp1) end
+			if reduced then
+			   if formula$is_identity(rr2) then exit identity end
+			   tracer$normalized_rr(rr1, rr2, 
+			                        rrp1.immune = immunity_on)
+			   if ~rr2.is_rr then exit unordered(rr2) end
+			   end
+			end
+		    rewriting_system$change_rr(sys.rsys, rrp1, rr2)
+		    end except when already_normal_form:
+		                    continue
+			       when unordered (f: formula):
+				    rewriting_system$delete(rsys, rr.name)
+				    sys.locally_confluent := false
+				    eq_prop_list$addh(sys.esys.new, rrp1)
+				    rrp1.prop := f
+				    continue
+			       when identity:
+				    tracer$removed_identity(rr)
+				    rewriting_system$delete(rsys, rr.name)
+				    continue
+			       end
+	        if interactive$get_experimental() then
+		   add_ground_fact(sys.gsys, sys.tsys, rrp1.prop.formula)
+		   end
+		do_deductions(sys, rrp1, stab)
+		   resignal inconsistent
+		   except when delete:
+			       rewriting_system$delete(rsys, rrp1.prop.name)
+			       sys.locally_confluent := false
+			  when new_eqs:
+			  end
+		end
+
+	    % Add pairs between the new rule and all the rules (including
+	    % itself) to the list of overlap pairs.
+	    overlaps$add_pairs(rsys.overlaps, rrp, sys.rsys)
+
+	    end except when empty: end
+	tracer$sys_size(up(sys), 2)
+	end internormalize_rewriting_system
+    
+
+    % (Internal procedure) Normalizes the current conjecture.  Signals "proved"
+    % if it normalizes to an identity.
+    
+    % ENHANCE: Better handling for "might_loop"?
+
+    reduce_conjecture = proc (sys: rep, stab: symtab) signals (proved)
+	conj: formula := goal$value_exists(sys.goal)
+	   except when wrong_tag: return end
+	conj := formula$normal_form(conj, sys.rsys, sys.osys, stab, false)
+	   except when might_loop (fo: formula): conj := fo
+		  when already_normal_form: return
+		  end
+	tracer$reduced_conjecture(conj)
+	sys.goal := goal$make_exists(conj)
+	if formula$is_identity(conj) then signal proved end
+	end reduce_conjecture
+
+
+    % (Internal procedure) Task T3
+
+    apply_unused_rewrite_rules = proc (sys: rep, pr: printer, stab: symtab)
+	if rr_prop_list$empty(sys.rsys.unused) then return end
+	tracer$reducing_system(up(sys))
+	rsys1: rewriting_system := rewriting_system$unused_subsystem(sys.rsys)
+	equation_system$reduce(sys.esys, rsys1, sys.osys, stab)
+	deduction_system$reduce(sys.dsys, rsys1, sys.osys, stab)
+	rr_prop_list$append(sys.rsys.used, sys.rsys.unused)
+	end apply_unused_rewrite_rules
+
+
+    % (Internal procedure) Task T4
+    
+    process_new_deduction_rules = proc (sys: rep, pr: printer, stab: symtab)
+				    signals (inconsistent(formula), interrupt)
+	if dr_prop_list$empty(sys.dsys.new)
+	     cand dr_prop_list$empty(sys.dsys.normalized) then return end
+	tracer$processing_new_drs(up(sys))
+	dsys: deduction_system := sys.dsys
+	esys: equation_system := sys.esys
+	osys: op_system := sys.osys
+	rsys: rewriting_system := sys.rsys
+	for drp: dr_prop in dr_prop_list$elements(dsys.new) do
+	    if front_end$interrupt() then signal interrupt end
+	    if drp.immune ~= immunity_on then
+	       dr: deduction_rule := drp.prop
+	       drp.prop := deduction_rule$normalize(dr, rsys, osys, stab)
+		  except when formulas (es: eq_seq):
+			      eqs: eq_prop_list := eq_prop_list$[]
+			      for eq: equation in eq_seq$elements(es) do
+				  eq.name := symtab$new_subname(stab, dr.name)
+				  eq_prop_list$addh
+				      (eqs, eq_prop$create(eq, sys.default_ai))
+				  end
+			      tracer$converted_dr(drp.prop, eqs)
+			      eq_prop_list$append(esys.new, eqs)
+			      dr_prop_list$delete(dsys.new)
+			      continue
+			 end
+	       tracer$normalized_dr(dr, drp.prop, drp.immune = immunity_on)
+	       end except when already_normal_form: end
+	    if dr_exists(drp.prop, dsys)
+	       then dr_prop_list$delete(dsys.new)
+		    tracer$removed_dr(drp.prop)
+	       else dr_prop_list$move_current_to_end(dsys.new, dsys.normalized)
+	       end
+	    end
+	deductions: eq_prop_list := eq_prop_list$[]
+	for drp: dr_prop in dr_prop_list$elements(dsys.normalized) do
+	    if front_end$interrupt() then signal interrupt end
+	    dr_prop_list$move_current_to_end(dsys.normalized, dsys.used)
+	    if ~drp.active then continue end
+	    for rrp: rr_prop in rewriting_system$elements(rsys) do
+		if immune_from_drp(rrp, drp) then continue end
+		eq_prop_list$append(deductions, 
+				    apply_dr(drp.prop, rrp.prop,
+					     osys, sys.default_ai, stab))
+		   except when delete (eqpl: eq_prop_list):
+			       eq_prop_list$append(deductions, eqpl)
+			       rewriting_system$delete(rsys, rrp.prop.name)
+			       sys.locally_confluent := false
+			  when drs (drpl: dr_prop_list):
+			       dr_prop_list$append(dsys.new, drpl)
+			  when no_results:
+			  end
+		end
+	    for eqp: eq_prop in eq_prop_list$elements(esys.unoriented) do
+		if immune_from_drp(eqp, drp) then continue end
+		eq_prop_list$append(deductions, 
+				    apply_dr(drp.prop, eqp.prop,
+					     osys, sys.default_ai, stab))
+		   except when delete (eqpl: eq_prop_list):
+			       eq_prop_list$append(deductions, eqpl)
+			       eq_prop_list$delete(esys.unoriented)
+			  when drs (drpl: dr_prop_list):
+			       dr_prop_list$append(dsys.new, drpl)
+			  when no_results:
+			  end
+		end
+	    for eqp: eq_prop in eq_prop_list$elements(esys.incompatible) do
+		if immune_from_drp(eqp, drp) then continue end
+		eq_prop_list$append(deductions,
+				    apply_dr(drp.prop, eqp.prop,
+					     osys, sys.default_ai, stab))
+		   except when delete (eqpl: eq_prop_list):
+			       eq_prop_list$append(deductions, eqpl)
+			       eq_prop_list$delete(esys.incompatible)
+			  when drs (drpl: dr_prop_list):
+			       dr_prop_list$append(dsys.new, drpl)
+			  when no_results:
+			  end
+		end
+	    end
+	% Normalize results of deduction rules before adding them to "sys.esys"
+	% in order to avoid infinite loops from applying "when a yield b" and
+	% "when b yield a" to "a".
+	for eqp: eq_prop in eq_prop_list$elements(deductions) do
+	    eqp.prop := formula$normal_form(eqp.prop, rsys, osys, stab, false)
+	       except when already_normal_form:
+		      when might_loop (fo: formula): eqp.prop := fo end
+	    end
+	eq_prop_list$append(esys.new, deductions)
+	if ~dr_prop_list$empty(dsys.new) then
+	   process_new_deduction_rules(sys, pr, stab)
+	   end resignal inconsistent, interrupt
+	tracer$sys_size(up(sys), 2)
+	end process_new_deduction_rules
+    
+    
+    % (Internal procedure) Returns "true" if "eqp" is immune w.r.t. "drp".
+    
+    immune_from_drp = proc (eqp: eq_prop, drp: dr_prop) returns (bool)
+	return(eqp.immune = immunity_on
+		 cor (eqp.immune = immunity_anc
+			cand name$is_ancestor(drp.prop.name, eqp.prop.name)))
+	end immune_from_drp
+    
+
+    % (Internal procedure) Returns "true" if "dr" is in "dsys.normalized" or
+    % "dsys.used".
+    
+    dr_exists = proc (dr: deduction_rule, dsys: deduction_system)
+		  returns (bool)
+	for drp: dr_prop in dr_prop_list$elements(dsys.normalized) do
+	    if deduction_rule$similar(dr, drp.prop) then return(true) end
+	    end
+	for drp: dr_prop in dr_prop_list$elements(dsys.used) do
+	    if deduction_rule$similar(dr, drp.prop) then return(true) end
+	    end
+	return(false)
+	end dr_exists
+ 
+    
+    % (Internal procedure) Task T5
+    
+    process_new_equations = proc (sys: rep, pr: printer, stab: symtab)
+			      signals (interrupt)
+	if eq_prop_list$empty(sys.esys.new) then return end
+	tracer$processing_new_eqs(up(sys))
+	dsys: deduction_system := sys.dsys
+	esys: equation_system := sys.esys
+	osys: op_system := sys.osys
+	rsys: rewriting_system := sys.rsys
+	for eqp: eq_prop in eq_prop_list$elements(esys.new) do
+	    if front_end$interrupt() then signal interrupt end
+	    if eqp.immune ~= immunity_on then
+	       eq: equation := eqp.prop
+	       % ENHANCE: Signal split for a/\b, ~(a\/b)
+	       eqp.prop := formula$normal_form(eq, rsys, osys, stab,
+					       eqp.immune = immunity_anc)
+		  except when might_loop (e: equation):
+			      eqp.immune := immunity_on
+			      eqp.prop := e
+			 end
+	       tracer$normalized_eq(eq, eqp.prop, eqp.immune = immunity_on)
+	       end except when already_normal_form: end
+	    if formula$is_identity(eqp.prop)
+	       then tracer$removed_identity(eqp.prop)
+		    eq_prop_list$delete(esys.new)
+	       else eq_prop_list$move_current_to_end(esys.new, esys.normalized)
+	       end
+	    end
+	tracer$sys_size(up(sys), 2)
+	end process_new_equations
+    
+    
+    % (Internal procedure) Task T6
+    
+    process_normalized_equations = proc (sys: rep, pr: printer, stab: symtab)
+				     signals (inconsistent(formula),
+					      interrupt, new_eq)
+	elist: eq_prop_list := sys.esys.normalized
+	if eq_prop_list$empty(elist) then return end
+	tracer$processing_new_eqs(up(sys))
+	new_eq: bool := false
+	for eqp: eq_prop in eq_prop_list$elements(elist) do
+	    if front_end$interrupt() then
+	       % ENHANCE: Find better way to take care of "new_eq"
+	       if new_eq then sys.task_num := sys.task_num - 1 end
+	       signal interrupt
+	       end
+	    % FIX: Need to do something about new_eq
+	    if equation_system$is_big(sys.esys, eqp.prop) then
+	       eq_prop_list$move_current_to_end(elist, sys.esys.big)
+	       tracer$big_eq(eqp.prop)
+	       continue
+	       end
+	    if ~eqp.inconsistent then do_deductions(sys, eqp, stab) end
+	       resignal inconsistent
+	       except when delete:
+			   new_eq := true
+			   eq_prop_list$delete(elist)
+			   continue
+		      when new_eqs: new_eq := true
+		      end
+	    if ~formula$is_orderable(eqp.prop) then
+	       if formula$is_reversible(eqp.prop) then
+		  eqp.prop := formula$reverse(eqp.prop)
+		  exit orientable
+		  end
+	       eq_prop_list$move_current_to_end(elist, sys.esys.incompatible)
+	       tracer$incompatible_eq(eqp.prop)
+	       continue
+	       end except when orientable: end
+	    eq_prop_list$move_current_to_end(elist, sys.esys.unoriented)
+	    end
+	tracer$sys_size(up(sys), 2)
+	if new_eq then signal new_eq end
+	end process_normalized_equations
+    
+    
+    % (Internal procedure) Task T7
+    
+    process_unoriented_equations = proc (sys: rep, pr: printer, stab: symtab)
+				     signals (interrupt, new_rr)
+	if eq_prop_list$empty(sys.esys.unoriented) then return end
+	tracer$orienting_eqs(up(sys))
+	for eqp: eq_prop in eq_prop_list$elements(sys.esys.unoriented) do
+	    if front_end$interrupt() then signal interrupt end
+	    if name_set$contains_eq(sys.toOrder, eqp.prop)
+	       then orient_equation(sys, sys.esys.unoriented, stab)
+		    signal new_rr
+	       end except when cannot_orient: end
+	    end
+	end process_unoriented_equations
+
+
+    % (Internal procedure) Attempts to orient the current element in "elist"
+    % into a rewrite rule using the "sys.rsys.ordering.quiet".  If this is
+    % successful, deletes the equation from "elist" and appends the rewrite
+    % rule to "sys.rsys".  Otherwise, signals "cannot_orient".
+
+    orient_equation = proc (sys: rep, elist: eq_prop_list, stab: symtab)
+			signals (cannot_orient)
+	statistics$start_order()
+	eqp: eq_prop := eq_prop_list$current(elist)
+	tracer$orienting_eq(eqp.prop, false)
+	rr: rewrite_rule := sys.rsys.ordering.quiet(sys.reg, eqp.prop)
+	   except when cannot_orient: statistics$fail_order()
+				      signal cannot_orient
+		  end
+	tracer$oriented_eq(eqp.prop, rr)
+	eqp.prop := rr
+	if interactive$get_experimental() then
+	   add_ground_fact(sys.gsys, sys.tsys, rr.formula)
+	   end
+	eq_prop_list$move_current_to_end(elist, sys.rsys.normalized)
+	rewriting_system$check_termination(sys.rsys, rr, sys.osys, sys.reg)
+	sys.locally_confluent := false
+	tracer$sys_size(up(sys), 2)
+	statistics$success_order()
+	end orient_equation
+
+
+
+    % (Internal procedure) Task T8A
+    
+    extend_registry = proc (sys: rep, pr: printer, stab: symtab)
+			signals (interrupt, new_eq, new_rr, suspend)
+	unoriented(sys, pr, stab, sys.esys.unoriented)
+	   resignal interrupt, new_eq, new_rr, suspend
+	end extend_registry
+
+
+    % (Internal procedure) Task T8B
+    
+    process_incompatible_equations = proc (sys: rep, pr: printer, stab: symtab)
+				       signals (interrupt, new_eq, new_rr,
+						suspend)
+	unoriented(sys, pr, stab, sys.esys.incompatible)
+	   resignal interrupt, new_eq, new_rr, suspend
+	end process_incompatible_equations
+    
+    
+    % (Internal procedure) Orients or divides an equation in "elist", trying
+    % the smallest equations first, using "sys.rsys.ordering.auto" if
+    % "sys.automatic_registry" is true and "sys.rsys.ordering.user" otherwise.
+    % When using the latter, allows the user to postpone taking any action.
+
+    % CONSIDER: change def of "less_eqn" to sort first by size and then
+    % lexicographically; then call a new "eqn_list$unique" to remove duplicates
+    % from "eqns".  This helps with "kill" and "postpone" and should not cost
+    % too much if "formula$unparse" stashes the unparsed equation in the rep.
+    % More duplicates would be removed if we sorted and compressed using a
+    % canonical renaming of variables in the equation, e.g.,
+    % term$rename(term2("==", e.left, e.right), "x", 1)
+
+    unoriented = proc (sys: rep, pr: printer, stab: symtab,
+		       elist: eq_prop_list)
+		   signals (interrupt, new_eq, new_rr, suspend)
+	if eq_prop_list$empty(elist) then return end
+	tracer$orienting_eqs(up(sys))
+	eq_prop_list$sort(elist, less_eqp)
+	ord: ordering := sys.rsys.ordering
+	for eqp: eq_prop in eq_prop_list$elements(elist) do
+	    if front_end$interrupt() then signal interrupt end
+	    eq: equation := eqp.prop
+	    if ~name_set$contains_eq(sys.toOrder, eq) then continue end
+	    statistics$start_order()
+	    tracer$orienting_eq(eq, true)
+	    if sys.automatic_registry
+	       then eqp.prop := ord.auto(sys.reg, eq, 1)
+		       except when cannot_orient:
+				   statistics$fail_order()
+				   continue
+			      when modified_registry (rr: rewrite_rule):
+				   eqp.prop := rr
+			      end
+	       else tagcase ord.user(pr, sys.reg, stab, eq)
+		       tag auto (rr: rewrite_rule):
+			   eqp.prop := rr
+		       tag divide (op: operator):
+			   e1, e2: equation :=
+			       divide_equation(eq, op, stab)
+			   equation_system$delete(sys.esys, eq.name)
+			   equation_system$add(sys.esys, e1, sys.default_ai, true)
+			   equation_system$add(sys.esys, e2, sys.default_ai, true)
+			   statistics$fail_order()
+			   signal new_eq
+		       tag interrupt:
+			   statistics$fail_order()
+			   signal suspend
+		       tag kill:
+			   eq_prop_list$delete(elist)
+			   statistics$fail_order()
+			   continue
+		       tag manual (rr: rewrite_rule):
+			   eqp.prop := rr
+			   rewriting_system$no_termination(sys.rsys)
+		       tag postpone:
+			   statistics$fail_order()
+			   continue
+		       tag user (rr: rewrite_rule):
+			   eqp.prop := rr
+		       end
+	       end
+	    tracer$oriented_eq(eq, eqp.prop)
+	    sys.task_num := 1
+	    eq_prop_list$move_current_to_end(elist, sys.rsys.normalized)
+	    if interactive$get_experimental() then
+	       add_ground_fact(sys.gsys, sys.tsys, eqp.prop.formula)
+	       end
+	    rewriting_system$check_termination(sys.rsys, eqp.prop, sys.osys, 
+					       sys.reg)
+	    sys.locally_confluent := false
+	    statistics$success_order()
+	    signal new_rr
+	    end
+	end unoriented
+
+
+    % (Internal procedure) Returns two equations, "e.left == op(x1, x2, ...)"
+    % and "e.right == op(x1, x2, ...)", where "x1", "x2", ...  are the
+    % variables occurring in both "e.left" and "e.right".  If "op" does not
+    % appear elsewhere in a system, the equational theory of that system
+    % together with "e1" and "e2" contains the theory of the system with "e".
+    % (The restriction that "op" does not appear elsewhere in the system is
+    % enforced by "new_operator" in "ord_commands.clu".)  Thus, this operation
+    % is useful for inserting otherwise unorderable equations.  CONSIDER: if
+    % noeq-dsmpos permits, declare the top operators of both sides of the old
+    % equation as greater than or equal to the new operator, so that the new
+    % equations will be orderable.
+
+    divide_equation = proc (e: equation, op: operator, stab: symtab)
+			returns (equation, equation)
+	vars: var_set := var_set$intersection(e.left.vars, e.right.vars)
+	args: term_arr := term_arr$[]
+	for v: variable in var_set$elements(vars) do
+	    term_arr$addh(args, term$make_var(v))
+	    end
+	right: term := term$make_funct(op, term_seq$a2s(args))
+	op_eq: operator := op_equals(right.sort, stab)
+	e1: equation := formula$create(term2(op_eq, e.left, right))
+	e1.name := symtab$new_subname(stab, e.name)
+	e2: equation := formula$create(term2(op_eq, e.right, right))
+	e2.name := symtab$new_subname(stab, e.name)
+	tracer$divided_eq(e, e1, e2)
+	return(e1, e2)
+	end divide_equation
+
+
+    % (Internal procedure) Task T8C
+    
+    find_all_critical_pairs = proc (sys: rep, pr: printer, stab: symtab)
+				signals (interrupt, new_eq)
+	interrupt: bool := false
+	while true do
+	    if front_end$interrupt() then signal interrupt end
+	    rrp1, rrp2: rr_prop := overlaps$next(sys.rsys.overlaps)
+	       except when none: return end
+	    cps: eq_prop_list := all_pairs(rrp1.prop, rrp2.prop, sys.osys,
+					   sys.rsys, stab, sys.default_ai)
+	       except when interrupt (cps1: eq_prop_list):
+			   cps := cps1
+			   interrupt := true
+			   overlaps$add(sys.rsys.overlaps, rrp1, rrp2)
+		      end
+	    if ~interrupt cand eq_prop_list$empty(cps) then continue end
+	    eq_prop_list$append(sys.esys.normalized, cps)
+	    if interactive$get_experimental() then
+	       for eqp: eq_prop in eq_prop_list$elements(cps) do
+		   add_ground_fact(sys.gsys, sys.tsys, eqp.prop.formula)
+		   end
+	       end
+	    tracer$sys_size(up(sys), 1)
+	    if interrupt then signal interrupt else signal new_eq end
+	    end
+	end find_all_critical_pairs
+    
+    
+    % (Internal procedure) Task T8C
+    
+    do_cp_work = proc (sys: rep, pr: printer, stab: symtab)
+		   signals (interrupt, new_eq)
+	interrupt: bool := false
+	while true do
+	    if front_end$interrupt() then signal interrupt end
+	    rr2: rewrite_rule := sys.cp_work.r2[sys.cp_work.n2]
+	       except when bounds:
+			   sys.cp_work.n1 := sys.cp_work.n1 + 1
+			   sys.cp_work.n2 := 1
+			   rr2 := sys.cp_work.r2[1]
+		      end
+	    rr1: rewrite_rule := sys.cp_work.r1[sys.cp_work.n1]
+	       except when bounds: return end
+	    rrp1: rr_prop := rr_prop$create(rr1, sys.default_ai)
+	    rrp2: rr_prop := rr_prop$create(rr2, sys.default_ai)
+	    if ~overlaps$exists(sys.rsys.overlaps, rrp1, rrp2) then
+	       sys.cp_work.n2 := sys.cp_work.n2 + 1
+	       continue
+	       end
+	    cps: eq_prop_list := all_pairs(rr1, rr2, sys.osys,
+					   sys.rsys, stab, sys.default_ai)
+	       except when interrupt (cps1: eq_prop_list):
+			   cps := cps1
+			   interrupt := true
+		      end
+	    if ~interrupt cand eq_prop_list$empty(cps) then
+	       sys.cp_work.n2 := sys.cp_work.n2 + 1
+	       continue
+	       end
+	    beta: int := 0
+	    for eqp: eq_prop in eq_prop_list$elements(cps) do
+		beta := int$max(beta, formula$size(eqp.prop))
+		end
+	    equation_system$increase_beta(sys.esys, beta)
+	    eq_prop_list$append(sys.esys.normalized, cps)
+	    tracer$sys_size(up(sys), 1)
+	    if interrupt then signal interrupt end
+	    sys.cp_work.n2 := sys.cp_work.n2 + 1
+	    overlaps$delete(sys.rsys.overlaps, rrp1, rrp2)
+	       except when missing: end
+	    signal new_eq
+	    end
+	end do_cp_work
+    
+    
+    % (Internal procedure) Task T8D
+
+    process_big_equations = proc (sys: rep, pr: printer, stab: symtab)
+			      signals (new_eq)
+	eq_prop_list$sort(sys.esys.big, less_eqp)
+	eqp: eq_prop := eq_prop_list$first(sys.esys.big)
+	   except when empty: return end
+	n: int := formula$size(eqp.prop)
+	equation_system$increase_beta(sys.esys, n)
+	while formula$size(eq_prop_list$first(sys.esys.big).prop) <= n do
+	    eq_prop_list$move_current_to_end(sys.esys.big, sys.esys.normalized)
+	    end except when empty: end
+	signal new_eq
+	end process_big_equations
+
+
+    % (Internal procedure) Task T9
+    % NOTE: Formerly, this procedure signalled "order_eq" when backtracking
+    % the automatic ordering procedure.
+    
+    check_for_equations = proc (sys: rep, pr: printer, stab: symtab)
+			    signals (order_eq, unorderable)
+	if equation_system$is_empty(sys.esys) then return end
+	for eqp: eq_prop in equation_system$elements(sys.esys) do
+	    if name_set$contains_eq(sys.toOrder, eqp.prop) then
+	       signal unorderable
+	       end
+	    end
+	return
+	end check_for_equations
+    
+    
+    % (Internal procedure) Task T10
+    
+    reconsider_deleted_equations = proc (sys: rep, pr: printer, stab: symtab)
+				     signals (new_rr)
+	if sys.discard then
+	   overlaps$reset(sys.rsys.overlaps, sys.rsys)
+	   sys.discard := false
+	   signal new_rr
+	   end
+	end reconsider_deleted_equations
+
+
+    % (Internal procedure) Reflattens all deduction rules, equations, and
+    % rewrite rules in "sys" that contain an operator in "ops".  Assumes all
+    % operators in "ops" have the same operator theory.
+    
+    reflatten = proc (sys: rep, ops: op_set)
+	ot: op_theory :=
+	    op_system$lookup_theory_quickly(sys.osys, op_set$any_element(ops))
+	   except when empty: return end
+	comm: bool := op_theory$is_ac(ot) cor op_theory$is_commutative(ot)
+	esys: equation_system := sys.esys
+	for elist: eq_prop_list in equation_system$lists(esys) do
+	    for eqp: eq_prop in eq_prop_list$elements(elist) do
+		if ~op_set$intersect(ops, eqp.prop.ops) then continue end
+		e: equation := eqp.prop
+		eqp.prop := formula$reflat(e, sys.osys)
+		   except when same: continue end
+		identity: bool := formula$is_identity(eqp.prop)
+		tracer$reflattened_eq(e, eqp.prop, identity)
+		if identity then eq_prop_list$delete(elist)
+		 elseif comm cand elist ~= sys.esys.new then
+		   eq_prop_list$move_current_to_end(elist, sys.esys.new)
+		 end
+		end
+	    end
+	for dlist: dr_prop_list in deduction_system$lists(sys.dsys) do
+	    for drp: dr_prop in dr_prop_list$elements(dlist) do
+		if ~op_set$intersect(ops, drp.prop.ops) then continue end
+		dr: deduction_rule := drp.prop
+		drp.prop := deduction_rule$reflat(dr, sys.osys)
+		   except when same: continue end
+		tracer$reflattened_dr(dr, drp.prop)
+		if comm cand dlist ~= sys.dsys.new then
+		   dr_prop_list$move_current_to_end(dlist, sys.dsys.new)
+		   end
+		end
+	    end
+	for rlist: rr_prop_list in rewriting_system$lists(sys.rsys) do
+	    for rrp: rr_prop in rr_prop_list$elements(rlist) do
+		if ~op_set$intersect(ops, rrp.prop.ops) then continue end
+		sys.locally_confluent := false
+		rr: rewrite_rule := rrp.prop
+		rr1: rewrite_rule := 
+		    formula$r2e(rewrite_rule$reflat(rr, sys.osys))
+		   except when same: continue end
+		identity: bool := formula$is_identity(rr1)
+		tracer$reflattened_rr(rr, rr1, identity)
+		if identity
+		   then rewriting_system$delete(sys.rsys, rr.name)
+		   else rewriting_system$move_to_top(sys.rsys, rlist,
+						     sys.esys.new)
+		   end
+	        rrp.prop := rr1
+		end
+	    end
+	end reflatten
+    
+    
+    % (Internal procedure)  Returns "true" iff "eqp1.prop" contains fewer
+    % operators and variables than "eqp2.prop".
+
+    less_eqp = proc (eqp1, eqp2: eq_prop) returns (bool)
+	return(formula$size(eqp1.prop) < formula$size(eqp2.prop))
+	end less_eqp
+
+
+    end system

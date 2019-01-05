@@ -1,0 +1,30 @@
+\doc{The unset command}
+\ref{unset-command}
+
+The \def{unset command} returns settings to their default values.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{unset-command} ::= \f{unset} ( \slink{set}{setting-name}  | \f{all} )
+\end{verbatim}
+
+Note: The argument to the \fq{unset} command can be
+\dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{examples}
+\begin{verbatim}
+unset script
+unset all
+\end{verbatim}
+The \fq{unset} command sets the value of \s{setting-name} to its default value.
+In particular, \fq{unset script} stops recording user input in a
+\setlink{script} file and \fq{unset log} stops recording the session in a
+\setlink{log} file.  The \fq{unset all} command sets the value of all settings 
+to their defaults.
+
+\head{2}{See also}
+\begin{itemize}
+\item The \cflink{set} command for a description of the legal settings and their
+default values
+\end{itemize}
+

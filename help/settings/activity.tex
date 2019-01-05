@@ -1,0 +1,62 @@
+\doc{The activity setting}
+\ref{activity-setting}
+\ref{active}
+\ref{inactive}
+\ref{passive}
+
+LP automatically uses all \def{active} rewrite rules for normalization and all
+active deduction rules for deduction.  By contrast, it uses \def{passive} facts
+only upon explicit user command.  The activity of newly asserted or conjectured
+facts is governed by the \def{activity} setting.  The activity of previously
+asserted or conjectured facts can be changed by the \cflink{make} command.
+Unless instructed otherwise, LP treats all facts as active.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-activity-command} ::= \f{set activity} ( \f{on} | \f{off} )
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set activity off
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{activity} setting applies to facts and conjectures created by the
+\cflink{apply}, \cflink{assert}, \cflink{critical-pairs}, \cflink{fix}, 
+\cflink{instantiate}, and \cflink{prove} commands in the current proof context.
+Such facts are \def{active} if the setting is \fq{on} (the default) and
+\def{passive} (or \def{inactive}) if it is \fq{off}.  Passive facts are 
+indicated by a parenthesized letter \f{(P)} in the output of the
+\cflink{display} command.
+\p
+LP automatically uses all active \llink{rewrite-rule}{rewrite rules} to reduce
+terms to \olink{normalization}{normal form}, and it automatically uses all
+active \llink{deduction-rule}{deduction rules} to deduce consequences from
+formulas and rewrite rules.  LP does not make automatic use of passive facts.
+Instead, LP applies passive rewrite rules only in response to the
+\cflink{normalize} or \cflink{rewrite} commands, and it applies passive
+deduction rules only in response to the \cflink{apply} command.
+\p
+Facts retain their activity or passivity when they are normalized, and formulas
+retain their activity or passivity when oriented into rewrite rules.  Likewise,
+passive conjectures remain passive when proved.
+\p
+There are two main uses for passive facts in LP.
+\begin{itemize}
+\item
+Users can improve the performance of LP by declaring facts to be passive when
+they are known to be inapplicable.  When LP subsequently adds new formulas to
+the system, it will not attempt to reduce them by passive rules or to apply
+passive deduction rules to them.
+\p
+\item
+Users can control the application of problematic rewrite and deduction rules by
+declaring them to be passive.  For example, users may wish to apply a complete
+set of boolean reductions when they believe it will simplify a formula (e.g.,
+to \fq{true}), but they may be reluctant to have LP apply those reductions
+automatically to all formulas (lest the reductions produce large, unreadable
+intermediate forms).
+\end{itemize}
+

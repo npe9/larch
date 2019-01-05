@@ -1,0 +1,256 @@
+#extend
+
+% Hardwired names
+
+hardwired_root_names = proc () returns (names_set)
+    own s: names_set := names_set$[name$create("Inconsistency")]
+    return(s)
+    end hardwired_root_names
+
+
+% Sorts for hardwired operators
+
+hardwired_sorts = proc () returns (sort_set)
+    own s: sort_set := sort_set$[bool_sort()]
+    return(s)
+    end hardwired_sorts
+
+bool_sort = proc () returns (sort)
+    own so: sort := sort$make_simple("Bool")
+    return(so)
+    end bool_sort
+
+
+% Signatures for hardwired operators
+
+sig_bool0 = proc () returns (signature)
+    own sig: signature := signature${dom: sort_seq$[], rng: bool_sort()}
+    return(sig)
+    end sig_bool0
+
+sig_bool1 = proc () returns (signature)
+    own sig: signature := 
+	    signature${dom: sort_seq$[bool_sort()], rng: bool_sort()}
+    return(sig)
+    end sig_bool1
+
+sig_bool2 = proc () returns (signature)
+    own sig: signature := signature${dom: sort_seq$[bool_sort(), bool_sort()], 
+				     rng: bool_sort()}
+    return(sig)
+    end sig_bool2
+
+sig_equals = proc (so: sort) returns (signature)
+    return(signature${dom: sort_seq$[so, so], rng: bool_sort()})
+    end sig_equals
+
+sig_if = proc (so: sort) returns (signature)
+    return(signature${dom: sort_seq$[bool_sort(), so, so], rng: so})
+    end sig_if
+
+sig_quantifier = proc (so: sort) returns (signature)
+    return(signature${dom: sort_seq$[so, bool_sort()], rng: bool_sort()})
+    end sig_quantifier
+
+
+% Hardwired operators
+
+hardwired_ops = proc () returns (op_set)
+    own ops: op_set := 
+	    op_set$[op_true(), op_false(), op_not(), 
+	            op_and(), op_or(), op_implies(), op_iff(), 
+		    op_bool_equals(), op_bool_if(), op_bool_neq(),
+		    op_bool_exists(), op_bool_forall()]
+    return(ops)
+    end hardwired_ops
+
+hardwired_sorted_ops = proc (so: sort, stab: symtab) returns (op_set)
+			 signals (missing(op_set))
+    miss: bool := false
+    ops: op_set := op_set$[op_equals(so, stab)]
+       except when missing (op: operator): ops := op_set$[op] 
+					   miss := true
+	      end
+    op_set$insert(ops, op_neq(so, stab))
+       except when missing (op: operator): op_set$insert(ops, op) 
+					   miss := true
+	      end
+    op_set$insert(ops, op_if(so, stab))
+       except when missing (op: operator): op_set$insert(ops, op) 
+					   miss := true
+	      end
+    op_set$insert(ops, op_exists(so, stab))
+       except when missing (op: operator): op_set$insert(ops, op) 
+					   miss := true
+	      end
+    op_set$insert(ops, op_forall(so, stab))
+       except when missing (op: operator): op_set$insert(ops, op) 
+					   miss := true
+	      end
+    if miss then signal missing(ops) end
+    return(ops)
+    end hardwired_sorted_ops
+
+is_hardwired_op = proc (op: operator) returns (bool)
+    return(op_set$exists(hardwired_ops(), op) cor is_op_equals(op) cor
+	   is_op_neq(op) cor is_op_if(op) cor is_quantifier(op))
+    end is_hardwired_op
+
+is_op_exists = proc (op: operator) returns (bool)
+    return(op.id = identifier$existsOp())
+    end is_op_exists
+
+is_op_forall = proc (op: operator) returns (bool)
+    return(op.id = identifier$allOp())
+    end is_op_forall
+
+is_quantifier = proc (op: operator) returns (bool)
+    return(op.id = identifier$allOp() cor op.id = identifier$existsOp())
+    end is_quantifier
+
+op_and = proc () returns (operator)
+    own op: operator := operator${id: identifier$andOp(), sig: sig_bool2()}
+    return(op)
+    end op_and
+
+op_bool_equals = proc () returns (operator)
+    own op: operator := operator${id: identifier$eqOp(), sig: sig_bool2()}
+    return(op)
+    end op_bool_equals
+
+op_bool_exists = proc () returns (operator)
+    own op: operator := operator${id: identifier$existsOp(),
+				  sig: sig_quantifier(bool_sort())}
+    return(op)
+    end op_bool_exists
+
+op_bool_forall = proc () returns (operator)
+    own op: operator := operator${id: identifier$allOp(),
+    			          sig: sig_quantifier(bool_sort())}
+    return(op)
+    end op_bool_forall
+
+op_bool_if = proc () returns (operator)
+    own op: operator := operator${id: identifier$ifOp(), 
+                                  sig: sig_if(bool_sort())}
+    return(op)
+    end op_bool_if
+
+op_bool_neq = proc () returns (operator)
+    own op: operator := operator${id: identifier$neqOp(), sig: sig_bool2()}
+    return(op)
+    end op_bool_neq
+
+op_equals = proc (so: sort, stab: symtab) returns (operator) 
+    	      signals (missing(operator))
+    op: operator := operator${id: identifier$eqOp(), sig: sig_equals(so)}
+    return(symtab$lookup_op(stab, op))
+       except when missing: signal missing(op) end
+    end op_equals
+
+op_exists = proc (so: sort, stab: symtab) returns (operator) 
+    	      signals (missing(operator))
+    op: operator := 
+        operator${id: identifier$existsOp(), sig: sig_quantifier(so)}
+    return(symtab$lookup_op(stab, op))
+       except when missing: signal missing(op) end
+    end op_exists
+
+op_false = proc () returns (operator)
+    own op: operator := operator${id: identifier$falseOp(), sig: sig_bool0()}
+    return(op)
+    end op_false
+
+op_forall = proc (so: sort, stab: symtab) returns (operator)
+    	      signals (missing(operator))
+    op: operator := 
+        operator${id: identifier$allOp(), sig: sig_quantifier(so)}
+    return(symtab$lookup_op(stab, op))
+       except when missing: signal missing(op) end
+    end op_forall
+
+op_iff = proc () returns (operator)
+    own op: operator := operator${id: identifier$iffOp(), sig: sig_bool2()}
+    return(op)
+    end op_iff
+
+op_if = proc (so: sort, stab: symtab) returns (operator)
+	  signals (missing(operator))
+    op: operator := operator${id: identifier$ifOp(), sig: sig_if(so)}
+    return(symtab$lookup_op(stab, op))
+       except when missing: signal missing(op) end
+    end op_if
+
+op_implies = proc () returns (operator)
+    own op: operator := operator${id: identifier$impliesOp(), sig: sig_bool2()}
+    return(op)
+    end op_implies
+
+op_neq = proc (so: sort, stab: symtab) returns (operator) 
+	   signals (missing(operator))
+    op: operator := operator${id: identifier$neqOp(), sig: sig_equals(so)}
+    return(symtab$lookup_op(stab, op))
+       except when missing: signal missing(op) end
+    end op_neq
+
+op_not = proc () returns (operator)
+    own op: operator := operator${id: identifier$notOp(), sig: sig_bool1()}
+    return(op)
+    end op_not
+
+op_or = proc () returns (operator)
+    own op: operator := operator${id: identifier$orOp(), sig: sig_bool2()}
+    return(op)
+    end op_or
+
+op_true = proc () returns (operator)
+    own op: operator := operator${id: identifier$trueOp(), sig: sig_bool0()}
+    return(op)
+    end op_true
+
+is_op_equals = proc (op: operator) returns (bool)
+    return(op.id = identifier$eqOp())
+    % NOTE: "symtab$enter_op" guarantees "op.sig = sig_equals(op.rng)"
+    end is_op_equals
+
+is_op_if = proc (op: operator) returns (bool)
+    return(op.id = identifier$ifOp())
+    % NOTE: "symtab$enter_op" guarantees "op.sig = sig_if(op.rng)"
+    end is_op_if
+
+is_op_neq = proc (op: operator) returns (bool)
+    return(op.id = identifier$neqOp())
+    % NOTE: "symtab$enter_op" guarantees "op.sig = sig_equals(op.rng)"
+    end is_op_neq
+
+
+% Terms involving hardwired operators
+
+term_true = proc () returns (term)
+    own t: term := term0(op_true())
+    return(t)
+    end term_true
+
+term_false = proc () returns (term)
+    own t: term := term0(op_false())
+    return(t)
+    end term_false
+
+is_term_true = proc (t: term) returns (bool)
+    own op: operator := op_true()
+    return(t.root = op)
+       except when wrong_tag: return(false) end
+    end is_term_true
+
+is_term_false = proc (t: term) returns (bool)
+    own op: operator := op_false()
+    return(t.root = op)
+       except when wrong_tag: return(false) end
+    end is_term_false
+
+is_logical_constant = proc (t: term) returns (bool)
+    own op1: operator := op_true()
+    own op2: operator := op_false()
+    return(t.root = op1 cor t.root = op2)
+       except when wrong_tag: return(false) end
+    end is_logical_constant

@@ -1,0 +1,500 @@
+#extend
+
+ground_system = cluster is new, add, display, transform, assert, 
+			   get_model, get_formulas, get_depth, 
+			   get_case_split, get_interesting_term,
+                           save, undo, copy, _gcd, decode, encode
+
+    % Overview: A ground_system "gsys" is a pair (C, T), where
+    %     C is a set of variable-free formulas
+    %     T is a set of theories containing TheoryB and TheoryE.
+    
+    % Definitions:
+
+    % Asserted(gsys)     = {l: l is a literal in gsys.C}
+    % Known(gsys)        = Asserted(gsys) \U {l: ~l \in Asserted(gsys)}
+    % Literals(gsys)     = {l: either l or ~l is a literal in some f in gsys.C}
+    % Remaining(gsys)    = Literals(gsys) - Asserted(gsys)    %
+    % relevant(gsys, th) = Literals(c) \I {l: l is relevant for th}
+
+    % P1(gsys)           <=>  Remaining(gsys) = Literals(gsys) ~ Known(gsys)
+
+    % Note that relevant sets for different theories can overlap.  We'll say
+    % that gsys is satisfiable iff gsys.C is consistent with respect to the
+    % theories in gsys.T.
+    
+    rep = record[depth: int, 
+                 eq: TheoryE, 
+                 forms: term_arr, 
+		 prop: TheoryB, 
+    	         r_comp: TheoryR, 
+		 transformed: int, 
+		 u_stack: int_pair_stack]
+
+    int_pair_stack = stack[int_pair]
+    int_pair       = record[size: int, transformed: int]
+
+    % Abstraction Function: 
+    % A(r).C = {r.forms[r.transformed + 1], ..., r.forms[high],
+    %           r.eq, r.r_comp, r.prop}
+     
+    % Representation Invariants:  
+    % r.forms.low = 1
+    % 0 <= r.transformed <= r.forms.high
+    % if l has the form t1 = t2 then
+    %    if l is in r.r_comp, then l is in r.eq
+    %    if l is in r.eq and t1, t2 are rational valued, then l is in r.r_comp
+    %    if l is in r.prop, then l is in r.eq 
+    % if l has the form t1 (< <= > >= ) t2, then l is in r.r_comp     
+
+    
+    % Ensures: fresh(result)
+    %          result.C = {}
+    %          result.T = {TheoryB, TheoryR, TheoryE}
+    
+    new = proc () returns (cvt)
+	return(rep${eq: TheoryE$[], r_comp: TheoryR$[], prop: TheoryB$[], 
+	            forms: term_arr$[], 
+		    u_stack: int_pair_stack$[], transformed: 0, depth: 0})
+	end new
+
+    
+    % Requires: f.sort = bool_sort
+    % Modifies: gsys
+    % Ensures:  gsys'.C = gsys^.C \U {f}
+    
+    add = proc (gsys: cvt, tsys: theory_system, f: term)
+	term_arr$addh(gsys.forms, term_evaluate(tsys, f))
+	end add
+
+
+    % Displays the ground facts in "gsys".
+    
+    display = proc (p: printer, gsys: cvt, stab: symtab) signals (interrupt)
+	for t: term in term_arr$elements(gsys.forms) do
+	    if front_end$interrupt() then signal interrupt end
+	    printer$text(p, "~{")
+	    term$print(p, t, stab)
+	    printer$text(p, "~}\n")
+	    end
+	end display
+    
+
+    % Modifies: gsys
+    % Ensures:  gsys' is satisfiable iff gsys^ is satisfiable
+    %           All th from gsys'.T are defined on all non-compound terms 
+    %           from gsys'.c
+    %           Signals contradiction if finds one (sound, but not complete)
+    %           Signals overflow, if arithmetic overflow occurs
+    
+    transform = proc (gsys: cvt, tsys: theory_system) 
+		  signals (contradiction, overflow)
+	n: int := term_arr$size(gsys.forms)
+        lits: lit_arr := lit_arr$[]
+	transformed: int := gsys.transformed
+	for i: int in int$from_to(transformed + 1, n) do
+	    f: term := gsys.forms[i]
+	    % ThE should go first, since it sets mapping
+	    for l: literal in TheoryE$add_subterms(gsys.eq, f) do
+		lit_arr$addh(lits, l)
+		end
+	    for l: literal in TheoryR$add_subterms(gsys.r_comp, tsys, f) do
+		lit_arr$addh(lits, l)
+		end resignal overflow
+	    for l: literal in TheoryB$add(gsys.prop, f) do
+		lit_arr$addh(lits, l)
+		end 
+	    transform_if(gsys.prop, f, lits)
+	    gsys.transformed := gsys.transformed + 1
+	    end resignal contradiction
+	for l: literal in lit_arr$elements(lits) do
+	    assert(up(gsys), tsys, l)
+	    end resignal contradiction, overflow
+	end transform
+
+    
+    % The following experimental procedure looks for subterms of "f" having the
+    % form "if a then b else c".  For each such subterm, it adds two 
+    % implications to TheoryB:
+    %	a => (if a then b else c) = b
+    %	~a => (if a then b else c) = c
+    % This may not be a good idea in the long run, because it introduces
+    % additional case splits into the boolean structure.  But it is being
+    % tried now because the equivalent device egraph$add_implication causes LP
+    % to run out of memory.
+
+    transform_if = proc (prop: TheoryB, f: term, lits: lit_arr)
+	for t: term in term_seq$elements(f.subterms) do
+	    transform_if(prop, t, lits)
+	    end except when wrong_tag: end
+	if is_op_if(f.root) then
+	   test: term := f.args[1]
+	   neg_test: term := term1(op_not(), test)
+	   eqOp: operator := 
+	       operator${id: identifier$eqOp(), sig: sig_equals(f.sort)}
+	   f1: term := term2(op_implies(), test, term2(eqOp, f, f.args[2]))
+	   f2: term := term2(op_implies(), neg_test, term2(eqOp, f, f.args[3]))
+	   for l: literal in TheoryB$add(prop, f1) do
+	       lit_arr$addh(lits, l)
+	       end
+	   for l: literal in TheoryB$add(prop, f2) do
+	       lit_arr$addh(lits, l)
+	       end
+	   end except when wrong_tag: end
+	end transform_if
+
+    
+    % Requires: P1(gsys^)
+    % Modifies: gsys
+    % Ensures: 1. gsys'.C is satisfiable iff gsys^.C \union {l} is.
+    %          2. |remaining(gsys')| < |remaining(gsys^)|
+    %          3. if gsys^.C, l |= li, then li is in asserted(gsys')
+    %          4. P1(gsys')
+    %          5. Signals contradiction if gsys' is inconsistent (sound but
+    %             not complete). If remaining(gsys') = empty, it's complete.
+    % NOTE: if contradiction is signaled, ground_system is modified: 
+    %       asserted(gsys) can be inconsistent
+    
+    assert = proc (gsys: cvt, tsys: theory_system, l: literal) 
+	       signals (contradiction, overflow)
+        lit_q = queue[literal]
+        dbg = false
+	if dbg then dbg_assert("Asserting", l) end
+	QE: lit_q := lit_q$[l] 				% queue for TheoryE
+	QB: lit_q := lit_q$[l] 				% queue for TheoryB
+	QR: lit_q := lit_q$[l] 				% queue for TheoryR
+	while true do
+	    while true do
+		l := lit_q$delete(QE)
+		if dbg then dbg_assert("Dequeue for TheoryE:", l) end
+		begin
+		    l1: literal := Int_inf(gsys.eq, tsys, l)
+		    if dbg then dbg_assert("Propagate int_inf:", l1) end
+		    lit_q$append(QE, l1)
+		    lit_q$append(QR, l1)
+		    end except when none: end
+		for l1: literal in TheoryE$assert(gsys.eq, l) do
+		    if dbg then dbg_assert("Propagate:", l1) end
+		    lit_q$append(QB, l1)
+		    lit_q$append(QR, l1)
+		    end
+		end except when empty: end
+	    lits: lit_seq := lit_q$q2s(QB)
+	    QB := lit_q$[]
+	    if dbg then 
+	       for l1: literal in lit_seq$elements(lits) do
+		   dbg_assert("Dequeue for TheoryB:", l1)
+		   end
+	       end
+	    for l1: literal in TheoryB$assert(gsys.prop, lits) do
+		if dbg then dbg_assert("Propagate:", l1) end
+		lit_q$append(QE, l1)
+		lit_q$append(QR, l1)
+		end
+	    while true do
+		l := lit_q$delete(QR)
+		if dbg then dbg_assert("Dequeue for TheoryR:", l) end
+		for l1: literal in TheoryR$assert(gsys.r_comp, tsys, l) do
+		    if dbg then dbg_assert("Propagate:", l1) end
+		    lit_q$append(QE, l1)
+		    lit_q$append(QB, l1)
+		    end
+		end except when empty: end
+	    if lit_q$empty(QE) cand lit_q$empty(QR) cand lit_q$empty(QB) then
+	       break 
+	       end
+	    end resignal contradiction, overflow
+	end assert
+
+    dbg_assert = proc (s: string, l: literal)
+	p: printer := tracer$get_printer()
+	stab: symtab := tracer$get_symtab()
+	printer$text(p, s)
+	printer$text(p, " ")
+	literal$print(p, l, stab)
+	printer$newline(p)
+	end dbg_assert
+
+
+    % (Internal procedure)
+    % Ensures: if l is equivalent to i >= j, where i and j are either
+    %          natural or integer, and i ~= j is in in Th.C, then returns 
+    %	       i >= j+1.  Otherwise signals none
+    
+    Int_inf = proc (Th: TheoryE, tsys: theory_system, l: literal) 
+		returns (literal) signals (none)
+        l_in: literal, nt: numeric_theory := TheoryR$is_int_ge(l, tsys) 
+	   resignal none
+	l_eq: literal := TheoryR$equality(nt, l_in)
+	if TheoryE$contradicts(Th, l_eq) then 
+	   one_term: term := rat2term(nt, rat$one())
+	   op: operator := l_in.root
+	   arg1: term := l.args[1]
+	   arg2: term := l.args[2]
+	   if term_is_num(arg2)
+	      then arg2 := rat2term(nt, term2rat(arg2) + rat$one())
+	      else arg2 := term$make_funct(nt.add, term_seq$[one_term, arg2])
+	      end
+	   return(literal$term2lit(term2(op, arg1, arg2), true))
+	   end
+        signal none
+	end Int_inf
+    
+    
+    % Requires: gsys is consistent and remaining(gsys) is empty
+    % Ensures:  Returns a ,such that: a contains not many of redundancies;
+    %           all terms from a  are in "canonical" form with respect to 
+    %           union of Theories from gsys.T;
+    %           conjunction of literals from a is satisfiable. 
+    
+    get_model = proc (gsys: cvt, tsys: theory_system) returns (model)
+	a: model := model$[]
+	for l: literal in TheoryB$model(gsys.prop) do
+	    if ~TheoryR$relevant(tsys, l) cand ~TheoryE$relevant(l) then
+	       model$add(a, canonize(gsys, tsys, l))
+	       end
+ 	    end
+	for l: literal in TheoryE$model(gsys.eq) do
+	    if TheoryR$relevant(tsys, l) cand ~TheoryR$multiplicative(tsys, l)
+	       then continue 
+	       end except when not_relevant: end
+	    model$add(a, TheoryR$canonize(tsys, l))
+	       except when tautology:
+		      when contradiction: fail("ground_system$get_model")
+		      end
+	    end
+	for l: literal in TheoryR$model(gsys.r_comp) do
+	    l := TheoryE$normalize_selected_subt(gsys.eq, tsys, l,
+						 term_is_num_atomic1)
+	    model$add(a, TheoryR$canonize(tsys, l))
+	       except when tautology:
+		      when contradiction: fail("ground_system$get_model")
+		      end
+	    end
+	if model$empty(a) then
+	   model$add_without_checking(a, literal$truth())
+	   end
+	return(a)
+	end get_model
+
+    
+    % Returns array of formulas (terms) that would be in ground_system
+    % if no transformations were done.
+    
+    get_formulas = proc (gsys: cvt) returns (term_arr)
+	return(term_arr$copy(gsys.forms))
+	end get_formulas
+
+    
+    % Returns the depth of "gsys".
+
+    get_depth = proc (gsys: cvt) returns (int)
+	return(gsys.depth)
+	end get_depth
+	
+    
+    % Modifies: gsys
+    % Ensures:  1. gsys' is satisfiable iff gsys^ is 
+    %		2. Th(gsys^) |= \/{t: t \in result}
+    %           3. |remaining(gsys')| <= |remaining(gsys^)| 
+    %           4. l in asserted(gsys') ~ asserted(gsys^) => gsys^.C |= l
+    %           5. Each l result is in remaining(gsys').
+    %           6. Signals none iff gsys' is consistent and remaining(gsys')
+    %		   is empty.   (CHECK: Known(gsys^) |=| Th(gsys^) ?)
+    %           7. Signals contradiction if Known(gsys') is inconsistent.
+    %		   (This is sound, but not complete.  If remaining(gsys') is 
+    %		    empty then it's complete.  CHECK THIS.)
+    %           8. Signals overflow, if arithmetic overflow occurs
+
+    % IMPROVE: get rid of need for tsys
+    %          do something better about overflow
+    %	       return term_seq instead of lit_seq
+	
+    get_case_split = proc (gsys: cvt, tsys: theory_system, depth: int) 
+		       returns (lit_seq)
+		       signals (none, contradiction, overflow)
+	l: literal
+	if int$mod(depth, 10) = 0 
+	   then l := get_lit_with_plunge(gsys, tsys)
+	   else l := gsys.prop.prevalent_literal
+	   end resignal contradiction, none, overflow
+	return(lit_seq$[l, l.negation])
+	end get_case_split
+
+
+    % Purely heuristic, but does not return the same term again until
+    % there is a new nonground term
+	
+    get_interesting_term = proc (gsys: cvt) returns (term) signals (none)
+	signal none
+	end get_interesting_term
+    
+    
+    % Modifies: gsys
+    % Ensures:  gsys' = save(gsys)
+    %          undo(save(gsys)) = gsys
+    %          undo(assert(gsys, l)) = undo(gsys)
+    %          undo(add(gsys)) = gsys
+    
+    save = proc (gsys: cvt)
+	gsys.depth := gsys.depth + 1
+	int_pair_stack$push(gsys.u_stack,
+			    int_pair${size: term_arr$size(gsys.forms),
+				      transformed: gsys.transformed})
+	TheoryE$save(gsys.eq)
+	TheoryR$save(gsys.r_comp)
+	TheoryB$save(gsys.prop)
+	end save
+    
+    
+    % Modifies: gsys
+    % Ensures:  gsys' = undo(gsys)
+    %           (udoes all assertions up to the last save)
+    %           Signals empty if undo is not defined on gsys
+    %           (no save was done)
+
+    undo = proc (gsys: cvt) signals (empty)
+	forms: term_arr := gsys.forms
+	begin
+	    i_p: int_pair := int_pair_stack$pop(gsys.u_stack)
+	    term_arr$trim(forms, term_arr$low(forms), i_p.size)
+	    gsys.transformed := i_p.transformed
+	    TheoryE$undo(gsys.eq)
+	    TheoryR$undo(gsys.r_comp)
+	    TheoryB$undo(gsys.prop)
+	    gsys.depth := gsys.depth - 1
+	    end resignal empty
+	end undo
+	
+      
+    % (Internal procedure)
+    % Modifies: gsys
+    % Ensures:  1. gsys' is satisfiable iff gsys^ is 
+    %           2. |remaining(gsys')| <= |remaining(gsys^)| 
+    %           3. If assrt(gsys^, l) is "contradiction" then
+    %              ~l in in asserted(gsys').
+    %           4. Returns some l in remaining(gsys').
+    %           5. Signals none iff remaining(gsys') is empty and
+    %              gsys' is consistent
+    %           6. Signals contradiction if gsys' is inconsistent (sound, 
+    %              but not complete).  If remaining(gsys') is empty, then
+    %              it's complete.
+  
+    get_lit_with_plunge = proc (gsys: rep, tsys: theory_system)
+			    returns (literal)
+			    signals (none, contradiction, overflow)
+        dbg = false
+	found: bool := false
+	best_lit: literal
+	size: int := gsys.prop.remaining_size
+	if dbg then dbg_start_plunge(size) end
+	for l: literal in TheoryB$remaining(gsys.prop) do
+	    if dbg then dbg_plunge_try_lit(l) end
+	    save(up(gsys))
+	    assert(up(gsys), tsys, l)
+	       except when contradiction:
+		  	   if dbg then dbg_plunge_discover_force(l) end
+			   undo(up(gsys))
+			   % save(up(gsys))	% NEW
+			   assert(up(gsys), tsys, l.negation)
+			      except when contradiction:
+					  if dbg then dbg_plunge_contra() end
+					  % undo(up(gsys)) 	% NEW
+					  signal contradiction
+				     end
+			   if dbg then dbg_plunge_force_ok() end
+			   continue          % DELETED
+		      end
+		  
+            if dbg then dbg_plunge_eval_lit(gsys, size) end
+	    if size > gsys.prop.remaining_size then
+	       found := true
+	       best_lit := l
+	       size := gsys.prop.remaining_size
+	       end
+	    undo(up(gsys))
+	    end resignal overflow
+	if dbg then printer$text(tracer$get_printer(), "End of plunge\n") end
+	if found then return(best_lit) else signal none end
+	end get_lit_with_plunge
+
+    dbg_start_plunge = proc (size: int)
+	pr: printer := tracer$get_printer()
+	stab: symtab := tracer$get_symtab()
+	printer$text(pr, "\nDepth one plunge, size of clauses = ")
+	printer$text(pr, int$unparse(size))
+	printer$newline(pr)
+	end dbg_start_plunge
+    
+    dbg_plunge_try_lit = proc (l: literal)
+	pr: printer := tracer$get_printer()
+	stab: symtab := tracer$get_symtab()
+	printer$text(pr, "Trying ")
+	literal$print(pr, l, stab)
+	printer$text(pr, ": ")
+	end dbg_plunge_try_lit
+
+    dbg_plunge_discover_force = proc (l: literal)
+	pr: printer := tracer$get_printer()
+	stab: symtab := tracer$get_symtab()
+	printer$text(pr, "contradiction\nAsserting forced negation ")
+	literal$print(pr, l.negation, stab)
+	printer$text(pr, ": ")
+	end dbg_plunge_discover_force
+    
+    dbg_plunge_contra = proc ()
+	printer$text(tracer$get_printer(), 
+		     "another contradiction\nEnd of plunge\n")
+	end dbg_plunge_contra
+    
+    dbg_plunge_force_ok = proc ()
+	printer$text(tracer$get_printer(), "accepted\n")
+	end dbg_plunge_force_ok
+    
+    dbg_plunge_eval_lit = proc (gsys: rep, size: int)
+	pr: printer := tracer$get_printer()
+	printer$text(pr, "new size of clauses = ")
+	x: int := gsys.prop.remaining_size
+	printer$text(pr, int$unparse(x))
+	if size > x then printer$text(pr, "***") end
+	printer$newline(pr)
+	end dbg_plunge_eval_lit
+    
+    
+
+    % (Internal procedure)
+    % Returns a  "canonical" form of "l" with respect to "gsys.T"
+    
+    canonize = proc (gsys: rep, tsys: theory_system, l: literal)
+		 returns (literal)
+	l := TheoryE$normalize(gsys.eq, l)
+	l := TheoryR$canonize(tsys, l)
+	return(l)
+	end canonize
+
+
+    % FIX: Do something sensible about copy.  This implementation is here
+    % just so that we can compile system$copy.  It does not have the proper
+    % semantics at all.
+    
+    copy = proc (gsys: cvt) returns (cvt)
+	return(gsys)
+	end copy
+    
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (ground_system)
+               signals (end_of_file, not_possible(string))
+	own kludge: ground_system := ground_system$[]
+	return(kludge)
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	end encode
+
+    end ground_system

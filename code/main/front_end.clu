@@ -1,0 +1,228 @@
+% The "front_end" cluster enables LP to communicate with a front-end program
+% that supplies input to, and receives output from, LP.  LP is put in front-end
+% mode by the command-line option "-f", which results in an invocation of
+% "front_end$establish", or by the command-line option "-p", which results in
+% an invocation of "front_end$establish_prover".  When in front-end mode, LP
+% operates as follows.
+
+% Each time LP needs a new line of input from the primary input (stdin), it
+% outputs a DELETE character to the primary output (stdout), thereby notifying
+% the front end to supply another line of input.  Whenever LP outputs a DELETE,
+% it will generate no further output until input is received.
+
+% Each time LP detects an error, it outputs a BELL character followed by an
+% error message to the primary output and then requests further input.  If the
+% primary output is a terminal stream, then LP also rings a bell to catch the
+% user's attention whenever it finishes all "execute" commands; this bell does
+% not appear in the primary output when it is not a terminal stream.  (These
+% actions are performed by the "iodev" cluster.)
+
+% When LP is in front-end mode, the "set page-mode" command is disabled.  The
+% presumption is that the front end will provide alternative scrolling
+% capabilities.
+
+% LP communicates lines of information with the following format to the front
+% end over the error output pipe (stderr).  LP flushes this pipe after every
+% communication.
+%
+%     command <command>		<command> has been executed
+%				Currently communicated only for "clear".
+%     dir <directory>		<directory> is now LP's working directory
+%				<directory> is fully-qualified
+%     path <path>		<path> is now LP's search path
+%     stat <statistics>		statistics (see below)
+%     freeze <filename>		<filename> contains .lpfrz file (see below)
+
+% LP communicates statistics over the error output pipe only if it was invoked
+% with the command-line option "-s", which results in an invocation of
+% "front_end$set_stat_mode".  Each statistics line contains information of the
+% kind reported by the "statistics" command, and has the following format:
+%       stat CR min sec millisec
+% where 
+%       C is a character describing category of statistics
+%	   'D' = deduction	'R' = rewriting
+%	   'O' = ordering	'U' = unification
+%	   'P' = prover
+%	R is a character describing the result of a just-completed operation
+% 	   'S' = success	'F' = failure
+%	count is the total number of R results in category C
+%	min, sec, millisec are the total time spent for R results in category C
+% The front end is responsible for maintaining its own tabulations of recent
+% and cumulative statistics.  It must also clear these statistics in response
+% to a "clear" command.
+
+% The front end can request LP to interrupt execution of the current command by
+% sending it a SIGQUIT signal.  LP may not respond immediately to an interrupt,
+% because it only polls periodically for interrupts.
+
+% The front end can request LP to freeze its state by sending LP it a SIGUSR1
+% signal.  LP checks for this signal whenever it checks for interrupts, and als
+% whenever it requests a line of input from any source.  To enable LP to detect
+% this signal even when it is blocked waiting for input, the front end can send
+% a line consisting of a single DELETE character, which unblocks LP, but is
+% otherwise ignored.  As soon as possible after detecting SIGUSR1, LP feezes
+% its state and writes a "freeze <filename>" message to the error output.  The
+% front end can, for example, run another LP process to thaw this file and
+% execute a "display" command.  The front end is responsible for deleting the
+% frozen file.
+
+% QUESTION: Should prompts for more input be disabled in front-end mode?
+
+
+front_end = cluster is establish, establish_prover, exists, interrupt,
+    		       prover_exists,
+		       report_command, report_dir, report_path, report_stats,
+		       respond, set_stat_mode, get_stat_mode, notify
+
+    rep = null
+    DEL = "\177"
+    
+    own front_end_exists: bool := false
+    own prover_version: bool := false
+    own link: stream := stream$error_output()
+    own stats: bool := false
+    own world: interactive
+    
+    
+    % Establishes the existence of a front end.
+
+    establish = proc (i: interactive)
+	world := i
+	front_end_exists := true
+        iodev$set_communication(i.io, DEL, DEL, respond)
+	OS_init_sigusr1()
+	report_dir()
+	report_path()
+	end establish
+    
+    
+    % Establishes the existence of a prover front end.
+
+    establish_prover = proc (i: interactive)
+	world := i
+	front_end_exists := true
+	prover_version := true
+        iodev$set_communication(i.io, DEL, DEL, respond)
+	end establish_prover
+    
+    
+    % Returns "true" if there is a front end.
+
+    exists = proc () returns (bool)
+	return(front_end_exists)
+	end exists
+
+    
+    % Returns "true" if there is a prover front end.
+
+    prover_exists = proc () returns (bool)
+	return(prover_version)
+	end prover_exists
+
+    
+    % Invokes "respond" if a front end has send a SIGUSR1 signal.  Returns
+    % "true" if there has been an interrupt.
+    
+    interrupt = proc () returns (bool)
+	if front_end_exists cand OS_check_sigusr1() then respond() end
+	return(OS_check_interrupt())
+	end interrupt
+
+    
+    % In front end mode, reports that command "s" has been executed.
+    
+    report_command = proc (s: string)
+	if ~front_end_exists then return end
+	notify("command", s)
+	end report_command
+
+    
+    % In front end mode, reports LP's current working directory.
+
+    report_dir = proc ()
+	if ~front_end_exists then return end
+	notify("dir", connected_dir())
+	end report_dir
+
+    
+    % In front end mode, reports LP's search path.
+
+    report_path = proc ()
+	if ~front_end_exists then return end
+	notify("path", world.search_path)
+	end report_path
+
+    
+    % In front end mode, reports statistics
+
+    report_stats = proc (kind, result: char, count, mins, secs, millis: int)
+	if ~front_end_exists then return end
+        notify("stat", string$c2s(kind) || string$c2s(result) || " " || 
+		       int$unparse(count) || " " || int$unparse(mins) || " " ||
+		       int$unparse(secs) || " " || int$unparse(millis))
+        end report_stats
+		  
+    
+    % Freezes LP's state in a temporary file and reports the name of the file.
+
+    respond = proc ()
+	dumped_rep = record[a_freeze_version: string, history: command_arr,
+			    history_size: int,
+			    prover: prover, settings: saved_settings,
+			    symtab: symtab, sys: system]
+	fname: string
+	if prover_version then return end
+	fn: file_name := file_name$make_temp("/tmp", "lp", "state")
+	fname := file_name$unparse(fn)
+        if string$empty(fn.suffix) then
+	   fn := file_name$create(fn.dir, fn.name, "lpfrz", fn.other)
+	   fname := file_name$unparse(fn)
+	   end
+	d: dumped_rep := dumped_rep${history: world.io.history,
+				     history_size: 0,
+				     prover: world.prover, 
+				     settings: settings$freeze(world),
+				     symtab: world.symtab,
+				     sys: world.sys, 
+				     a_freeze_version: lp_freeze_version()}
+	gc_dump[dumped_rep](d, fn)
+	   except when not_possible (why: string):
+	               iodev$error(world.io)
+		       iodev$printl(world.io, "\nCan't freeze to `" ||
+					      fname || "': " || why)
+		  end
+	OS_check_sigusr1()	% ignore newly arrived signals
+	notify("freeze", fname)
+	end respond
+
+    
+    % Turns on reporting of statistics if "b" is true; turns reporting of
+    % statistics off if "b" is false.
+    
+    set_stat_mode = proc (b: bool)
+	stats := b
+	end set_stat_mode
+    
+    
+    % Returns "true" if statistics are being reported.
+    
+    get_stat_mode = proc () returns (bool)
+	return(stats)
+	end get_stat_mode
+    
+    
+    % Writes a report line to the error output.
+    
+    notify = proc (code, s: string)
+	if ~front_end_exists then return end
+	stream$puts(link, code)
+	if code ~= "" then stream$putc(link, ' ') end
+	stream$puts(link, s)
+	if prover_version
+	   then stream$puts(link, DEL)
+	   else stream$putl(link, "")
+	   end
+	stream$flush(link)
+	end notify
+    
+    end front_end

@@ -1,0 +1,27 @@
+\doc{The log-file setting}
+\ref{log-file-setting}
+\ref{logging}
+
+The \def{log-file setting} provides a means of recording the current LP session
+in a file.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-log-file-command} ::= \f{set log-file} \slink{../commands/execute}{file}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set log session
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{set log} command causes LP to start recording the terminal session in a
+file named \s{file}\f{.lplog} (unless \s{file} contains a period, in which case
+LP does not supply the suffix \fq{.lplog}) in LP's current working
+\setlink{directory}.  Any previous contents of this log file are lost.  If LP
+was already logging to a file, that file is closed before opening the new log
+file.  Logging is ended by the \cflink{quit} or
+\dflink{../commands/unset}{unset log} commands.
+

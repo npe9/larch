@@ -1,0 +1,636 @@
+#extend
+
+% A (doubly) linked list is a mutable type used to store elements of a given
+% type.  The operations that insert an element in a list, delete an element
+% from a list, and concatenate two lists can be accomplished in constant time
+% (as opposed to linear time for a list represented as an array).
+
+% Associated with every list is a "current" pointer, which points to an element
+% of the list or which points just past the end of the list.  Various list
+% operations either modify "current" or operate on the element pointed to by
+% "current".
+
+linked_list = cluster [t: type] is
+	new, addh, addl, append, cons, current, delete, elements, elements1,
+	empty, first, insert, last, l2s, move_current_to_current, 
+	move_current_to_end, next, point_to_end, point_to_first, point_to_last,
+	remh, reml, replace, s2l, size, sort, print_with_ids, equal, similar, 
+	similar1, copy, copy1, _gcd, decode, encode
+
+    % The "rep" contains pointers to the first, current, and last items in the
+    % linked list.  Each item contains pointers to the next and previous items
+    % in the list.  A "nil_link" marks the end of the list.
+    
+    % Rep invariants: 
+    %   size < 2 => sorted
+
+    rep = record[current, first, last: link, size: int, sorted: bool]
+    link = linked_item[t]
+    
+    t_arr = array[t]
+    t_seq = sequence[t]
+    
+    comp_type = proctype (t, t) returns (bool)
+
+    ll_debugging = false
+
+    own nil_link: link := link$make_nil()
+    
+    
+    % (Internal procedure)  Checks "ll" for validity.
+    
+    bad = proc (ll: rep) returns (bool)
+	li: link := ll.first
+	prev_link: link := nil_link
+	n: int := 0
+	while li ~= nil_link do
+	    n := n + 1
+	    if li.prev ~= prev_link then return(true) end
+	    prev_link := li
+	    li := li.next
+	    end
+	return(ll.last ~= prev_link cor ll.size ~= n)
+	end bad
+    
+    
+    % Returns an empty linked list.
+    
+    new = proc () returns (cvt)
+	return(rep${current, first, last: nil_link, size: 0, sorted: true})
+	end new
+
+    
+    % Appends "elem" to the end of "ll".  If "ll" was empty, sets "ll.current"
+    % to this element.
+    
+    addh = proc (ll: cvt, elem: t)
+	li: link := link${value: elem, next: nil_link, prev: ll.last}
+	last_link: link := ll.last
+	if link$is_nil(last_link)
+	   then ll.first := li
+		ll.current := li
+	   else last_link.next := li
+		ll.sorted := false
+	   end
+	ll.last := li
+	ll.size := ll.size + 1
+	if ll_debugging cand bad(ll) then fail("linked_list$addh") end
+	end addh
+
+
+    % Inserts "elem" at the beginning of "ll".  If "ll" was empty, sets
+    % "ll.current" to this element.
+    
+    addl = proc (ll: cvt, elem: t)
+	li: link := link${value: elem, next: ll.first, prev: nil_link}
+	first_link: link := ll.first
+	if link$is_nil(first_link)
+	   then ll.last := li
+	        ll.current := li
+	   else first_link.prev := li
+	        ll.sorted := false
+	   end
+	ll.first := li
+	ll.size := ll.size + 1
+	if ll_debugging cand bad(ll) then fail("linked_list$addl") end
+	end addl
+    
+    
+    % Appends "ll2" to "ll1" and makes "ll2" the empty list.  If "ll1" was
+    % empty, sets "ll1.current" to "ll2.current".
+    
+    append = proc(ll1, ll2: cvt)
+	if link$is_nil(ll2.first) then return end
+	last_link: link := ll1.last
+	if link$is_nil(last_link)
+	   then ll1.first := ll2.first
+	        ll1.current := ll2.current
+	        ll1.sorted := ll2.sorted
+	   else last_link.next := ll2.first
+	        ll2.first.prev := last_link
+	        ll1.sorted := false
+	   end
+	ll1.last := ll2.last
+	ll1.size := ll1.size + ll2.size
+	rep$r_gets_r(ll2, down(new()))
+	if ll_debugging cand bad(ll1) then fail("linked_list$append") end
+	if ll_debugging cand bad(ll2) then fail("linked_list$append") end
+	end append
+    
+    
+    % Returns a linked list containing the elements in the sequence "s".  The
+    % "#extend" mode of the CLU compiler provides sugared invocations of the 
+    % form "linked_list[t][e1, ..., en]".
+    
+    cons = proc (s: t_seq) returns (linked_list[t])
+	ll: linked_list[t] := linked_list[t]$[]
+	for elem: t in t_seq$elements(s) do linked_list[t]$addh(ll, elem) end
+	return(ll)
+	end cons
+    
+    
+    % Returns the current element in "ll".  Signals "end_of_list" if "ll" is
+    % empty or if "ll.current" is the "nil_link" (which happens when the end of
+    % the list is reached).
+
+    current = proc (ll: cvt) returns (t) signals (end_of_list)
+	return(ll.current.value)
+	   resignal end_of_list
+	end current
+    
+
+    % Deletes and returns the current element in "ll".  Sets "ll.current" to
+    % the next element in the list.  Signals "end_of_list" if "ll.current" is
+    % "nil_link".
+    
+    delete = proc (ll: cvt) returns (t) signals (end_of_list)
+	li: link := ll.current
+	if link$is_nil(li) then signal end_of_list end
+	if ll.current = ll.first 
+	   then ll.first := li.next
+	   else li.prev.next := li.next
+	   end
+	if ll.current = ll.last 
+	   then ll.last := li.prev
+	   else li.next.prev := li.prev
+	   end
+	ll.current := li.next
+        ll.size := ll.size - 1
+	if ll.size <= 1 then ll.sorted := true end
+	if ll_debugging cand bad(ll) then fail("linked_list$delete") end
+	return(li.value)
+	end delete
+    
+    
+    % Yields the elements of "ll" in order.  Sets "ll.current" to the element
+    % being yielded.  NOTE: It is safe to delete elements as they are yielded
+    % by this iterator.
+    
+    elements = iter (ll: cvt) yields (t)
+	next_el: link := ll.first
+	while ~link$is_nil(next_el) do
+	    ll.current := next_el
+	    yield(next_el.value)
+	    next_el := next_el.next
+	    end
+	if ll_debugging cand bad(ll) then fail("linked_list$elements") end
+	end elements
+    
+    
+    % Like "elements", but does not set "ll.current".  NOTE: It is not correct
+    % to delete elements as they are yielded by this iterator.
+    
+    elements1 = iter (ll: cvt) yields (t)
+	next_el: link := ll.first
+	while ~link$is_nil(next_el) do
+	    yield(next_el.value)
+	    next_el := next_el.next
+	    end
+	end elements1
+    
+    
+    % Returns "true" if "ll" is empty.
+    
+    empty = proc (ll: cvt) returns (bool)
+	return(ll.size = 0)
+	end empty
+    
+    
+    % Returns the first element in "ll".  Sets "ll.current" to this element.
+    % Signals "empty" if "ll" is empty.  % CLEANUP: empty vs. end_of_list
+    
+    first = proc (ll: cvt) returns (t) signals (empty)
+	ll.current := ll.first
+	return(ll.first.value)
+	   except when end_of_list: signal empty end
+	end first
+
+    
+    % Inserts "elem" before the current element in "ll".  If "ll" was empty,
+    % sets "ll.current" to the new element.
+    
+    insert = proc (ll: cvt, elem: t)
+	cur: link := ll.current
+	if link$is_nil(cur) then 
+	   addh(up(ll), elem)
+	 elseif cur = ll.first then
+	   addl(up(ll), elem)
+	 else
+	      li: link := link${value: elem, next: cur, prev: cur.prev}
+	      prev_link: link := cur.prev
+	      prev_link.next := li
+	      next_link: link := cur.next
+	      next_link.prev := li
+	      ll.sorted := false
+	      ll.size := ll.size + 1
+	 end
+	if ll_debugging cand bad(ll) then fail("linked_list$insert") end
+	end insert
+    
+
+    % Returns the last element in "ll".  Sets "ll.current" to this element.
+    % Signals "empty" if "ll" is empty.
+    
+    last = proc (ll: cvt) returns (t) signals (empty)
+	ll.current := ll.last
+	return(ll.last.value)
+	   resignal empty
+	end last
+
+    
+    % Returns a sequence containing the elements in "ll".
+    
+    l2s = proc (ll: cvt) returns (t_seq)
+	at: t_arr := t_arr$[]
+	for elem: t in elements(up(ll)) do
+	    t_arr$addh(at, elem)
+	    end
+	return(t_seq$a2s(at))
+	end l2s
+    
+    
+    % Inserts the current element in "ll1" before the current element in "ll2".
+    % Signals "end_of_list" if there is no current element in "ll1".
+    % CLEANUP: Re-use pointers.
+    
+    move_current_to_current = proc (ll1, ll2: cvt) signals (end_of_list)
+	insert(up(ll2), delete(up(ll1)))
+	   resignal end_of_list
+	end move_current_to_current
+
+    
+    % Moves the current element in "ll1" to the end of "ll2".  Signals
+    % "end_of_list" if there is no current element.  
+    % CLEANUP: Re-use pointers.
+    
+    move_current_to_end = proc (ll1, ll2: cvt) signals (end_of_list)
+	addh(up(ll2), delete(up(ll1)))
+	   resignal end_of_list
+	end move_current_to_end
+
+
+    % Sets "ll.current" to the next element in "ll" and returns that element.
+    % Signals "end_of_list" if there are no more elements.
+
+    
+    next = proc (ll: cvt) returns (t) signals (end_of_list)
+	ll.current := ll.current.next
+	   resignal end_of_list
+	return(ll.current.value)
+	   resignal end_of_list
+	end next
+
+    
+    % Sets "ll.current" to the end of "ll".
+    
+    point_to_end = proc (ll: cvt)
+	ll.current := nil_link
+	end point_to_end
+    
+
+    % Sets "ll.current" to the first element in "ll".
+    
+    point_to_first = proc (ll: cvt)
+	ll.current := ll.first
+	end point_to_first
+    
+
+    % Sets "ll.current" to the last element in "ll".
+    
+    point_to_last = proc (ll: cvt)
+	ll.current := ll.last
+	end point_to_last
+    
+
+    % Removes the last element from "ll".  If "ll.current" was this element,
+    % sets it to "nil_link".
+
+    remh = proc (ll: cvt) returns (t) signals (empty)
+	li: link := ll.last
+	if link$is_nil(li) then signal empty end
+	if ll.current = li then ll.current := nil_link end
+	if ll.first = li then ll.first := nil_link end
+	ll.last := li.prev
+        ll.size := ll.size - 1
+	if ll.last ~= nil_link then ll.last.next := nil_link end
+	if ll.size <= 1 then ll.sorted := true end
+	if ll_debugging cand bad(ll) then fail("linked_list$remh") end
+	return(li.value)
+	end remh
+    
+    
+    % Removes the first element from "ll".  If "ll.current" was this element,
+    % sets it to the next element in the list.
+    
+    reml = proc (ll: cvt) returns (t) signals (empty)
+	li: link := ll.first
+	if link$is_nil(li) then signal empty end
+	if ll.current = li then ll.current := li.next end
+	if ll.last = li then ll.last := nil_link end
+	ll.first := li.next
+        ll.size := ll.size - 1
+	if ll.first ~= nil_link then ll.first.prev := nil_link end
+	if ll.size <= 1 then ll.sorted := true end
+	if ll_debugging cand bad(ll) then fail("linked_list$reml") end
+	return(li.value)
+	end reml
+
+    
+    % Replaces the current element in "ll" by "elem".  Signals "end_of_list" if
+    % "ll.current" is "nil_link".
+    
+    replace = proc (ll: cvt, elem: t) signals (end_of_list)
+	li: link := ll.current
+	li.value := elem
+	   resignal end_of_list
+	end replace
+    
+    
+    % Returns a linked list containing the elements in the sequence "s".
+    
+    s2l = proc (s: t_seq) returns (linked_list[t])
+	return(cons(s))
+	end s2l
+    
+    
+    % Returns the number of elements in "ll".
+    
+    size = proc (ll: cvt) returns (int)
+	return(ll.size)
+	end size
+    
+    
+    % Sorts the elements in "ll" in increasing order using the relation "less".
+    % Uses a stable insertion sort.
+    
+    sort = proc (ll: cvt, less: comp_type)
+	if ll.sorted then return end
+	ll.sorted := true
+	li: link := ll.first.next
+	   except when end_of_list: return end
+	while true do
+	    % Invariant: "ll.first", ..., "li.prev" is sorted
+	    v: t := li.value
+	    next_el: link := li.next
+	    prev: link := li.prev
+	    while less(v, prev.value) do prev := prev.prev end
+	       except when beginning_of_list: end
+	    if prev ~= li.prev then
+	       li.prev.next := next_el
+	       if li = ll.last 
+		  then ll.last := li.prev
+		  else next_el.prev := li.prev
+		  end
+	       if link$is_nil(prev)
+		  then li.next := ll.first
+		       li.prev := nil_link
+		       ll.first.prev := li
+		       ll.first := li
+		  else prev.next.prev := li
+		       li.next := prev.next
+		       li.prev := prev
+		       prev.next := li
+		  end
+	       end
+	    li := next_el
+	    end except when end_of_list: end
+	if ll_debugging cand bad(ll) then fail("linked_list$sort") end
+	end sort
+    
+    
+    % Prettyprints a representation of "ll".
+    
+    print_with_ids = proc (p: printer, ll: cvt, stab: symtab) 
+		where t has print: proctype (printer, t, symtab)
+	width: int := string$size(int$unparse(ll.size))
+	li: link := ll.first
+	prev_link: link := nil_link
+	n: int := 0
+	printer$start_block(p)			% entire list
+	while true do
+	    n := n + 1
+	    printer$start_block(p)		% link
+	    if li = ll.current 
+		then printer$puts(p, "-> ")
+		else printer$puts(p, "   ")
+		end
+	    printer$puts(p, padl(int$unparse(n), width))
+	    printer$text(p, ": ~J")
+	    if li = nil_link then
+	       printer$text(p, "End of list.\n~}")
+	       break
+	       end
+	    if li.prev ~= prev_link then
+	       printer$text(p, "Bad previous link.\n~}")
+	       break
+	       end
+	    t$print(p, li.value, stab)
+	    printer$finish_block(p)
+	    printer$newline(p)
+	    prev_link := li
+	    li := li.next
+	    end
+	printer$finish_block(p)
+	printer$end_of_output(p)
+	end print_with_ids
+
+
+    % Returns "true" if "ll1" and "ll2" are the same linked list.
+    
+    equal  = proc (ll1, ll2: cvt) returns (bool)
+	return(ll1 = ll2)
+	end equal
+
+    
+    % Returns "true" if "ll1" and "ll2" contain similar elements.
+    
+    similar = proc (ll1, ll2: cvt) returns (bool)
+		where t in similar_type
+	if ll1.size ~= ll2.size then return (false) end
+	li1: link := ll1.first
+	li2: link := ll2.first
+	while true do
+	    e: t := li1.value
+	       except when end_of_list: return(link$is_nil(li2)) end
+	    if t$similar(e, li2.value) then
+	       li1 := li1.next
+	       li2 := li2.next
+	       continue
+	       end except when end_of_list: end
+	    return(false)
+	    end
+	end similar
+
+    
+    % Returns "true" if "ll1" and "ll2" contain the same elements.
+    
+    similar1 = proc (ll1, ll2: cvt) returns (bool)
+		where t in equal_type
+	if ll1.size ~= ll2.size then return (false) end
+	li1: link := ll1.first
+	li2: link := ll2.first
+	while true do
+	    e: t := li1.value
+	       except when end_of_list: return(link$is_nil(li2)) end
+	    if e = li2.value then
+	       li1 := li1.next
+	       li2 := li2.next
+	       continue
+	       end except when end_of_list: end
+	    return(false)
+	    end
+	end similar1
+
+    
+    % Returns a copy of "ll".  Copies the elements of "ll".
+    
+    copy = proc (ll: cvt) returns (cvt)
+		where t in copy_type
+	l1: rep := down(linked_list[t]$[])
+	li: link := ll.first
+	while ~link$is_nil(li) do
+	    addh(up(l1), t$copy(li.value))
+	    li := li.next
+	    end
+	l1.sorted := ll.sorted
+	return(l1)
+	end copy
+    
+    
+    % Returns a copy of "ll" without copying its elements.
+    
+    copy1 = proc (ll: cvt) returns (cvt)
+	l1: rep := down(linked_list[t]$[])
+	li: link := ll.first
+	while ~link$is_nil(li) do
+	    addh(up(l1), li.value)
+	    li := li.next
+	    end
+	l1.sorted := ll.sorted
+	return(l1)
+	end copy1
+
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where t in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    % The following do not preserve sharing.
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where t has decode: proctype(istream) returns (t)
+    		            signals (end_of_file, not_possible(string))
+	begin
+	   ans: rep := down(new())
+	   ans.sorted := bool$decode(s)
+	   count: int := int$decode(s)
+	   if count = 0 then return(ans) end
+	   for i: int in int$from_to(1, count) do
+	      addh(up(ans), t$decode(s))
+	      end
+	   l: link := ans.first
+	   for i: int in int$from_to(2, int$decode(s)) do
+	      l := l.next
+	      end
+	   ans.current := l
+	   return(ans)
+	  end resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where t has encode: proctype(t, istream) signals(not_possible(string))
+	begin
+	   bool$encode(c.sorted, s)
+	   int$encode(c.size, s)
+	   if c.size = 0 then return end
+	   i: int := 1
+	   current_ind: int := -1
+	   cur: link := c.current
+	   next_el: link := c.first
+	   while ~link$is_nil(next_el) do
+	       e: t := next_el.value
+	       t$encode(e, s)
+	       if next_el = cur then current_ind := i end
+	       next_el := next_el.next
+	       i := i + 1
+	       end
+	   if current_ind = -1 then
+	      signal failure("broken invariant in linked_list")
+	      end
+	   int$encode(current_ind, s)
+	  end resignal not_possible
+	end encode
+
+    end linked_list
+
+
+
+linked_item = cluster [t: type] is create, make_nil,
+				   get_next, get_prev, get_value, is_nil,
+				   set_next, set_prev, set_value,
+				   equal, _gcd
+
+    rep = variant[exists: item, none: null]
+    item = record[next, prev: linked_item[t], value: t]
+    item_struct = struct[next, prev: linked_item[t], value: t]
+
+    create = proc (args: item_struct) returns (cvt)
+	return(rep$make_exists(item_struct$s2r(args)))
+	end create
+    
+    make_nil = proc () returns (cvt)
+	return(rep$make_none(nil))
+	end make_nil
+
+    get_next = proc (li: cvt) returns (linked_item[t]) signals (end_of_list)
+	return(rep$value_exists(li).next)
+	   except when wrong_tag: signal end_of_list end
+	end get_next
+
+    get_prev = proc (li: cvt) returns (linked_item[t]) 
+		 signals (beginning_of_list)
+	return(rep$value_exists(li).prev)
+	   except when wrong_tag: signal beginning_of_list end
+	end get_prev
+
+    get_value = proc (li: cvt) returns (t) signals (end_of_list)
+	return(rep$value_exists(li).value)
+	   except when wrong_tag: signal end_of_list end
+	end get_value
+    
+    is_nil = proc (li: cvt) returns (bool)
+	return(rep$is_none(li))
+	end is_nil
+
+    set_next = proc (li: cvt, li1: linked_item[t]) signals (impossible)
+	rep$value_exists(li).next := li1
+	   except when wrong_tag: signal impossible end
+	end set_next
+
+    set_prev = proc (li: cvt, li1: linked_item[t]) signals (impossible)
+	rep$value_exists(li).prev := li1
+	   except when wrong_tag: signal impossible end
+	end set_prev
+
+    set_value = proc (li: cvt,v: t) signals (impossible)
+	rep$value_exists(li).value := v
+	   except when wrong_tag: signal impossible end
+	end set_value
+
+    equal = proc (li1, li2: cvt) returns (bool)
+	return(li1 = li2 cor (rep$is_none(li1) cand rep$is_none(li2)))
+	end equal
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where t in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end linked_item
+
+ 

@@ -1,0 +1,92 @@
+\doc{Logical operators}
+\ref{true}
+\ref{false}
+\ref{not}
+\ref{~}
+\ref{negation}
+\ref{connectives}
+\ref{and}
+\ref{/\}
+\ref{conjunctions}
+\ref{disjunctions}
+\ref{or}
+\ref{\/}
+\ref{implications}
+\ref{implies}
+\ref{=>}
+\ref{iff}
+\ref{<=>}
+
+\head{2}{Syntax}
+
+LP automatically declares the sort \f{Bool} and the following logical
+operators. 
+\begin{description}
+\dt \f{true}
+\dd A constant denoting the value \fq{true} of sort \f{Bool}.
+\dt \f{false}
+\dd A constant denoting the value \fq{false} of sort \f{Bool}.
+\dt \f{~}
+\dd A prefix operator, pronounced ``not'', denoting negation.  
+\dt \f{/\}
+\dd An infix operator, pronounced ``and'', denoting conjunction.
+\dt \f{\/}
+\dd An infix operator, pronounced ``or'', denoting disjunction.
+\dt \f{=>}
+\dd An infix operator, pronounced ``implies'', denoting implication.
+\dt \f{<=>}
+\dd An infix operator, pronounced ``if and only if'', denoting equivalence.
+The operator \f{<=>} is a synonym for the \dlink{equality}{equality} operator
+\fq{=:Bool,Bool->Bool}; it differs from \f{=} only in that it
+\dlink{precedence}{binds} less tightly during parsing.
+\end{description}
+
+\head{2}{Semantics}
+LP treats \f{/\}, \f{\/}, and \f{<=>} as
+\dlink{operator-theory}{associative-commutative operators}.
+\p
+The meaning of the logical operators is given by the following hardwired
+rewrite rules.
+\begin{verbatim}
+~true      -> false               true => p   -> p
+~false     -> true                false => p  -> true
+                                  p => true   -> true
+p /\ true  -> p                   p => false  -> ~p
+p /\ false -> false  
+             
+p \/ true  -> true                p <=> false -> ~p
+p \/ false -> p                   p <=> true  -> p
+\end{verbatim}
+LP uses these rewrite rules, together with the following, to simplify terms
+containing logical operators.
+\begin{verbatim}
+~(~p)      -> p                   p => p      -> true
+                                  p => ~p     -> ~p
+p /\ p     -> p                   ~p => p     -> p
+p /\ ~p    -> false
+                                  p <=> p     -> true
+p \/ p     -> p                   p <=> ~p    -> false
+p \/ ~p    -> true                ~p <=> ~q   -> p <=> q
+\end{verbatim}
+These rewrite rules are not sufficient to reduce all boolean tautologies to
+\fq{true}.  There are sets of rewrite rules that are complete in this sense,
+but they require exponential time and space, and they can expand rather than
+simplify expressions that do not reduce to \fq{true} or \fq{false}.  Hence they
+are not hardwired into LP.  Users wishing to use such a set can execute the
+file \f{~lp/boolequiv.lp} or the file \f{~lp/boolxor.lp}.
+\p
+To assist in \dlink{../commands/order}{orienting} formulas into rewrite
+rules, LP places \fq{true} and \f{false} at the bottom of the
+registry, and it
+\dlink{../commands/register}{registers} \f{/\}, \f{\/}, and 
+\f{<=>} as having \dlink{../ordering/status}{multiset status}.
+
+\head{2}{See also}
+\begin{itemize}
+\item \dlink{conditional}{Conditional} operators
+\item \dlink{equality}{Equality} operators
+\item \dlink{formula}{Formulas}
+\item \dlink{quantifier}{Quantifiers}
+\item The \setlink{hardwired-usage} setting
+\item \plink{methods}{Proof methods} based on the logical connectives
+\end{itemize}

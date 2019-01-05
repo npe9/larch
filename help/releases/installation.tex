@@ -1,0 +1,44 @@
+\doc{Installation}
+\ref{installation}
+
+To use LP, you need both an executable version of LP appropriate for your
+hardware and LP's run-time support library.  As of December 2016, zipped
+archives of two Intel x86-64 executable versions of LP and of LP's run-time
+support are available on the web at \dlink{http://people.csail.mit.edu/garland/LP/index}{http://people.csail.mit.edu/garland/LP}.
+\begin{itemize}
+\item
+\ftp{lp-linux.gz}, an executable for Debian Linux
+\item
+\ftp{lp-osx.gz}, an executable for Mac OS X
+\item
+\ftp{lp-lib.tar.gz}, LP's run-time support
+\end{itemize}
+
+If you wish to run LP on another platform, you can try to compile it from its
+source (\ftp{lp-source.tar.gz}).  LP is written in CLU, compilers for which are
+available from \dlink{http://pmg.csail.mit.edu/CLU}{http://pmg.csail.mit.edu/CLU.html}.
+\p
+To install LP, proceed as follows.
+
+\begin{itemize}
+\item
+Install the executable version of LP in some directory that occurs on your Unix
+search path before \fq{/usr/bin} (which contains a Unix line printer utility
+also called \fq{lp}).  Remove the platform name as you do this, for example, by
+typing the command \fq{mv lp-linux /usr/local/bin/lp}.  If necessary, use the
+\fq{chmod} command to make this file executable.
+\p
+\item
+Unpack LP's run-time library by typing \fq{tar xfz lp-lib.tar.gz}.  This will
+create a directory named `LP''.
+\p
+\item
+If possible, move this directory to \fq{/usr/local/lib/LP}.  If you cannot
+do this, alias the command \fq{lp} to ``\f{lp -d} \v{dir}'', where \v{dir} is
+the path name of the LP directory you created.
+\p
+\item
+If possible, copy the man page for LP, \fq{LP/help/lp.l}, to
+\fq{/usr/local/man/manl} and run the \fq{mandb} shell command.  This makes it
+possible for users to see the man page for LP by typing \fq{man l lp}.
+\end{itemize}

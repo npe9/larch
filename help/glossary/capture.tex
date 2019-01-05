@@ -1,0 +1,19 @@
+\doc{Capturing variables}
+\ref{capturing}
+\ref{capture}
+
+It is generally the case that, for any formula \f{P(x)} involving a variable
+\fq{x} and any term \fq{t}, the formula \f{P(t)} (i.e., the result of
+substituting \fq{t} for each free occurrence of \fq{x} in \fq{P}) is a logical
+consequence of \f{P(x)}.  However, this may not be the case if the substitution
+\def{captures} some free variable in \fq{t}, that is, if \fq{t} contains a free
+variable that becomes bound by some quantifier in \fq{P}.  For example, if
+\f{P(x)} is \f{\E y (x ~= y)}, then \f{P(y)} and \f{P(s(y))} are not logical
+consequences of \f{P(x)} because the free variable \fq{y} in the terms \fq{y}
+and \fq{s(y)} is captured by the quantifier in \fq{P}.
+\p 
+For this reason, LP automatically changes bound variables to avoid captures
+during rewriting, in response to the \cflink{fix} and \cflink{instantiate}
+commands, and in response to the
+\dlink{../proof/by-generalization}{generalization} and
+\dlink{../proof/by-specialization}{specialization} proof methods.

@@ -1,0 +1,658 @@
+#extend
+
+% This cluster unparses terms to produce external representations using the
+% syntax described in the "pterm" cluster.
+
+% When the "display-mode" is "unambiguous", the unparser determines where to
+% insert qualifications in the representation for a term by a process similar
+% to that used to parse a term.  Working from the bottom up, the unparser first
+% annotates potentially ambiguous identifiers by converting terms into
+% "unpterms".  Then, working from the top down, it marks those subterms that
+% must be qualified.
+
+unpterm = cluster is print, print2, print_with_known_sort
+
+    rep    = record[psorts: sort_set,  % possible sorts for reparsed term
+		    qual: bool,        % true if qualification is needed
+		    term: term,	       % term being unparsed
+		    tree: tree]        % structure of term
+    tree   =  oneof[funct: funct,      % function with arguments
+		    quant: quant,      % quantified subterm
+		    var: null]         % variable or constant
+    funct  = record[args: ut_arr,      % function arguments
+    		    pops: op_set]      % possible operators for reparsed term
+    quant  = record[qual: bool,        % true if quantifier needs qualification
+    		    subterm: unpterm]  % quantified subterm
+    ut_arr = array[unpterm]		    
+    
+    
+    % A "sym" represents the type of the first or last character in a token; it
+    % can be the escape ('\') or and ('/') characters, a character in a simple
+    % identifier or in an operator identifier, or some "safe" character.  In
+    % order for output to be reparsed, a token consisting of an and character
+    % must be followed by an identifier character or a safe character, a token
+    % consisting of an escape character must be followed by a safe character, a
+    % token ending with an identifier character must not be followed by a token
+    % beginning with an identifier character, and a token ending with an
+    % operator character must not be followed by a token beginning with an
+    % operator character or an and character.
+    
+    %		and	esc	id	op	safe
+    %	 and	no	no	ok	no	ok
+    %	 esc	no	no	no	no	ok
+    %	 id	ok	ok	no	ok	ok
+    %	 op	no	ok	ok	no	ok
+    %	 safe	ok	ok	ok	ok	ok
+
+    sym = variant[and,			% and character
+    		  esc, 			% escape character
+                  id, 			% simpleId, quantifier
+		  op, 			% simpleOp, openSym, closeSym
+		  safe: null]		% everything else
+
+    
+    % Prettyprints "t" on "p".  Qualifies identifiers according to the current
+    % value of "stab.unparse_mode".
+
+    print = proc (p: printer, t: term, stab: symtab)
+	ut: unpterm := t2unpterm(t, stab)
+	tagcase stab.unparse_mode.upm
+	   tag unqualified_upm: qualify_none(ut)
+	   tag qualified_upm:   qualify_all(ut, true)
+	   tag unambiguous_upm: qualify_some(ut, down(ut).psorts, stab)
+	   end
+	print_unpterm(p, ut, sym$make_safe(nil))
+	end print
+    
+
+    % Prettyprints "t1" and "t2" separated by "symb" on "p" using the format
+    % "~{t1~1Asymb t2~}" to generate one of the following displays:
+    % (1)  t1 symb t2		(2) t1
+    %				      symb t2
+    % Qualifies identifiers according to the current value of
+    % "stab.unparse_mode".  Assumes: "t1.sort = t2.sort" (and that reparser
+    % knows this is true).
+
+    print2 = proc (p: printer, t1: term, symb: string, t2: term, stab: symtab)
+	ut1: unpterm := t2unpterm(t1, stab)
+	ut2: unpterm := t2unpterm(t2, stab)
+	tagcase stab.unparse_mode.upm
+	   tag unqualified_upm: qualify_none(ut1)
+	   			qualify_none(ut2)
+	   tag qualified_upm:   qualify_all(ut1, true)
+	   			qualify_all(ut2, true)
+	   tag unambiguous_upm: 
+	       ss: sort_set := 
+	           sort_set$intersection(down(ut1).psorts, down(ut2).psorts)
+	       qualify_some(ut1, ss, stab)
+	       qualify_some(ut2, sort_set$[t1.sort], stab)
+	   end
+        printer$text(p, "~{~2I")
+	print_unpterm(p, ut1, sym$make_safe(nil))
+	printer$text(p, "~1A")
+	printer$text(p, symb)
+	printer$text(p, " ")
+	print_unpterm(p, ut2, sym$make_safe(nil))
+	printer$text(p, "~}")
+	end print2
+    
+
+    % Prettyprints "t" on "p".  Qualifies identifiers according to the current
+    % value of "stab.unparse_mode", but does not qualify "t" itself.
+
+    print_with_known_sort = proc (p: printer, t: term, stab: symtab)
+	ut: unpterm := t2unpterm(t, stab)
+	tagcase stab.unparse_mode.upm
+	   tag unqualified_upm: qualify_none(ut)
+	   tag qualified_upm:   qualify_all(ut, true)
+	   tag unambiguous_upm: qualify_some(ut, sort_set$[t.sort], stab)
+	   end
+	print_unpterm(p, ut, sym$make_safe(nil))
+	end print_with_known_sort
+    
+
+    % (Internal procedure) Converts "t" into an "unpterm" with annotations for
+    % for overloaded identifiers.  Unflattens "t" in the process.
+
+    t2unpterm = proc (t: term, stab: symtab) returns (cvt)
+	psorts: sort_set
+	tr: tree
+	tagcase t
+	   tag funct: if term_seq$size(t.args) = 0
+			   cand identifier$is_simple(t.root.id)
+			 then tr, psorts := t2vtree(t.root.id, stab)
+			 else t := unflatten1(t)
+			      tr, psorts := t2ftree(t, stab)
+			 end
+	   tag quant: psorts := sort_set$[bool_sort()]
+	              tr := t2qtree(t, stab)
+	   tag var:   tr, psorts := t2vtree(t.var.id, stab)
+	   end
+	return(rep${psorts: psorts, qual: false, term: t, tree: tr})
+	end t2unpterm
+
+    
+    % (Internal procedure) Does the work of "t2unpterm" for function terms with
+    % arguments.
+    
+    t2ftree = proc (t: term, stab: symtab) returns (tree, sort_set)
+	arity: int := term_seq$size(t.args)
+	f: funct := funct${args: ut_arr$predict(1, arity), pops: op_set$[]}
+	for arg: term in term_seq$elements(t.args) do
+	    ut_arr$addh(f.args, t2unpterm(arg, stab))
+	    end
+	psorts: sort_set := sort_set$[]
+	for op: operator in symtab$matching_ops(stab, t.root.id) do
+	    if op.arity ~= arity then continue end
+	    for i: int in int$from_to(1, arity) do
+		if ~sort_set$exists(down(f.args[i]).psorts, op.dom[i]) then
+		   exit no_match
+		   end
+		end except when no_match: continue end
+	    op_set$insert_unique(f.pops, op)
+	    sort_set$insert(psorts, op.rng)
+	       except when exists: end
+	    end
+	return(tree$make_funct(f), psorts)
+	end t2ftree
+	   
+
+    % (Internal procedure)  Does the work of "t2unpterm" for quantified terms.
+    
+    t2qtree = proc (t: term, stab: symtab) returns (tree)
+	v: variable := t.quant.var
+	qual: bool := false
+	if var_set$exists(t.fvars, v)
+	   then for v1: variable in var_set$elements(t.fvars) do
+		    if v1 ~= v cand identifier$similar(v.id, v1.id) then
+		       qual := true
+		       break
+		       end
+		    end
+	   else qual := var_set$size(symtab$lookup_vars(stab, v.id)) > 1
+	   end
+	return(tree$make_quant(quant${qual: qual,
+		                      subterm: t2unpterm(t.subform, stab)}))
+	end t2qtree
+
+    
+    % (Internal procedure)  Does the work of "t2unpterm" for variable and
+    % constant terms.  Tentatively marks all quantifiers for overloaded 
+    % variables as needing qualification.
+    
+    t2vtree = proc (id: identifier, stab: symtab) returns (tree, sort_set)
+	ss: sort_set := sort_set$[]
+	for v: variable in var_set$elements(symtab$lookup_vars(stab, id)) do
+	    sort_set$insert(ss, v.sort)
+	       except when exists: end
+	    end
+	for op: operator in symtab$matching_ops(stab, id) do
+	    sort_set$insert(ss, op.rng)
+	       except when exists: end
+	    end
+	return(tree$make_var(nil), ss)
+	end t2vtree
+
+
+
+    % (Internal procedure) Marks all variables in quantifiers and all subterms
+    % of "ut" as needing qualification, except for the entire term if "top" is
+    % false, and except for terms whose sorts can be deduced from the
+    % signatures of hardwired operators.
+    
+    qualify_all = proc (ut: cvt, top: bool)
+	tagcase ut.tree
+	   tag funct (f: funct):
+	       op: operator := ut.term.root
+	       boolOp: bool := op = op_and() cor op = op_or()
+				 cor op = op_implies() cor op = op_iff()
+				 cor op = op_true() cor op = op_false()
+               eqOp: bool := is_op_equals(op) cor is_op_neq(op)
+	       ifOp: bool := is_op_if(op)
+	       ut.qual := top cand ~boolOp cand ~eqOp
+	       for arg: unpterm in ut_arr$elements(f.args) do
+		   qualify_all(arg, ~boolOp cand ~ifOp)
+		   end
+	   tag quant (q: quant):
+	       ut.qual := false
+	       q.qual := true
+	       qualify_all(q.subterm, false)
+	   tag var:
+	       ut.qual := top
+	   end
+	end qualify_all
+
+    
+    % (Internal procedure) Marks all variables in quantifiers and all subterms
+    % of "ut" as not needing qualification.
+    
+    qualify_none = proc (ut: cvt)
+	ut.qual := false
+	tagcase ut.tree
+	   tag funct (f: funct):
+	       for arg: unpterm in ut_arr$elements(f.args) do
+		   qualify_none(arg)
+		   end
+	   tag quant (q: quant):
+	       q.qual := false
+	       qualify_none(q.subterm)
+	   tag var:
+	   end
+	end qualify_none
+
+    
+    % (Internal procedure) Marks the subterms of "ut" that need qualification
+    % when "ut.term.sort" is known to be in "ss".  Assumes: "ss" is a subset of
+    % "ut.psorts" that contains "ut.term.sort".
+    
+    qualify_some = proc (ut: cvt, ss: sort_set, stab: symtab)
+	ut.qual := sort_set$size(ss) > 1
+	s: sort := ut.term.sort
+	tagcase ut.tree
+	   tag funct (f: funct):
+	       % Thin out "f.pops" to operators with correct range
+	       ops: op_set := op_set$[]
+	       for op: operator in op_set$elements(f.pops) do
+		   if op.rng = s then op_set$insert_unique(ops, op) end
+		   end
+	       f.pops := ops
+	       for i: int in ut_arr$indexes(f.args) do
+		   % Find possible sorts for argument "i"
+		   ss1: sort_set := sort_set$[]
+		   for op: operator in op_set$elements(f.pops) do
+		       sort_set$insert(ss1, op.dom[i])
+			  except when exists: end
+		       end
+		   qualify_some(f.args[i], ss1, stab)
+		   % Thin out "f.pops" to operators with correct sort for
+		   % argument "i"
+		   ops := op_set$[]
+		   si: sort := down(f.args[i]).term.sort
+		   for op: operator in op_set$elements(f.pops) do
+		       if op.dom[i] = si then op_set$insert_unique(ops, op) end
+		       end
+		   f.pops := ops
+		   end
+	   tag quant (q: quant):
+	       qualify_some(q.subterm, down(q.subterm).psorts, stab)
+	   tag var:
+	   end
+	end qualify_some
+
+
+
+    % (Internal procedure) Prettyprints "ut" on "p", qualifying the term if
+    % "ut.qual" is true.  Assumes: "last" was the last "sym" printed before
+    % invocation.  Modifies "last" to be the last "sym" printed.
+    
+    print_unpterm = proc (p: printer, ut: cvt, last: sym)
+	tagcase ut.tree
+	   tag var:
+	       s: string := ut.term.var.id.sym
+		  except when wrong_tag: s := ut.term.root.id.sym end
+	       if ut.qual then s := "~{~2I" || s end
+	       print_id(p, s, last)
+	       print_qualification(p, ut, false, last)
+	       if ut.qual then printer$text(p, "~}") end
+	   tag funct:
+	       tagcase ut.term.root.id
+		  tag ifOp:	 print_ifOp(p, ut, last)
+		  tag infix:     print_infix(p, ut, last)
+		  tag mixfix:    print_mixfix(p, ut, last)
+		  tag postfix:   print_postfix(p, ut, last)
+		  tag prefix:    print_prefix(p, ut, last)
+		  tag selectOp:  fail("unpterm$print_unpterm")
+		  tag simple:    print_funct(p, ut, last)
+		  end
+	   tag quant:
+	       print_qterm(p, ut, last)
+	   end
+	end print_unpterm
+
+    
+    % (Internal procedure) Prettyprints "ut" when it is a conditional term 
+    % using one of the following formats if the display does not fit on a
+    % single line:
+    % (1) if t1		(2) if t1 then t2	   (3) if t1 then
+    %        then t2         else if t3 then t4	          t2
+    %        else t3         else if t5 then t6         else if t3 then
+    %                        else t7                      t4
+    %						        else
+    %						          t5
+    
+    print_ifOp = proc (p: printer, ut: rep, last: sym)
+	print_then1  = "~3I~1Athen~ "
+	print_else1  = "~3I~1Aelse~ "
+	print_then2  = "~3I then~3I "
+	print_elseif = "~2I~1Aelse~ if~ "
+	print_else2  = "~2I~1Aelse~3I "
+	print_then: string := print_then1
+	print_else: string := print_else1
+	if ut.qual then printer$text(p, "~{(~J") 
+	 elseif sym$is_esc(last) cor sym$is_id(last) then printer$text(p, " ")
+	 end
+	print_safe(p, "~{if~ ", last)
+	f: funct := tree$value_funct(ut.tree)
+	else_clause: rep := down(f.args[3])
+	while ~else_clause.qual cand is_op_if(else_clause.term.root) do
+	    print_then := print_then2
+	    print_else := print_else2
+	    print_unpterm(p, f.args[1], last)
+	    print_safe(p, print_then2, last)
+	    print_unpterm(p, f.args[2], last)
+	    print_safe(p, print_elseif, last)
+	    f := tree$value_funct(else_clause.tree)
+	    else_clause := down(f.args[3])
+	    end except when wrong_tag: end
+	print_unpterm(p, f.args[1], last)
+	print_safe(p, print_then, last)
+	print_unpterm(p, f.args[2], last)	
+	print_safe(p, print_else, last)
+	print_unpterm(p, f.args[3], last)
+	printer$text(p, "~}")
+	print_qualification(p, ut, true, last)
+	end print_ifOp
+    
+
+    % (Internal procedure) Prettyprints "ut" when it is an infix term.  Formats
+    % a term "t1 + ... + tn" as "~{~2It1~1A~{+~ t2~} ...~1A~{+~ tn~}~}" when 
+    % "+" has a short representation to display the term in one of the formats:
+    % (1) t1 + ... + tn     (2) t1    
+    %                             + t2
+    %                             ... 
+    %                             + tn
+    % Formats a term as "~{~2It1~1A~{+++~2I t2~} ...~1A~{+++~2I tn~}~}" when
+    % "+++" has a long representation to allow the following additional 
+    % formats:
+    % (3) t1                (4) t1
+    %       +++                   +++
+    %         t2                    t2
+    %       ...                   ...
+    %       +++                   +++ tn
+    %         tn
+    % Suppresses spaces around the infix operator ".".
+    
+    print_infix = proc (p: printer, ut: rep, last: sym)
+	if ut.qual then print_safe(p, "~{(~J", last) end
+	printer$text(p, "~{~2I")
+	print_first_infix_arg(p, ut, last)
+	print_remaining_infix_args(p, ut, last)
+	printer$text(p, "~}")
+	print_qualification(p, ut, true, last)
+	end print_infix
+    
+
+    print_first_infix_arg = proc (p: printer, ut: rep, last: sym)
+	f: funct := tree$value_funct(ut.tree)    
+	arg1: rep := down(f.args[1])
+	op: operator := ut.term.root
+	if op.id.left_assoc cand op = arg1.term.root then
+	   print_first_infix_arg(p, arg1, last)
+	   print_remaining_infix_args(p, arg1, last)
+	   return
+	   end except when wrong_tag: end
+	print_somefix_arg(p, ut, 1, last)
+	end print_first_infix_arg
+
+    print_remaining_infix_args = proc (p: printer, ut: rep, last: sym)
+	id: identifier := ut.term.root.id
+	f: funct := tree$value_funct(ut.tree)
+	is_dot: bool := id.sym = "."
+	for n: int in int$from_to(2, ut_arr$size(f.args)) do
+	    if is_dot
+	       then printer$text(p, "~A~{")
+	       else printer$text(p, "~1A~{")
+	       end
+	    printer$puts(p, id.sym)
+	    if id.is_big then print_safe(p, "~2I ", last)
+	     elseif is_dot then sym$change_safe(last, nil)
+	     else print_safe(p, "~ ", last)
+	     end
+	    print_somefix_arg(p, ut, n, last)
+	    printer$text(p, "~}")
+	    end
+	end print_remaining_infix_args
+    
+    
+    print_postfix = proc (p: printer, ut: rep, last: sym)
+	if ut.qual then print_safe(p, "~{(~J", last) end
+	printer$text(p, "~{~2I")
+	print_somefix_arg(p, ut, 0, last)
+	print_op(p, ut.term.root.id.sym, last)
+	printer$text(p, "~}")
+	print_qualification(p, ut, true, last)
+	end print_postfix
+    
+    print_prefix = proc (p: printer, ut: rep, last: sym)
+	if ut.qual then print_safe(p, "~{(~J", last) end
+	printer$text(p, "~{~2I")
+	print_op(p, ut.term.root.id.sym, last)
+	print_somefix_arg(p, ut, 0, last)
+	printer$text(p, "~}")
+	print_qualification(p, ut, true, last)
+	end print_prefix
+    
+    print_mixfix = proc (p: printer, ut: rep, last: sym)
+	f: funct := tree$value_funct(ut.tree)
+	id: identifier := ut.term.root.id
+	first: int := 1
+	nargs: int := ut_arr$size(f.args)
+	if id.after then nargs := nargs - 1 end
+	printer$text(p, "~{~2I")
+	if id.before then
+	   first := 2
+	   print_mixfixarg(p, f.args[1], last)
+	   printer$text(p, "~F")
+	   end
+        print_openClose(p, id.open, last)
+        printer$text(p, "~J")
+	printed: bool := false
+	for i: int in int$from_to(first, nargs) do
+	    if printed then print_safe(p, ",~1A", last) end
+	    print_unpterm(p, f.args[i], last)
+	    printed := true
+	    end
+        print_openClose(p, id.close, last)
+	print_qualification(p, ut, false, last)
+	if id.after then 
+	   printer$text(p, "~2I~F")
+	   print_mixfixarg(p, f.args[nargs + 1], last)
+	   end
+	printer$text(p, "~}")
+	end print_mixfix
+    
+
+    print_mixfixarg = proc (p: printer, ut: cvt, last: sym)
+	enclose: bool := ut.qual
+	if ~enclose then
+	    id1: identifier := ut.term.root.id
+	    enclose := ~identifier$is_selectOp(id1) 
+			 cand ~identifier$is_simple(id1)
+	    end except when wrong_tag: end
+	if enclose then print_safe(p, "(", last) end
+	print_unpterm(p, up(ut), last)
+	if enclose then print_safe(p, ")", last) end
+	end print_mixfixarg
+
+    
+    % (Internal procedure) Prettyprints the "n"th argument (or the first
+    % argument if "n = 0") for a term headed by a somefix operator, enclosing 
+    % it in parentheses if 
+    % (a) the priority of the argument's operator is greater than that of the
+    %     somefix operator, or
+    % (b) the priorities are the same and either
+    %     (b1) "n > 0" and the operator identifiers differ, or
+    %     (b2) "n = 0" and the operators are not both prefix or both postfix,
+    %     or
+    % (c) the somefix identifier is ".", the argument is a constant or a 
+    %     variable, and "n > 1", or
+    % (d) the identifiers are the same, but they are not left-associative or
+    %     "n > 1".
+    
+    % FIX: Liberalize (c) to eliminate parentheses when it is unambiguous.
+
+    print_somefix_arg = proc (p: printer, ut: rep, n: int, last: sym)
+	f: funct := tree$value_funct(ut.tree)
+	m: int := n
+	if m = 0 then m := 1 end
+	arg: rep := down(f.args[m])
+	enclose: bool := false
+	tid: identifier := ut.term.root.id
+	tagcase arg.term
+	   tag var:
+	       enclose := tid.sym = "." cand n > 1
+	   tag funct:
+	       aid: identifier := arg.term.root.id
+	       enclose :=
+		   (aid.priority > tid.priority)
+		     cor (aid.priority = tid.priority cand 
+			   ((n > 0 cand tid ~= aid) cor
+			    (n = 0 cand ~identifier$same_fix(tid, aid))))
+		     cor (tid.sym = "." cand n > 1 cand arg.term.root.arity = 0
+			    cand identifier$is_simple(aid))
+		     cor (tid = aid cand (~tid.left_assoc cor n > 1))
+	   tag quant:
+	   end
+	if enclose then print_safe(p, "~{(~J", last) end
+	print_unpterm(p, up(arg), last)
+	if enclose then print_safe(p, ")~}", last) end
+	end print_somefix_arg
+
+
+    % (Internal procedure) Prettyprints the functional term "ut" on "p".
+    % Formats a term "f(t1, ..., tn)" as "~{f(~Jt1,~1A...,~1Atn):~2I~Fsort~}"
+    % if "f" has a short representation to display the term in one of the
+    % formats
+    % (1) f(t1, ..., tn)          (2)  f(t1,
+    %                                    ...,
+    %                                    tn)
+    % Formats a term as "~{function~2I(~Ft1,~1At2,~1A...,~1Atn):~2I~Fsort~}" 
+    % if "function" has a long representation to display the term in one of the
+    % formats
+    % (1) function(t1, ..., tn)   (2) function(t1,    (3) function(
+    %                                   t2,                 t1,
+    %                                   ...,                ...,
+    %                                   tn)                 tn)
+
+    print_funct = proc (p: printer, ut: rep, last: sym) 
+	f: funct := tree$value_funct(ut.tree)
+	id: identifier := ut.term.root.id
+	print_id(p, "~{" || id.sym, last)
+	if ut_arr$size(f.args) > 0 then
+	   if id.is_big
+	      then print_safe(p, "~2I(~F", last)
+	      else print_safe(p, "(~J", last)
+	      end
+	   printed: bool := false
+	   for ut1: unpterm in ut_arr$elements(f.args) do
+	       if printed then print_safe(p, ",~1A", last) end
+	       print_unpterm(p, ut1, last)
+	       printed := true
+	       end
+	   print_safe(p, ")", last)
+	   end
+        print_qualification(p, ut, false, last)
+	printer$text(p, "~}")
+	end print_funct
+    
+    
+    % (Internal procedure) Prints a quantified term.
+    
+    print_qterm = proc (p: printer, ut: rep, last: sym) 
+	printer$text(p, "~{~3I")
+	ut := print_qfrs(p, ut, last)
+	printer$text(p, "~A")
+	enclose: bool
+	tagcase ut.tree
+	   tag var:   enclose := false
+	   tag funct: tagcase ut.term.root.id
+			 tag ifOp:      enclose := true
+			 tag infix:     enclose := true
+			 tag mixfix:    enclose := true
+			 tag postfix:   enclose := true
+			 tag prefix:    enclose := false
+			 tag selectOp:  enclose := true
+			 tag simple:    enclose := false
+			 end
+	   tag quant: enclose := false
+	   end
+	if enclose then print_safe(p, "(", last) end
+	print_unpterm(p, up(ut), last)
+	if enclose then print_safe(p, ")", last) end
+	printer$text(p, "~}")
+	end print_qterm
+
+    print_qfrs = proc (p: printer, ut: rep, last: sym) returns (rep)
+	while true do
+	    q: quant := tree$value_quant(ut.tree)
+	       except when wrong_tag: break end
+	    qu: quantifier := ut.term.quant
+	    % Print a space, if needed, to make the output pretty.  The
+	    % space is not needed for reparsing except when "last" is "/".
+	    if sym$is_esc(last) cor sym$is_id(last) cor sym$is_and(last)
+	       then printer$text(p, " ")
+	       end
+	    if qu.is_universal
+	       then printer$puts(p, identifier$allSym())
+	       else printer$puts(p, identifier$existsSym())
+	       end
+	    printer$puts(p, " ")
+	    printer$puts(p, qu.var.id.sym)
+	    if q.qual then
+	       printer$text(p, "~F:~F")
+	       psort$print(p, qu.var.sort)
+	       end
+	    print_safe(p, " ", last)
+	    ut := down(q.subterm)
+	    end
+	return(ut)
+	end print_qfrs
+
+    print_id = proc (p: printer, s: string, last: sym)
+	if sym$is_esc(last) cor sym$is_id(last) then printer$text(p, " ") end
+	printer$text(p, s)
+	sym$change_id(last, nil)
+	end print_id
+    
+
+    print_op = proc (p: printer, s: string, last: sym)
+	if sym$is_and(last) cor sym$is_esc(last)
+	     cor (sym$is_op(last) cand s[1] ~= '\\') then
+	   printer$text(p, " ")
+	   end
+	printer$puts(p, s)
+	if s = "\\" then sym$change_esc(last, nil)
+	 elseif s = "/" then sym$change_and(last, nil)
+	 elseif s[1] = '.' cand "s" ~= "." then sym$change_id(last, nil)
+	 else sym$change_op(last, nil)
+	 end
+	end print_op
+
+    
+    print_openClose = proc (p: printer, s: string, last: sym)
+	if (s[1] = '\\' cand sym$is_and(last)) cor sym$is_esc(last) then
+	   printer$text(p, " ")
+	   end
+	printer$puts(p, s)
+	sym$change_safe(last, nil)
+	end print_openClose
+
+    
+    print_qualification = proc (p: printer, ut: rep, parens: bool, last: sym)
+	if ut.qual then
+	   if parens then printer$text(p, ")") end
+	   printer$text(p, ":~2I~F")
+	   sort$print(p, ut.term.sort)
+	   if parens then printer$text(p, "~}") end
+	   sym$change_id(last, nil)
+	   end
+	end print_qualification
+    
+    
+    print_safe = proc (p: printer, s: string, last: sym)
+	printer$text(p, s)
+	sym$change_safe(last, nil)
+	end print_safe
+    
+    end unpterm
+

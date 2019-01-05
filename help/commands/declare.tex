@@ -1,0 +1,75 @@
+\doc{The declare command}
+\ref{declare-command}
+\ref{declarations}
+\ref{sortDecs}
+\ref{varDecs}
+\ref{opDec}
+\ref{ops}
+\ref{vars}
+
+Except for certain predefined \llink{connective}{logical},
+\llink{equality}{equality}, and \llink{conditional}{conditional} operators, all
+identifiers for \llink{sort}{sorts}, \llink{variable}{variables}, and
+\llink{operator}{operators} must be declared in a \def{declare command} before
+any other use.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+
+\begin{verbatim}
+\sd{declare-command} ::= \f{declare} ( \s{sortDecs} | \s{varDecs} | \s{opDecs} )
+\sd{sortDecs}        ::= \f{sorts} \s{\dlink{../logic/sort}{sort}}+,
+\sd{varDecs}         ::= \f{variables} \s{varDec}+[,]
+\sd{varDec}          ::= \slink{../logic/variable}{variableId}+, \f{:} \slink{../logic/sort}{sort}
+\sd{opDecs}          ::= \f{operators} \s{opDec}+[,]
+\sd{opDec}           ::= \slink{../logic/operator}{opForm}+, \f{:} \slink{../logic/signature}{signature}
+\end{verbatim}
+
+Restrictions: There must be at least one marker in each \s{opForm} that
+contains a \s{simpleOpForm}.  The number of marker symbols in any \s{opForm}
+not containing a \s{functionId} must equal the number of sorts in the domain of
+the operator's signature.  A period (\f{.}) can be declared as an infix
+operator, but not as a prefix or a postfix operator.  The predefined operators
+cannot be \dlink{../logic/overload}{overloaded} with user-defined signatures.
+\p
+Notes: The words \fq{sorts}, \fq{operators}, and \fq{variables} can be
+\dlink{../misc/abbreviation}{abbreviated} by any prefix, as well as by \fq{ops}
+and \fq{vars}.
+
+\head{2}{Examples}
+
+\begin{verbatim}
+declare sorts Nat, Set
+declare variables i, j: Nat, s: Set
+declare operators
+  0:                     -> Nat
+  s, __!:       Nat      -> Nat
+  __+__, __*__: Nat, Nat -> Nat
+  {}:                    -> Set
+  {__}:         Nat      -> Set
+  __\U__:       Set, Set -> Set
+  ~__:          Set      -> Set
+  ..
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{declare sorts} command introduces identifiers for use as
+\llink{sort}{sorts}.
+\p
+The \fq{declare variables} command introduces \llink{variable}{variables} with
+the indicated sorts.
+\p
+The \fq{declare operators} commands introduces \llink{operator}{operators} with
+the indicated signatures.  Marker symbols (\f{__}) in an \s{opForm} indicate
+where the arguments of the operator are placed when it is used in a
+\llink{term}{term}.
+\p
+LP at times creates variables and operators in response to user commands.  To
+avoid problems, it is a good idea for users to declare the identifiers they
+need before issuing commands (such as \fq{prove}) that may cause LP to
+appropriate an identifier for its own use (e.g., by creating a variable
+\fq{s1} of sort \fq{Set} and thereby preventing the user from later
+using \fq{s1} as a constant of sort \fq{Set}).
+\p
+The \dflink{display}{display symbols} command produces a list of all declared
+identifiers.

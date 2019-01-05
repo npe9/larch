@@ -1,0 +1,389 @@
+#extend
+
+% An "operator" is a function symbol.  Its "arity" is the dimension of its
+% domain, i.e., the number of arguments it requires (AC operators have arity 2,
+% but can have more arguments in flattened terms).  Its signature specifies the
+% sorts in its domain and range.
+
+% A constant (i.e., a 0-ary operator) can be a normal operator (named by an
+% identifier) or a rational constant (associated with some numeric theory).
+
+% Operators are essentially immutable.  However, the "symtab" cluster can
+% assign a positive key to an operator.  Once known, keys cannot change.  This
+% cluster uses keys to optimize checks for operator equality.  Other clusters
+% use keys as indices into lists and tables.
+
+    
+operator = cluster is create, set_key, get_arity, get_dom, get_footprint, 
+                      get_id, get_key, get_rng, get_sig, from_variable, read, 
+		      print, unparse, v2c, c2v, is_renamed_variable, op2s, 
+		      is_numeral, make_numeral, get_numeral, get_numeric_theory,
+		      lt, le, gt, ge, equal, similar, copy, _gcd, decode,
+		      encode, set_decode_all, set_encode_all
+
+    % The "c2var" in the rep exists so that "operator$c2v(operator$v2c(v))"
+    % will return the variable "v" itself, not just a similar variable.
+
+    % The "footprint" field is a single bit int such that "op1 = op2" only if
+    % "op1.footprint = op2.footprint".
+
+    rep = record[c2var: var_type,    % variable that was renamed as op, if any
+    		 footprint: int,     % key hashed to a bit in an int
+		 key: int,	     % unique key for operator (or 0)
+		 kind: op_kind,		
+		 sig: signature,     % signature for operator
+		 str: string]        % unique string representation of operator
+
+    var_type = oneof[exists: variable, none: null]
+    op_kind  = oneof[normal: identifier, rational: rat_info]
+    rat_info = struct[id: identifier, value: rat, theory: numeric_theory]
+    
+    own decode_all: bool := true
+    own encode_all: bool := true
+    own decode_map: op_map := op_map$new(1)
+
+    % Returns an operator with identifier "a.id" and signature "a.signature".
+    % The "#extend" mode of the CLU compiler provides sugared invocations of
+    % the form "operator${id: identifier, signature: signature}".
+    
+    create = proc (a: args) returns (cvt)
+	args = struct[id: identifier, sig: signature]
+	return(rep${c2var: var_type$make_none(nil), 
+	    	    footprint: 1,
+		    key: 0,
+	            kind: op_kind$make_normal(a.id), 
+	            sig: a.sig, 
+		    str: identifier$id2s(a.id) || ":" || 
+		         signature$sig2s(a.sig)})
+	end create
+    
+    
+    % Assigns the key "k" to "op".  Assumes "op.key = 0" or "op.key = k" and
+    % that "k < 0" iff "op" is a renamed variable.
+    
+    set_key = proc (op: cvt, k: int)
+	if op.key = k then return end
+	if op.key ~= 0 cor (k < 0) ~= var_type$is_exists(op.c2var) then
+	   fail("operator$set_key")
+	   end
+	op.key := k
+	op.footprint := i_rotate(1, k)
+	end set_key
+	
+    
+    % Returns the arity of "op".
+
+    get_arity = proc (op: cvt) returns (int)
+	return(op.sig.arity)
+	end get_arity
+    
+    
+    % Returns the sequence of domain sorts of "op".
+
+    get_dom = proc (op: operator) returns (sort_seq)
+	return(op.sig.dom)
+	end get_dom
+
+    
+    % Returns the footprint of the key assigned to "op".  Returns "1" if no key
+    % has been assigned.
+    
+    get_footprint = proc (op: cvt) returns (int)
+	return(op.footprint)
+	end get_footprint
+    
+    
+    % Returns the identifier of "op".
+
+    get_id = proc (op: cvt) returns (identifier)
+	tagcase op.kind
+	   tag normal (id: identifier): return(id)
+	   tag rational (ri: rat_info): return(ri.id)
+	   end
+	end get_id
+
+    
+    % Returns the key assigned to "op".  Returns "0" if no key has been 
+    % assigned.
+    
+    get_key = proc (op: cvt) returns (int)
+	return(op.key)
+	end get_key
+    
+    
+    % Returns the range sort of "op".
+
+    get_rng = proc (op: operator) returns (sort)
+	return(op.sig.rng)
+	end get_rng
+
+
+    % Returns the signature of "op".
+
+    get_sig = proc (op: cvt) returns (signature)
+	return(op.sig)
+	end get_sig
+    
+    
+    % Returns a 0-ary operator with range sort "v.sort" and with an identifier
+    % related to "v.id".  Ensures that the operator does not occur in "ops" and
+    % that its identifier is not overloaded by other operator or variable
+    % identifiers in "stab".  Enters the new operator in "stab", but does not
+    % commit the change.
+    
+    from_variable = proc (v: variable, ops: op_set, stab: symtab) 
+		      returns (operator)
+	id: identifier := identifier$make_constant(v.id, 0)
+	sig: signature := signature${dom: sort_seq$[], rng: v.sort}
+	n: int := 0
+	while true do
+	    begin
+		for op1: operator in op_set$elements(ops) do
+		    if id = op1.id then exit used end
+		    end
+		op1: operator := symtab$lookup_op_id(stab, id)
+		   except when ambiguous, variable: exit used
+			  when missing:
+			       op1 := operator${id: id, sig: sig}
+			       return(symtab$enter_op(stab, op1))
+			  end
+		if op1.sig = sig then return(op1) end
+		end except when used: end
+	    n := n + 1
+	    id := identifier$make_constant(v.id, n)
+	    end
+	end from_variable
+
+
+    % Reads and returns a (possibly qualified) operator in "stab" from "scan".
+    % Writes a message to "scan", and signals "error", if "scan" does not start
+    % with an unambiguous representation for an operator in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (operator)
+	     signals (error)
+	return(poperator$read(scan, stab))
+	   resignal error
+	end read
+
+
+    % Prettyprints "op" on "p".
+
+    print = proc (p: printer, op: operator, stab: symtab)
+        poperator$print(p, op, stab)
+	end print
+
+    
+    % Returns a prettyprinted string representation of "op".  Uses the current
+    % value of the "display-mode" setting to determine whether to qualify "op".
+    
+    unparse = proc (op: operator) returns (string)
+	return(unparse_item_with_ids[operator](op))
+	end unparse
+    
+
+    % Converts the variable "v" into a constant (i.e., a 0-ary operator).
+    % NOTE: This procedure invokes "variable$make_constant" to extract the
+    % appropriate constant from the rep of "v".  It also produces the constant
+    % when invoked by "variable$create".  See note about "c2var" in rep.
+    
+    v2c = proc (v: variable) returns (cvt)
+	own empty: sort_seq := sort_seq$[]
+	return(down(variable$make_constant(v)))
+	   except when none: end
+	sig: signature := signature${dom: empty, rng: v.sort}
+	id: identifier := identifier$make_internal_constant(v.id)
+	return(rep${c2var: var_type$make_exists(v), 
+ 	    	    footprint: 1,
+		    key: 0,
+	            kind: op_kind$make_normal(id), 
+		    sig: sig, 
+		    str: identifier$id2s(id) || ":" || signature$sig2s(sig)})
+	end v2c
+
+
+    % Returns true iff "op" has been created by "v2c".
+
+    is_renamed_variable = proc (op: cvt) returns (bool)
+	return(var_type$is_exists(op.c2var))
+	end is_renamed_variable
+
+
+    % Converts an "op" created by "v2c" back into the original variable.
+
+    c2v = proc (op: cvt) returns (variable) signals (not_renamed)
+        return(var_type$value_exists(op.c2var))
+	   except when wrong_tag: signal not_renamed end
+	end c2v
+
+
+    % Returns an internal string representation for "op".
+    
+    op2s = proc (op: cvt) returns (string)
+	return(op.str)
+	end op2s
+    
+    
+    % The following procedures are used by the experimental satisifier.
+    
+    is_numeral = proc (op: cvt) returns (bool)	
+	return(op_kind$is_rational(op.kind)) 
+	end is_numeral
+    
+    
+    % Returns an operator representing the numeral "r" of sort "nt.sort".
+    % Signals "impossible" if "r" is negative and "nt.sort" is "Nat", or if
+    % "r" is not an integer and "nt.sort" is not "Real".
+	
+    make_numeral = proc (r: rat, nt: numeric_theory) returns (cvt) 
+		     signals (impossible)
+        if (~numeric_theory$is_real(nt) cand ~rat$is_int(r))
+	     cor (numeric_theory$is_nat(nt) cand r < rat$zero()) then
+	   signal impossible 
+	   end
+        ri: rat_info := rat_info${value: r, 
+				  theory: nt,
+				  id: identifier$make_simple(rat$unparse(r))}
+        sig: signature := signature${dom: sort_seq$[], rng: nt.sort}
+	return(rep${c2var: var_type$make_none(nil), 
+	    	    footprint: 1,
+		    key: 0,
+		    kind: op_kind$make_rational(ri),
+	            sig: sig, 
+		    str: rat$unparse(r) || ":" || signature$sig2s(sig)})
+	end make_numeral
+    
+    
+    % If "op" is a rational constant, returns its value.  Otherwise signals
+    % "none".
+
+    get_numeral = proc (op: cvt) returns (rat) signals (none)
+	return(op_kind$value_rational(op.kind).value)
+	   except when wrong_tag: signal none end
+	end get_numeral
+
+
+    % If "op" is a rational constant, returns its numeric theory.  Otherwise
+    % signals "none".
+    
+    get_numeric_theory = proc (op: cvt) returns (numeric_theory) signals (none)
+	return(op_kind$value_rational(op.kind).theory)
+	   except when wrong_tag: signal none end
+	end get_numeric_theory
+
+
+    % The following procedures impose an ordering on operators.  This ordering
+    % is used when alphabetizing lists of operators for output and when
+    % flattening the arguments of AC and commutative operators.
+    
+    % CONSIDER: Make flattening more efficient by comparing keys? Provide a
+    % different ordering for alphabetizing lists for output?
+
+    lt = proc (op1, op2: cvt) returns (bool)
+	return(op1.str < op2.str)
+	end lt
+
+    le = proc (op1, op2: cvt) returns (bool)
+	return(op1.str <= op2.str)
+	end le
+
+    gt = proc (op1, op2: cvt) returns (bool)
+	return(op1.str > op2.str)
+	end gt
+
+    ge = proc (op1, op2: cvt) returns (bool)
+	return(op1.str >= op2.str)
+	end ge
+
+
+    % Returns "true" iff "op1" and "op2" represent the same operator.
+
+    equal = proc (op1, op2: cvt) returns (bool)
+	if op1 = op2 then return(true) end % Redundant, but fast check
+        k1: int := op1.key
+        k2: int := op2.key
+	if k1 ~= 0 cand k2 ~= 0 
+	   then return(k1 = k2)
+	   else return(op1.str = op2.str)
+	   end
+	% NOTE: We need to check "op1.str = op2.str" even if only one of "k1"
+ 	% and "k2" is nonzero because system$has_op constructs an operator 
+ 	% without entering it into the symbol table.  Also, if a numeral is
+ 	% entered in the symbol table before its sort is known to be numeric, 
+ 	% it will be assigned a key.  We could remove the key from the operator
+	% when this happened to optimize this procedure further, but what we
+	% do here is simpler.
+	end equal
+    
+    
+    % Returns "true" iff "op1" and "op2" represent the same operator.
+    
+    similar = proc (op1, op2: operator) returns (bool)
+	return(op1 = op2)
+	end similar
+
+    
+    % Returns "op", which is immutable.
+
+    copy = proc (op: cvt) returns (cvt)
+	return(op)
+	end copy
+
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    decode = proc (s: istream) returns (operator)
+	       signals (end_of_file, not_possible(string))
+	begin
+	    if decode_all then
+	       k: op_kind := op_kind$decode(s)
+	       id: identifier
+	       tagcase k
+		  tag normal(id1: identifier): id := id1
+		  tag rational(ri: rat_info): id := ri.id
+		  end
+	       sig: signature := signature$decode(s)
+	       op: operator := up(rep${c2var: var_type$make_none(nil),
+				       footprint: 1,
+				       key: 0,
+				       kind: k,
+				       sig: sig,
+				       str: identifier$id2s(id) || ":" ||
+					    signature$sig2s(sig)})
+	       op.key := int$decode(s)
+	       return(op)
+	       end
+	    ans: operator := decode_map[int$decode(s)]
+	    if _cvt[operator,int](ans) = 0 then fail("operator$decode - 0") end
+	    return(ans)
+	    end resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (op: cvt, s: istream) signals (not_possible(string))
+	if op.key <= 0 then signal failure("operator$encode: key <= 0") end
+	begin
+	    if encode_all then
+	       op_kind$encode(op.kind, s)
+	       signature$encode(op.sig, s)
+	       end
+	    int$encode(op.key, s)
+	    end resignal not_possible
+	end encode
+
+    set_decode_all = proc (m: maybe_op_map)
+	decode_all := false
+	decode_map := maybe_op_map$value(m)
+	   except when wrong_tag:
+		       decode_map := op_map$new(1)
+		       decode_all := true
+		  end
+	end set_decode_all
+
+    set_encode_all = proc (b: bool)
+	encode_all := b
+	end set_encode_all
+
+    end operator

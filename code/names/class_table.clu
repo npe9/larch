@@ -1,0 +1,62 @@
+#extend
+
+% A class_table is a mapping from strings to class expressions
+
+class_table = cluster is new, predict, define, look_up, elements, size,
+			 empty, copy, _gcd, encode, decode
+    
+    rep = str_hash_table[class_expression]
+    
+    new = proc () returns (cvt)
+	return(rep$new())
+	end new
+    
+    predict = proc (count: int) returns (cvt) signals (nonpositive_count)
+	return(rep$predict(count))
+	end predict
+
+    define = proc (m: cvt, s: string, ce: class_expression)
+        rep$change_image(m, s, ce) 
+	end define
+
+    look_up = proc (m: cvt, s: string) returns (class_expression)
+		signals (missing)
+	return(rep$image(m, s))
+	   resignal missing
+	end look_up
+
+    elements = iter (m: cvt) yields (string, class_expression)
+	for s: string, ce: class_expression in rep$elements(m) do
+	    yield(s, ce)
+	    end
+	end elements
+
+    size = proc (m: cvt) returns (int)
+	return(rep$size(m))
+	end size
+
+    empty = proc (m: cvt) returns (bool)
+	return(rep$empty(m))
+	end empty
+
+    copy = proc (m: cvt) returns (cvt)
+	return(rep$copy1(m))
+	end copy
+    
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    % The following do not preserve sharing
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    end class_table
+

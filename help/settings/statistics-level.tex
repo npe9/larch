@@ -1,0 +1,40 @@
+\doc{The statistics-level setting}
+\ref{statistics-level-setting}
+
+The \def{statistics-level setting} controls the amount of statistics that LP
+records about its operation.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-statistics-level-command} ::= \f{set statistics-level} \slink{../symbols/symbols}{number}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set statistics-level 3
+\end{verbatim}
+
+\head{2}{Usage}
+The \fq{statistics-level} setting is an integer between 0 and 3; 2 is the
+default.  LP gathers increasingly many statistics at each level, as follows.
+
+\begin{description}
+\dt 0
+\dd 
+Summary statistics only: total running time and memory usage, including the
+number of garbage collections.
+\dt 1
+\dd 
+Detailed statistics about the time spent, both successfully and unsuccessfully,
+attempting to orient formulas into rewrite rules, to apply rewrite rules, to
+apply deduction rules, and to unify terms (in response to the critical-pairs
+command).  Also, the time spent controlling LP's inference mechanisms.
+\dt 2
+\dd 
+The number of successful applications of each rewrite and deduction rule, as
+well as the number of nontrivial critical pairs involving each rewrite rule.
+\dt 3
+\dd
+The number of attempted applications of each rewrite rule.  Level 3 imposes a
+considerable computational burden, for example, up to 10% in some applications.
+\end{description}

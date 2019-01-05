@@ -1,0 +1,24 @@
+#extend
+
+% A procedure to unify the top level of two terms whose root function symbols
+% are in the empty equational theory.
+
+% Yields a complete set of unifiers of "t1" and "t2".  MODIFIES AT MOST: "vg"
+
+empty_unify = iter (t1, t2: term, osys: op_system, stab: symtab, vg: var_gen) 
+		yields (substitution) signals (not_unifiable)
+
+    if t1.root ~= t2.root then signal not_unifiable end
+       except when wrong_tag: signal not_unifiable end
+    tba: tb_arr := tb_arr$[]
+    for i: int in term_seq$indexes(t1.args) do
+	tb_arr$addh(tba, term_bind${domain: t1.args[i], range: t2.args[i]})
+	end
+    if tb_arr$empty(tba) then
+       yield(substitution$[])
+       return
+       end
+    for sigma: substitution in unify_seq(tb_seq$a2s(tba), osys, stab, vg) do
+	yield(sigma)
+	end resignal not_unifiable
+    end empty_unify

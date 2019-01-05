@@ -1,0 +1,24 @@
+\doc{The name-prefix setting}
+\ref{name-prefix-setting}
+
+The \def{name-prefix setting} specifies the identifier used to construct names
+for newly asserted facts and conjectures.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-name-prefix-command} ::= \f{set name-prefix} \slink{../symbols/symbols}{simpleId}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set name nat
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{set name-prefix} command directs LP to use the \s{simpleId} as the
+prefix for any new \dlink{../misc/name}{names} generated in the current proof
+context.  After a command such \fq{set name nat}, LP assigns the names
+\fq{nat.1}, \fq{nat.2}, ... in sequence to facts and conjectures.
+
+

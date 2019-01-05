@@ -1,0 +1,1573 @@
+#extend
+
+% A "tracer" is used to provide varying amounts of detail about the operation
+% of LP.
+
+
+tracer = cluster is 
+	create, reset, get_level, set_level, get_printer, get_symtab, 
+	set_symtab, get_stat_level, set_stat_level, 
+	accepted_suggestions, applied_dr, applied_dr_mult, applied_ot, 
+	applied_rr, asserted, backed_up, big_ac, big_eq, checking_conditions,
+	committed_bottom, committed_top, conditions_might_loop,
+	converted_dr, count_pair, critical_pairs, display_usage,
+	divided_eq, fixed_eq, found_instantiations, 
+	hypothesized, incompatible_eq, inconsistent_ir,
+	instantiated_dr, instantiated_eq, internormalizing, interrupting_cps, 
+	matched_term, matching, might_loop, new_items, new_polys,
+	normalized_dr, normalized_eq, normalized_rr, oriented_eq, 
+	orienting_eq, orienting_eqs, present_equation, processing_new_drs, 
+	processing_new_eqs, processing_new_rrs, reduced_conjecture,
+	reduced_dr, reduced_eq, reduced_rr, reducing_system, reflattened_dr, 
+	reflattened_eq, reflattened_rr, remember_size, removed_dr, 
+	removed_identity, rr2eq, start_normalizing, start_reducing, 
+	stop_normalizing, stop_reducing, subsumes_ir, subsumes_ot, 
+	superposition, sys_size, trying_rr, unoriented_eq, copy, _gcd
+
+	
+    rep = null
+
+    eq_int_map = mapping[equation, int]
+    
+    % ENHANCE: Move this stuff to the statistics cluster.
+    
+    uses        = struct[apply, crit, try: use_count, kind: string, name: name]
+    use_count   = record[recent, total: int]
+    use_map     = hash_table[name, uses]
+    num_buckets = 1000
+    
+    trace_state = oneof[idle, internormalizing, orienting, reducing_sys, 
+    			processing_drs, processing_eqs, processing_rrs, 
+			looking_for_pairs, computing_pairs: null]
+			
+    state_info = struct[e, r, t: int]
+
+
+    own pr: printer		% Communication with user passes through here.
+    own stab: symtab		% Used for unparsing identifiers
+    
+    
+    % "current_level" 		controls what is displayed by tracer
+    % "current_stat_level" 	controls what statistics are kept by tracer
+    % "current_term" 		term currently being reduced or normalized
+    % "current_shown" 		true if "current_term" has been shown
+    % "neqs", "nrrs", "ndrs" 	record the last-reported size of the system
+    % "state" 			current task
+    % "seen_eqs" 		equations that have been presented to the user
+
+    own current_level: int := initial_trace_level
+    own current_stat_level: int := initial_stat_level
+    own current_term: term
+    own current_shown: bool
+    own current_time: time := time$create(0, 0, 0, 0, 0, 0)    
+    own neqs: int := 0
+    own nrrs: int := 0
+    own ndrs: int := 0
+    own seen_eqs: eq_int_map := eq_int_map$new()
+    own usage: use_map := use_map$predict(num_buckets)
+    own state: trace_state := trace_state$make_idle(nil)
+    
+    
+    % The following internal procedures are used to control what information
+    % is shown to the user.
+    
+    showing_new_objects = proc () returns (bool)
+	return(current_level >= 1)
+	end showing_new_objects
+    
+    showing_ordering = proc () returns (bool)
+	return(current_level >= 2)
+	end showing_ordering
+    
+    showing_reduced_objects = proc () returns (bool)
+	return(current_level >= 3)
+	end showing_reduced_objects
+    
+    showing_time = proc () returns (bool)
+	return(current_level >= 3)
+	end showing_time
+    
+    showing_tasks = proc () returns (bool)
+	return(current_level >= 4)
+	end showing_tasks
+    
+    showing_trivialities = proc () returns (bool)
+	return(current_level >= 5)
+	end showing_trivialities
+    
+    showing_reduction_steps = proc () returns (bool)
+	return(current_level >= 6)
+	end showing_reduction_steps
+    
+    showing_reduction_attempts = proc () returns (bool)
+	return(current_level >= 7)
+	end showing_reduction_attempts
+    
+    showing_action_time = proc () returns (bool)
+	return(current_level >= 8)
+	end showing_action_time
+
+
+    % Creates a new "tracer" with default trace and statistics levels.
+
+    create = proc (the_printer: printer, the_symtab: symtab)
+	pr := the_printer
+	reset(the_symtab)
+	current_level := initial_trace_level
+        current_stat_level := initial_stat_level
+	end create
+
+
+    % Resets the "tracer" to the "idle" state, not having presented any
+    % equations yet, and having shown the user no equations.  Preserves the
+    % current trace and statistics level.
+
+    reset = proc (new_symtab: symtab)
+	stab := new_symtab
+	neqs := 0
+	nrrs := 0
+	ndrs := 0
+	seen_eqs := eq_int_map$new()
+	state := trace_state$make_idle(nil)
+	usage := use_map$predict(num_buckets)
+	end reset
+
+
+    % Returns the current trace level.  
+
+    get_level = proc () returns (int)
+	return(current_level)
+	end get_level
+
+
+    % Sets the trace level to "n".  Signals "bounds" if the level is not valid.
+
+    set_level = proc (n: int) signals (bounds)
+	if n < 0 cor n > highest_trace_level then signal bounds end
+	current_level := n
+	end set_level
+
+
+    % Returns the printer used for tracing.
+    
+    get_printer = proc () returns (printer)
+	return(pr)
+	end get_printer
+    
+    
+    % Returns the symbol table used for tracing.
+    
+    get_symtab = proc () returns (symtab)
+	return(stab)
+	end get_symtab
+    
+
+    % Sets the symbol table used for tracing.
+    
+    set_symtab = proc (stab1: symtab)
+	stab := stab1
+	end set_symtab
+    
+    
+    % Returns the current statistics level.
+
+    get_stat_level = proc () returns (int)
+	return(current_stat_level)
+	end get_stat_level
+
+
+    % Sets the stat level to "n".  Signals "bounds" if the level is not valid.
+
+    set_stat_level = proc (n: int) signals (bounds)
+	if n > highest_stat_level then signal bounds end
+	current_stat_level := n
+	end set_stat_level
+
+
+    % Announces that a suggestion "sug" has been accepted to order an equation
+    % into a rewrite rule.
+
+    accepted_suggestions = proc (sug: suggestions)
+	if showing_time() then show_time() end
+	if ~showing_ordering() then return end
+	printer$text(pr, "\n~{Accepted registry suggestion:~2I~1A")
+	print_ss_arr(pr, sug[1], stab)
+	printer$text(pr, "~}\n")
+	end accepted_suggestions
+
+
+    % Announces that the deduction rule with name "drn" has been applied to the
+    % equation "eq" to yield the equations in "eqs".  If "reversible" is true,
+    % announces that these equations imply "eq".  At statistics levels greater
+    % than 1, records the application of "drn".
+    
+    % ENHANCE: Change code elsewhere to remove conclusions that are identities
+    % before assigning names.
+
+    applied_dr = proc (eq: equation, drn: name, reversible: bool, 
+	    	       eqs: eq_prop_list)
+	if showing_time() then show_time() end
+	n: int := eq_prop_list$size(eqs)
+        if current_stat_level > 1 then
+	   u: uses := fact_uses(drn, "(dr)")
+	   u.try.recent := u.try.recent + 1
+	   u.try.total := u.try.total + 1
+	   if n > 0 then
+	      u.apply.recent := u.apply.recent + 1
+	      u.apply.total := u.apply.total + 1
+	      end
+	   end
+	if ~showing_new_objects() cor n = 0 then return end
+	printer$text(pr, "\n~{Deduction rule ")
+	name$print(pr, drn)
+	printer$text(pr, " has been applied to ")
+	if eq.is_rr
+	   then printer$text(pr, "rewrite rule ")
+	   else printer$text(pr, "formula ")
+	   end
+	name$print(pr, eq.name)
+	if n = 1
+	   then printer$text(pr, " to yield formula ")
+	        lines: int := pr.total_lines
+		show_inline[equation](pr, eq_prop_list$first(eqs).prop, stab)
+		if reversible then
+		   % FIX: Break here if show_inline broke line
+		   printer$puts(pr, ",")
+		   if pr.total_lines > lines
+		      then printer$text(pr, "\nwhich implies ")
+		      else printer$text(pr, " which implies ")
+		      end
+		   name$print(pr, eq.name)
+		   printer$text(pr, ".")
+		   end
+		printer$text(pr, "~}\n")
+	   else printer$text(pr, " to yield the following formulas")
+		if reversible then
+		   printer$text(pr, ", which imply ")
+		   name$print(pr, eq.name)
+		   end
+		printer$text(pr, ".~}\n")
+		for eqp: eq_prop in eq_prop_list$elements(eqs) do
+		    show[equation](pr, eqp.prop, stab)
+		    end
+	   end
+	end applied_dr
+
+
+    % Announces that the multiple-hypothesis deduction rule with name "drn" has
+    % been applied to the equation "eq" to yield the deduction rules in "drs".
+    % At statistics levels greater than 1, records the application of "drn".
+    
+    % ENHANCE: Change code elsewhere to remove conclusions that are identities
+    % before assigning names.
+
+    applied_dr_mult = proc (eq: equation, drn: name, drs: dr_prop_list)
+	if showing_time() then show_time() end
+	n: int := dr_prop_list$size(drs)
+        if current_stat_level > 1 then
+	   u: uses := fact_uses(drn, "(dr)")
+	   u.try.recent := u.try.recent + 1
+	   u.try.total := u.try.total + 1
+	   if n > 0 then
+	      u.apply.recent := u.apply.recent + 1
+	      u.apply.total := u.apply.total + 1
+	      end
+	   end
+	if ~showing_new_objects() cor n = 0 then return end
+	printer$text(pr, "\n~{Deduction rule ")
+	name$print(pr, drn)
+	printer$text(pr, " has been applied to ")
+	if eq.is_rr
+	   then printer$text(pr, "rewrite rule ")
+	   else printer$text(pr, "formula ")
+	   end
+	name$print(pr, eq.name)
+	printer$text(pr, " to yield the following deduction rule")
+	if n > 1 then printer$puts(pr, "s") end
+	printer$text(pr, "~}\n")
+	for drp: dr_prop in dr_prop_list$elements(drs) do
+	    show[deduction_rule](pr, drp.prop, stab)
+	    end
+	end applied_dr_mult
+
+
+    % Announces that the free operator theory "ot" has been applied to the
+    % equation "eq" to yield the equations in "eqs".  At statistics levels
+    % greater than 1, records the application of "ot".
+    
+    % ENHANCE: When this can be invoked again (because LP recognizes the free
+    % theory), mention this action in lp.help.
+
+    applied_ot = proc (eq: equation, ot: op_theory, eqs: eq_prop_list)
+	if showing_time() then show_time() end
+	n: int := eq_prop_list$size(eqs)
+        if current_stat_level > 1 then
+	   u: uses := fact_uses(ot.name, "(ot)")
+	   u.try.recent := u.try.recent + 1
+	   u.try.total := u.try.total + 1
+	   if n > 0 then
+	      u.apply.recent := u.apply.recent + 1
+	      u.apply.total := u.apply.total + 1
+	      end
+	   end
+	if ~showing_new_objects() cor n = 0 then return end
+	printer$text(pr, "\n~{Operator theory ")
+	name$print(pr, ot.name)
+	printer$text(pr, " has been applied to ")
+	if eq.is_rr
+	   then printer$text(pr, "rewrite rule ")
+	   else printer$text(pr, "formula ")
+	   end
+	name$print(pr, eq.name)
+	if eq_prop_list$size(eqs) = 1
+	   then printer$text(pr, " to yield formula ")
+		show_inline[equation](pr, eq_prop_list$first(eqs).prop, stab)
+		printer$text(pr, ", which implies ")
+		name$print(pr, eq.name)
+		printer$text(pr, ".~}\n")
+	   else printer$text(pr, " to yield the following formulas, ")
+		printer$text(pr, "which imply ")
+		name$print(pr, eq.name)
+		printer$text(pr, ".~}\n")
+		for eqp: eq_prop in eq_prop_list$elements(eqs) do
+		    show[equation](pr, eqp.prop, stab)
+		    end
+	   end
+	end applied_ot
+
+
+    % Announces application of the rewrite rule named "n".  At statistics level
+    % 2 or higher, records the application of "n".
+
+    applied_rr = proc (n: name)
+	if showing_time() then show_time() end
+        if current_stat_level > 1 then
+	   u: uses := fact_uses(n, "(rr)")
+	   u.apply.recent := u.apply.recent + 1
+	   u.apply.total := u.apply.total + 1
+	   end
+	if ~showing_reduction_steps() then return end
+	printer$text(pr, "~{")
+	print_time()
+	printer$text(pr, "Applied rewrite rule ")
+	name$print(pr, n)
+	if ~current_shown then
+	   printer$text(pr, " to the term~2I~1A")
+	   term$print(pr, current_term, stab)
+	   current_shown := true
+	   end
+        printer$text(pr, "~}\n")
+	end applied_rr
+
+
+    % Announces the names of the nonsubsumed facts as having been asserted.
+    % Signals "none" if no facts were asserted.
+    
+    asserted = proc (facts: fact_arr, subsumed: bool_arr) signals (none)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	nf: int := 0
+	for b: bool in bool_arr$elements(subsumed) do
+	    if ~b then nf := nf + 1 end
+	    end
+	if nf = 0 then signal none end
+	printer$text(pr, "\n~{Added ")
+	printer$text(pr, plural_noun("fact", nf))
+	printer$text(pr, " named ")
+	count: int := 0
+	last: name
+	i: int := 0
+	for f: fact in fact_arr$elements(facts) do
+	    i := i + 1
+	    if subsumed[i] then continue end
+	    n: name := get_fact_name(f)
+	    if count = 0 then name$print(pr, n)
+	     elseif n.root ~= last.root then
+	       if count > 1 then
+		  printer$text(pr, ", ")
+		  if count > 2 then printer$text(pr, "..., ") end
+		  name$print(pr, last)
+		  end
+	       printer$text(pr, ", ")
+	       name$print(pr, n)
+	       count := 0
+	     end
+	    count := count + 1
+	    last := n
+	    end
+	if count > 1 then
+	   printer$text(pr, ", ")
+	   if count > 2 then printer$text(pr, "..., ") end
+	   name$print(pr, last)
+	   end
+	printer$text(pr, " to the system.~}\n")
+	end asserted
+
+    
+    % Announces that an automatic ordering is backing up because "bad_eq" could
+    % not be oriented.
+
+    backed_up = proc (bad_eq: equation)
+	if showing_time() then show_time() end
+	if ~showing_ordering() then return end
+	printer$text(pr, "\n~{Backtracking automatic ordering: formula ")
+	name$print(pr, bad_eq.name)
+	printer$text(pr, " could not be oriented.~}\n")
+	end backed_up
+
+
+    % Announces that an attempt was made to match some ac term with too many
+    % arguments.
+    
+    big_ac = proc (op: operator, n: int)
+	if showing_time() then show_time() end
+	printer$text(pr, "\n~{Aborting attempt to match a term consisting ")
+	printer$text(pr, "of the associative-commutative operator `")
+	operator$print(pr, op, stab)
+	printer$text(pr, "' applied to ")
+	printer$text(pr, int$unparse(n))
+	printer$text(pr, " subterms.~}\n")
+	end big_ac
+
+
+    % Announces that "eq" has been classified as a "big" equation.
+
+    big_eq = proc (eq: equation)
+	if showing_time() then show_time() end
+	if ~showing_tasks() then return end
+	printer$text(pr, "\n~{Orientation of formula ")
+	name$print(pr, eq.name)
+	printer$text(pr, " was postponed because of its size.~}\n")
+	end big_eq
+
+    
+    % Announces that LP is checking the conditions for "rr".
+
+    checking_conditions = proc (rr: rewrite_rule)
+	if showing_time() then show_time() end
+	if ~showing_reduction_attempts() then return end
+	printer$text(pr, "\n~{Checking conditions for rewrite rule ")
+	name$print(pr, rr.name)
+	printer$text(pr, ".~}\n")
+	end checking_conditions
+
+
+    % Announces that "op1" has been made greater than "op2" in the registry
+    % because "op2" had been declared at the bottom of the registry.
+    
+    committed_bottom = proc (op1, op2: operator)
+	if showing_time() then show_time() end
+	if ~showing_ordering() then return end
+	upm: unparse_mode := stab.unparse_mode
+	if upm = unqualified_mode then stab.unparse_mode := unambiguous_mode end
+	printer$text(pr, "\n~{Accepted registry suggestion:~2I~1A~{")
+	operator$print(pr, op1, stab)
+	printer$text(pr, " > ")
+	operator$print(pr, op2, stab)
+	printer$text(pr, " (bottom)~}~}\n")
+	stab.unparse_mode := upm
+	end committed_bottom
+    
+    
+    % Announces that "op1" has been made greater than "op2" in the registry
+    % because "op1" had been declared at the top of the registry.
+    
+    committed_top = proc (op1, op2: operator)
+	if showing_time() then show_time() end
+	if ~showing_ordering() then return end
+	upm: unparse_mode := stab.unparse_mode
+	if upm = unqualified_mode then stab.unparse_mode := unambiguous_mode end
+	printer$text(pr, "\n~{Accepted registry suggestion:~2I~1A~{")
+	operator$print(pr, op1, stab)
+	printer$text(pr, " (top) > ")
+	operator$print(pr, op2, stab)
+	printer$text(pr, "~}~}\n")
+	stab.unparse_mode := upm
+	end committed_top
+    
+    
+    % Announces that "dr" has been converted to "eqs".
+
+    converted_dr = proc (dr: deduction_rule, eqs: eq_prop_list)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	printer$text(pr, "\n~{Deduction rule ")
+	name$print(pr, dr.name)
+	if eq_prop_list$empty(eqs) then
+	   printer$text(pr, " was normalized to an identity.~}\n")
+	 elseif eq_prop_list$size(eqs) = 1 then
+	   printer$text(pr, " was normalized to formula ")
+	   show_inline[equation](pr, eq_prop_list$first(eqs).prop, stab)
+	   printer$text(pr, "~}\n")
+	 else printer$text(pr, "was normalized to the following formulas.~}\n")
+	      for eqp: eq_prop in eq_prop_list$elements(eqs) do
+		  show[equation](pr, eqp.prop, stab)
+		  end
+	 end
+	end converted_dr
+
+
+    % Announces a potentially infinite loop in evaluating conditions for
+    % rewriting.
+
+    conditions_might_loop = proc (t: term)
+	if showing_time() then show_time() end
+	printer$text(pr, "\n~{A conditional reduction of the term~2I~1A")
+	term$print(pr, t.unrenamed, stab)
+	printer$text(pr, "~I~1Ahas been stopped to avoid a potentially ")
+	printer$text(pr, "infinite loop in evaluating conditions.~}\n")
+	end conditions_might_loop
+
+
+    % At statistics level 2 or higher, increments the number of critical pairs
+    % computed using the rewrite rules named "name1" and "name2".
+
+    count_pair = proc(name1, name2: name)
+	if showing_time() then show_time() end
+	if current_stat_level < 1 then return end
+	u: uses := fact_uses(name1, "(rr)")
+	u.crit.recent := u.crit.recent + 1
+	u.crit.total := u.crit.total + 1
+	u := fact_uses(name2, "(rr)")
+	u.crit.recent := u.crit.recent + 1
+	u.crit.total := u.crit.total + 1
+	end count_pair
+
+
+    % If LP is not already in the "looking_for_pairs" or "computing_pairs"
+    % state, records and announces a change to the "looking_for_pairs" state.
+
+    critical_pairs = proc ()
+	tagcase state
+	   tag looking_for_pairs, computing_pairs:
+	   others: if showing_time() then show_time() end
+	           state_change("\nStarting to compute critical pairs.\n")
+	   end
+	state := trace_state$make_looking_for_pairs(nil)
+	end critical_pairs
+
+
+    % Displays usage statistics for facts named by "ns".  Resets all recent
+    % usage statistics to zero.
+    
+    % ENHANCE: Don't print attempts if statistics level is low.
+
+    display_usage = proc (io: iodev, ns: name_set)
+	use_arr = array[uses]
+	ua: use_arr := use_arr$[]
+	for n: name, u: uses in use_map$elements(usage) do
+	    u1: uses := uses$copy(u)
+	    u.apply.recent := 0
+	    u.crit.recent := 0
+	    u.try.recent := 0
+	    if ~name_set$contains_name(ns, n)
+		 cor (u.kind = "(rr)" cand ~ns.has_rrs)
+		 cor (u.kind = "(dr)" cand ~ns.has_drs)
+		 cor (u.kind = "(ot)" cand ~ns.has_ots)
+	       then continue end
+	    use_arr$addh(ua, u1)
+	    end
+	if use_arr$empty(ua) then return end
+	quicksort[uses](ua, 1, use_arr$size(ua), uses_lt)
+	iodev$putl(io, "")
+	if current_stat_level > 2 then iodev$puts(io, "  Attempts     ") end
+	iodev$putl(io, "Applications    Crit. Pairs")
+	if current_stat_level > 2 then iodev$puts(io, "Recent  Total  ") end
+	iodev$putl(io, "Recent  Total  Recent  Total  Fact Name/incarnation\n")
+	apply: use_count := use_count${recent: 0, total: 0}
+	crit:  use_count := use_count${recent: 0, total: 0}
+	try:   use_count := use_count${recent: 0, total: 0}
+	for u: uses in use_arr$elements(ua) do
+	    %used: bool := u.apply.total + u.crit.total + u.try.total ~= 0
+	    %if (nonzero cand ~used) cor (zero cand used) then continue end
+	    print_uses(io, u.apply, u.crit, u.try)
+	    iodev$puts(io, u.kind || " " || name$unparse(u.name))
+	    if u.name.incarnation > 1 then 
+	       iodev$puts(io, "/" || int$unparse(u.name.incarnation))
+	       end
+	    iodev$putl(io, "")
+	    add_uses(apply, u.apply)
+	    add_uses(crit, u.crit)
+	    add_uses(try, u.try)
+	    end
+	if current_stat_level > 2 then iodev$puts(io, " -----  -----  ") end
+	iodev$putl(io, " -----  -----   -----  -----")
+	print_uses(io, apply, crit, try)
+	iodev$putl(io, "Total")
+	end display_usage
+    
+    
+    % (Internal procedure) Used for sorting an array of "uses".
+    
+    uses_lt = proc (u1, u2: uses) returns (bool)
+	n1: name := u1.name
+	n2: name := u2.name
+	return(n1 < n2 cor (n1 = n2 cand n1.incarnation < n2.incarnation))
+	end uses_lt
+    
+    
+    % (Internal procedure) Adds "u2" to "u1".
+    
+    add_uses = proc (u1, u2: use_count)
+	u1.recent := u1.recent + u2.recent
+	u1.total := u1.total + u2.total
+	end add_uses
+    
+    
+    % (Internal procedure) Prints "u".
+
+    print_uses = proc (io: iodev, apply, crit, try: use_count)
+	if current_stat_level > 2 then
+	   iodev$puts(io, padl(int$unparse(try.recent), 6))
+	   iodev$puts(io, padl(int$unparse(try.total), 7))
+	   iodev$puts(io, "  ")
+	   end
+	iodev$puts(io, padl(int$unparse(apply.recent), 6))
+	iodev$puts(io, padl(int$unparse(apply.total), 7))
+	iodev$puts(io, padl(int$unparse(crit.recent), 8))
+	iodev$puts(io, padl(int$unparse(crit.total), 7))
+	iodev$puts(io, "  ")
+	end print_uses
+
+
+    % Announces that "eq" has been divided into the equations "e1" and "e2" by
+    % the introduction of a new operator.
+
+    divided_eq = proc (eq, e1, e2: equation)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	printer$text(pr, "\n~{Equation ")
+	name$print(pr, eq.name)
+	printer$text(pr, " has been divided into two equations:~}\n")
+	show[equation](pr, e1, stab)
+	show[equation](pr, e2, stab)
+	end divided_eq
+
+    
+    % Announces that an existential quantifier in "e1" has been fixed to
+    % obtain "e2".
+
+    fixed_eq = proc (e1, e2: equation, identity, immunized: bool)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	if identity cand ~showing_trivialities() then return end
+	printer$text(pr, "\n~{A prenex-existential quantifier in formula ")
+	name$print(pr, e1.name)
+	printer$text(pr, " has been eliminated to produce ")
+	if identity
+	   then printer$text(pr, "the identity")
+	   else printer$text(pr, "formula ")
+		name$print(pr, e2.name)
+		printer$text(pr, ",")
+	   end
+	printer$text(pr, "~2I~1A")
+	equation$print(pr, e2, stab)
+	if immunized then
+	   printer$text(pr, ",~I~1A")
+	   printer$text(pr, "which was immunized because further ")
+	   printer$text(pr, "reductions might result in an infinite ")
+	   printer$text(pr, "rewriting loop.")
+	   end
+	printer$text(pr, "~}\n")
+	end fixed_eq
+
+
+    % Announces that instantiations were found.
+
+    found_instantiations = proc (nm: name, fa: fo_arr)
+	max_size = 10   % max_indent - 2 (cf. axiom_system$display)
+	if current_level = 0 then return end
+	printer$text(pr,
+	             "\n~{Found the following instantiations that use LHS of ")
+	name$print(pr, nm)
+	printer$text(pr, ".~}\n")
+	for fo: formula in fo_arr$elements(fa) do
+	    printer$text(pr, "~{~ ~ ")
+	    name$print(pr, fo.name)
+	    pr.indent := int$min(fo.name.size, max_size) + 4
+	    printer$text(pr, ": ")
+	    equation$print(pr, fo, stab)
+	    printer$text(pr, "~}\n")
+	    end
+	end found_instantiations
+
+
+    % Announces that "n" axioms of type "axioms" with names ranging from "n1"
+    % to "n2" have been added to the system.
+    
+    hypothesized = proc (h: eq_arr)
+	if showing_time() then show_time() end
+	n: int := eq_arr$size(h)
+	if n = 0 then return end
+	printer$text(pr, "\n~{Added ")
+	if n = 1
+	   then printer$text(pr, "hypothesis ")
+	   else printer$text(pr, "hypotheses ")
+	   end
+	name$print(pr, h[1].name)
+	if n > 1 then
+	   printer$text(pr, ", ")
+	   if n > 2 then printer$text(pr, "..., ") end
+	   name$print(pr, h[n].name)
+	   end
+	printer$text(pr, " to the system.~}\n")
+	end hypothesized
+
+    
+    % Announces that "eq" could not be ordered because it was incompatible.
+
+    incompatible_eq = proc (eq: equation)
+	if showing_time() then show_time() end
+	if ~showing_ordering() then return end
+	printer$text(pr, "\n~{Unable to orient the incompatible equation ")
+	name$print(pr, eq.name)
+	printer$text(pr, ".  Its left side contains the free ")
+	print_vars(eq.left.fvars - eq.right.fvars)
+	printer$text(pr, "right side, and ")
+	printer$text(pr, "its right side contains the free ")
+	print_vars(eq.right.vars - eq.left.vars)
+	printer$text(pr, "left side.~}\n")
+	end incompatible_eq
+
+    
+    % (Internal procedure) Prints a comma-separated list of the variables in
+    % "vars" followed by ", which do not appear" or ", which does not appear".
+    
+    print_vars = proc (vars: var_set)
+	n: int := var_set$size(vars)
+	if n = 1
+	   then printer$text(pr, "variable ")
+	   else printer$text(pr, "variables ")
+	   end
+	printer$start_block(pr)
+	if n > 1 then printer$puts(pr, "{") end
+	printed: bool := false
+	for v: variable in var_set$elements(vars) do
+	    if printed then printer$text(pr, ", ") end
+	    variable$print(pr, v, stab)
+	    printed := true
+	    end
+	if n > 1 then printer$puts(pr, "}") end
+	printer$finish_block(pr)
+	if n > 1
+	   then printer$text(pr, ", which do not appear in its ")
+	   else printer$text(pr, ", which does not appear in its ")
+	   end
+	end print_vars
+
+
+    % Announces that "ir1" and "ir2" are inconsistent.
+    
+    inconsistent_ir = proc (ir1, ir2: induction_rule)
+	if showing_time() then show_time() end
+	printer$text(pr, "\n~{The induction rule ")
+	name$print(pr, ir1.name)
+	printer$text(pr, " is inconsistent with the induction rule ")
+	name$print(pr, ir2.name)
+	printer$text(pr, ", because the generators of the latter cannot ")
+	printer$text(pr, "be free.~}\n")
+	end inconsistent_ir
+
+
+    % Announces that "dr1" has been instantiated to "dr2" if "failed" is false,
+    % and that the instantiation failed if "failed" is true.  ENHANCE: Split up
+    % into several procedures.
+
+    instantiated_dr = proc (dr1, dr2: deduction_rule, failed, new: bool)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	if ~new cand ~showing_trivialities() then return end
+	printer$text(pr, "\n~{Deduction rule ")
+	name$print(pr, dr1.name)
+	if failed then
+	   printer$text(pr, " cannot be instantiated because of an improper ")
+	   printer$text(pr, "substitution for a quantified variable.")
+	 elseif ~new then
+	   printer$text(pr, " is unchanged.")
+	 else printer$text(pr, " has been instantiated to deduction rule ")
+	      show_inline[deduction_rule](pr, dr2, stab)
+	 end
+	printer$text(pr, "~}\n")
+	end instantiated_dr
+
+
+    % Announces that "e1" has been instantiated to "e2".
+
+    instantiated_eq = proc (e1, e2: equation, identity, new, immunized: bool)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	if (identity cor ~new) cand ~showing_trivialities() then return end
+	printer$text(pr, "\n~{Formula ")
+	name$print(pr, e1.name)
+	if new
+	   then printer$text(pr, " has been instantiated to ")
+		if identity
+		   then printer$text(pr, "the identity")
+		   else printer$text(pr, "formula ")
+			name$print(pr, e2.name)
+			printer$text(pr, ",")
+		   end
+		printer$text(pr, "~2I~1A")
+		equation$print(pr, e2, stab)
+		if immunized then
+		   printer$text(pr, ",~I~1A")
+		   printer$text(pr, "which was immunized because further ")
+		   printer$text(pr, "reductions might result in an infinite ")
+		   printer$text(pr, "rewriting loop.")
+		   end
+	   else printer$text(pr, " is unchanged.")
+	   end
+	printer$text(pr, "~}\n")
+	end instantiated_eq
+
+
+    
+    % Announces the start of the task that internormalizes the rewriting
+    % system.
+    
+    internormalizing = proc (sys: system)
+	if showing_time() then show_time() end
+	if trace_state$is_internormalizing(state) then return end
+	state := trace_state$make_internormalizing(nil)
+	state_change("\nStarting to internormalize rewrite rules.\n")
+	end internormalizing
+    
+    
+    % Reports that a critical pair computation has been interrupted because a
+    % theorem has been proved.
+    
+    interrupting_cps = proc ()
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	printer$text(pr, "\nCritical pair computation abandoned because a ")
+	printer$text(pr, "theorem has been proved.\n")
+	end interrupting_cps
+
+    
+    % (Internal procedure) Reports that action "s" has been taken for "e"
+    % equations, "rr" rewrite rules, and "dr" deduction rules.  Signals "none"
+    % if "e+rr+dr" is zero.
+
+    item_counts = proc (m1: string, e, rr, dr: int, m2: string)
+		    signals (none)
+	text = printer$text
+	if e + rr + dr = 0 then signal none end
+	printer$text(pr, "\n~{")
+	text(pr, m1)
+	text(pr, " ")
+	if e > 0 then text(pr, plural_noun("formula", e)) end
+	if rr > 0 then
+	   if e > 0 then
+	      if dr > 0 then text(pr, ", ") else text(pr, " and ") end
+	      end
+	   text(pr, plural_noun("rewrite rule", rr))
+	   end
+	if dr > 0 then
+	   if e + rr > 0 then
+	      if e > 0 cand rr > 0 then text(pr, ",") end
+	      text(pr, " and ")
+	      end
+	   text(pr, plural_noun("deduction rule", dr))
+	   end
+	text(pr, m2)
+	printer$text(pr, "~}")
+	end item_counts
+
+
+    % Announces that LP has reduced the "current_term" to "t" by applying a
+    % rewrite rule to subterm "p".
+
+    matched_term = proc (t: term, p: path)
+	if showing_time() then show_time() end
+	if ~showing_reduction_steps() then return end
+	printer$text(pr, "~{")
+	print_time()
+	printer$text(pr, "Reduced ")
+	print_path(p)
+	printer$text(pr, " to produce the term~2I~1A")
+	t := t.unrenamed
+	term$print(pr, t, stab)
+	printer$text(pr, "~}\n")
+	current_term := t
+	current_shown := true
+	end matched_term
+
+
+    % Announces that LP is attempting to match and reduce subterm "p" of the
+    % last shown term.
+
+    matching = proc (p: path)
+	if showing_time() then show_time() end
+	if ~showing_reduction_attempts() then return end
+	printer$text(pr, "~{")
+	print_time()
+	printer$text(pr, "Attempting to match ")
+	print_path(p)
+	printer$text(pr, "~}\n")
+	end matching
+
+
+    % Announces a potentially infinite rewriting loop.
+
+    might_loop = proc (t1, t2: term)
+	if showing_time() then show_time() end
+	printer$text(pr, "\n~{Normalization of the term~2I~1A")
+	term$print(pr, t1, stab)
+	printer$text(pr, "~I~1Ahas been stopped to avoid a potentially ")
+	printer$text(pr, "infinite rewriting loop.  It has been reduced to")
+	printer$text(pr, "~2I~1A")
+	unpterm$print_with_known_sort(pr, t2, stab)
+	printer$text(pr, "~}\n")
+	end might_loop
+
+
+    % Reports that new items have been added to the system.
+    % ENHANCE: report names of items also.  Other kinds of items?
+
+    new_items = proc (s: system)
+	if showing_time() then show_time() end
+	e, r, d: int := system$size(s)
+	item_counts("Added", e - neqs, r - nrrs, d - ndrs, " to the system.")
+	   except when none:
+		       printer$text(pr, "\nAdded nothing to the system.")
+		  end
+	if r - nrrs > 0 then
+	   printer$text(pr, "  The rewriting system is ")
+	   if ~s.terminates then printer$text(pr, "NOT ") end
+	   printer$text(pr, "guaranteed to terminate.")
+	   end
+	printer$newline(pr)
+	remember_size(s)
+	end new_items
+
+
+    % Reports that "ot.op" has been given a new polynomial interpretation.
+    
+    new_polys = proc (ot: op_theory)
+	if showing_time() then show_time() end
+	printer$text(pr, "\n~{The operator `")
+	operator$print(pr, ot.op, stab)
+	printer$text(pr, "' has been given a new polynomial ")
+	printer$text(pr, "interpretation consistent with its being ")
+	printer$text(pr, supply_article(ot.theory_name))
+	printer$text(pr, " operator.~}\n")
+	end new_polys
+    
+
+    % Announces that "dr1" has been normalized to "dr2".
+    
+    normalized_dr = proc (dr1, dr2: deduction_rule, immunized: bool)
+	if showing_time() then show_time() end
+	if ~showing_reduced_objects() then return end
+	changed_axiom[deduction_rule]
+	    (dr1, dr2, "Deduction rule", "was normalized to", immunized)
+	end normalized_dr
+    
+
+    % At trace levels 2 or higher, announces that "eq1" has been normalized to
+    % "eq2".  Also announces if "eq2" has been immunized because normalization
+    % was not guaranteed to terminate.
+
+    normalized_eq = proc (eq1, eq2: equation, immunized: bool)
+	if showing_time() then show_time() end
+	if ~showing_reduced_objects() then return end
+	label: string := "Formula"
+	if eq1.is_rr then label := "Rewrite rule" end
+	changed_axiom[equation](eq1, eq2, label, "was normalized to",
+				immunized)
+	end normalized_eq
+
+    
+    % Announces that "rr" has been (partially) normalized to yield "f".  Also
+    % announces if "f" is no longer a rewrite rule or if "rr" has been
+    % immunized because normalization was not guaranteed to terminate.
+
+    normalized_rr = proc (rr: rewrite_rule, f: formula, immunized: bool)
+	msg: string
+	if showing_time() then show_time() end
+	if f.is_rr
+	   then if ~showing_reduced_objects() then return end
+		msg := "was normalized to yield the rewrite rule"
+	   else if ~showing_ordering() cand ~showing_reduced_objects() then
+		   return
+		   end
+		msg := "was partially normalized and then unordered " ||
+		       "to yield the formula"
+	   end
+	changed_axiom[rewrite_rule](rr, f, "Rewrite rule", msg, immunized)
+	end normalized_rr
+    
+    
+    % Announces that "eq" has been ordered into the rewrite rule "rr".
+
+    oriented_eq = proc (eq: equation, rr: rewrite_rule)
+	if showing_time() then show_time() end
+	if ~showing_ordering() then return end
+	printer$text(pr, "\n~{Formula ")
+	name$print(pr, eq.name)
+	printer$text(pr, " was ")
+	if rr.is_conditional
+	   then printer$text(pr, "oriented into a conditional ")
+	   else if ~term$same_object(eq.left, rr.left) then
+		   printer$text(pr, "reversed and ")
+		   end
+		printer$text(pr, "oriented into a ")
+	   end
+	printer$text(pr, "rewrite rule.~}\n")
+	end oriented_eq
+
+
+    % Announces that "eq" is being oriented.
+
+    orienting_eq = proc (eq: equation, reg: bool)
+	if showing_time() then show_time() end
+	if ~showing_tasks() then return end
+	printer$text(pr, "\n~{Attempting to orient formula ")
+	name$print(pr, eq.name)
+	if reg
+	   then printer$text(pr, " by extending the registry.~}\n")
+	   else printer$text(pr, " with the current registry.~}\n")
+	   end
+	end orienting_eq
+
+
+    % Announces that LP is starting to orient equations.
+    
+    orienting_eqs = proc (sys: system)
+	if showing_time() then show_time() end
+	if trace_state$is_orienting(state) then return end
+	state := trace_state$make_orienting(nil)
+	state_change("\nStarting to orient formulas.\n")
+	end orienting_eqs
+    
+
+    % Prints "eq".  If the user has seen this equation or its reverse before,
+    % tells how many times.
+    
+    % ENHANCE: Should "seen_eqs" be reset more frequently?
+
+    present_equation = proc (eq: equation)
+	% ENHANCE: Override "quit" to "more".
+	if showing_time() then show_time() end
+	eq1: equation := eq
+	n: int := eq_int_map$image(seen_eqs, eq)
+	   except when missing:
+		       begin
+			   eq1 := equation$reverse(eq)
+			   n := eq_int_map$image(seen_eqs, eq1)
+			   eq := eq1
+			   end
+			  except when missing, impossible:
+				      eq_int_map$insert(seen_eqs, eq, 0)
+				      n := 0
+				 end
+		  end
+	eq_int_map$change(seen_eqs, eq1, n+1)
+	printer$text(pr, "\n~{Consider formula ")
+	show_inline[equation](pr, eq, stab)
+	if n > 0 then
+	   printer$text(pr, ", for the " || int_ordinal(n+1) || " time.")
+	   end
+	printer$text(pr, "~}\n")
+	end present_equation
+
+
+    % Announces that LP has begun to process new axioms.
+    
+    processing_new_drs = proc (sys: system)
+	if trace_state$is_processing_drs(state) then return end
+	if showing_time() then show_time() end
+	state := trace_state$make_processing_drs(nil)
+	state_change("\nStarting to process new deduction rules.\n")
+	end processing_new_drs
+    
+    processing_new_eqs = proc (sys: system)
+	if trace_state$is_processing_eqs(state) then return end
+	if showing_time() then show_time() end
+	state := trace_state$make_processing_eqs(nil)
+	state_change("\nStarting to process new formulas.\n")
+	end processing_new_eqs
+
+    processing_new_rrs = proc (sys: system)
+	if trace_state$is_processing_rrs(state) then return end
+	if showing_time() then show_time() end
+	state := trace_state$make_processing_rrs(nil)
+	state_change("\nStarting to process new rewrite rules.\n")
+	end processing_new_rrs
+    
+
+    % Announces that the current conjecture was reduced to "f".
+    
+    reduced_conjecture = proc (f: formula)
+	if showing_time() then show_time() end
+	if ~showing_reduced_objects() then return end
+	printer$text(pr, "\n~{The current conjecture was reduced to ~2I")
+	formula$print(pr, f, stab)
+	printer$text(pr, "~}\n")
+	end reduced_conjecture
+
+    
+    % Announces that "dr1" has been reduced to "dr2".
+    
+    reduced_dr = proc (dr1, dr2: deduction_rule)
+	if showing_time() then show_time() end
+	if ~showing_reduced_objects() then return end
+	changed_axiom[deduction_rule]
+	    (dr1, dr2, "Deduction rule", "was reduced to", false)
+	end reduced_dr
+
+
+    % Announces that "eq1" has been reduced to "eq2".
+    
+    reduced_eq = proc (eq1, eq2: equation)
+	if showing_time() then show_time() end
+	if ~showing_reduced_objects() then return end
+	changed_axiom[equation](eq1, eq2, "Formula", "was reduced to", false)
+	end reduced_eq
+
+    
+    % Announces that "rr" has been reduced to yield "rr1".  Also announces if
+    % "rr1" is no longer a rewrite rule.
+
+    reduced_rr = proc (rr1, rr2: rewrite_rule)
+	msg: string
+	if showing_time() then show_time() end
+	if rr2.is_rr
+	   then if ~showing_reduced_objects() then return end
+		msg := "was reduced to yield the rewrite rule"
+	   else if ~showing_ordering() cand ~showing_reduced_objects() then
+		   return
+		   end
+		msg := "was reduced and unoriented to yield the formula"
+	   end
+	changed_axiom[rewrite_rule](rr1, rr2, "Rewrite rule", msg, false)
+	end reduced_rr
+    
+    
+    % Announces that LP has begun to reduce axioms by new rewrite rules.
+
+    reducing_system = proc (sys: system)
+	if trace_state$is_reducing_sys(state) then return end
+	if showing_time() then show_time() end
+	state := trace_state$make_reducing_sys(nil)
+	state_change("\nApplying new rewrite rules to reduce " ||
+		     "formulas and deduction rules.\n")
+	end reducing_system
+    
+    
+    % Announces that axioms have been reflattened.
+
+    reflattened_dr = proc (dr1, dr2: deduction_rule)
+	if showing_time() then show_time() end
+	if ~showing_reduced_objects() then return end
+	changed_axiom[deduction_rule](dr1, dr2, "Deduction rule",
+				      "was reflattened to yield", false)
+	end reflattened_dr
+
+    reflattened_eq = proc (e1, e2: equation, identity: bool)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	if identity then
+	   printer$text(pr, "\n~{Formula ")
+	   name$print(pr, e1.name)
+	   printer$text(pr, " has been flattened to an identity.~}\n")
+	   return
+	   end
+	if ~showing_reduced_objects() then return end
+	changed_axiom[equation]
+	    (e1, e2, "Formula", "was reflattened to yield", false)
+	end reflattened_eq
+
+    reflattened_rr = proc (rr1, rr2: rewrite_rule, identity: bool)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	if identity then
+	   printer$text(pr, "\n~{Rewrite rule ")
+	   name$print(pr, rr1.name)
+	   printer$text(pr, " has been flattened to an identity.~}\n")
+	   return
+	   end
+	if ~showing_reduced_objects() then return end
+	changed_axiom[rewrite_rule]
+	    (rr1, rr2, "Rewrite rule", "was reflattened to yield", false)
+	end reflattened_rr
+
+
+    % Remembers the current size of the system.
+
+    remember_size = proc (s: system)
+	neqs, nrrs, ndrs := system$size(s)
+	end remember_size
+
+
+    % Announces deletion of a duplicate deduction rule from the system.
+    
+    removed_dr = proc (dr: deduction_rule)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	printer$text(pr, "\n~{Deleted duplicate deduction rule ")
+	name$print(pr, dr.name)
+	printer$text(pr, ".~}\n")
+	end removed_dr
+
+
+    % Announces deletion of an identity from the system.
+    
+    removed_identity = proc (eq: equation)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	printer$text(pr, "\n~{Deleted ")
+	if eq.is_rr
+	   then printer$text(pr, "rewrite rule ")
+	   else printer$text(pr, "formula ")
+	   end
+	name$print(pr, eq.name)
+	printer$text(pr, ", which reduced to `true'.~}\n")
+	end removed_identity
+
+
+    % Announces the conversion of a rewrite rule into an equation.
+    
+    rr2eq = proc (rr: rewrite_rule)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	printer$text(pr, "\n~{Converted rewrite rule ")
+	name$print(pr, rr.name)
+	printer$text(pr, " into a formula.~}\n")
+	end rr2eq
+    
+    
+    % Announces that LP is attempting to normalize or reduce a term "t".
+
+    start_normalizing = proc (t: term)
+	start_normalize_or_reduce(t, "normalize")
+	end start_normalizing
+    
+    start_reducing = proc (t: term)
+	start_normalize_or_reduce(t, "reduce")
+	end start_reducing
+
+    start_normalize_or_reduce = proc (t: term, s: string)
+	if showing_time() then show_time() end
+	if ~showing_reduction_steps() then return end
+	current_term := t
+	current_shown := false
+	if ~showing_reduction_attempts() then return end
+	printer$text(pr, "\n~{")
+	print_time()
+	printer$text(pr, "Starting to " || s || " the term~2I~1A")
+	term$print(pr, t, stab)
+	printer$text(pr, "~}\n")
+	current_shown := true
+	end start_normalize_or_reduce
+
+
+    % Announces that LP has finished normalizing or has failed to reduce a
+    % term.
+
+    stop_normalizing = proc ()
+	stop_normalize_or_reduce("End of normalization.")
+	end stop_normalizing
+    
+    stop_reducing = proc ()
+	stop_normalize_or_reduce("No reduction possible.")
+	end stop_reducing
+    
+    stop_normalize_or_reduce = proc (s: string)
+	if showing_time() then show_time() end
+	if ~showing_reduction_steps() then return end
+	if ~showing_reduction_attempts() cand ~current_shown then return end
+	printer$text(pr, "~{")
+	print_time()
+	printer$text(pr, s)
+	printer$text(pr, "~}\n")
+	end stop_normalize_or_reduce
+
+    
+    % Announces that one induction rule subsumes another.
+    
+    subsumes_ir = proc (ir1, ir2: induction_rule)
+	if showing_time() then show_time() end
+	printer$text(pr, "\n~{The induction rule ")
+	name$print(pr, ir1.name)
+	printer$text(pr, " subsumes the induction rule ")
+	name$print(pr, ir2.name)
+	printer$text(pr, ".~}\n")
+	end subsumes_ir
+    
+
+    % Announces that one operator theory subsumes another.
+    
+    subsumes_ot = proc (ot1, ot2: op_theory)
+	if showing_time() then show_time() end
+	printer$text(pr, "\n~{The operator assertion ")
+	name$print(pr, ot1.name)
+	printer$text(pr, " subsumes the operator assertion ")
+	name$print(pr, ot2.name)
+	printer$text(pr, ".~}\n")
+	end subsumes_ot
+    
+
+    % Announces the computation of a critical pair equation.
+    
+    % ENHANCE: Revise this.
+
+    superposition = proc (rr1, rr2: rewrite_rule, cp, ncp: equation,
+			  identity, immunized: bool)
+	max_size = 10   % max_indent - 2 (cf. axiom_system$display)
+	if current_level = 0 then return end
+	if showing_time() then show_time() end
+	if identity cand ~showing_trivialities() then return end
+	if ~trace_state$is_computing_pairs(state) then
+	   printer$text(pr, "\n~{The following equations are critical pairs ")
+	   printer$text(pr, "between rewrite rules ")
+	   name$print(pr, rr1.name)
+	   printer$text(pr, " and ")
+	   name$print(pr, rr2.name)
+	   printer$text(pr, ".~}\n")
+	   state := trace_state$make_computing_pairs(nil)
+	   end
+	% ENHANCE: Other stuff may have been printed since previous message at
+	% high trace levels (at least 5).
+	printer$text(pr, "~{~ ~ ")
+	if identity
+	   then printer$text(pr, "Identity: ")
+		pr.indent := 12
+	   else name$print(pr, ncp.name)
+		pr.indent := int$min(ncp.name.size, max_size) + 4
+		printer$text(pr, ": ")
+	   end
+	equation$print(pr, ncp, stab)
+	if current_level > 3 cand ~equation$same_object(cp, ncp) then
+	   printer$text(pr, ", ~{which is the normal form of ~}")
+	   equation$print(pr, cp, stab)
+	   end
+	printer$text(pr, "~}\n")
+	end superposition
+
+
+    % Announces how many equations, rewrite rules, and deduction rules are
+    % currently in "s" if there has been a change since the last call to
+    % "sys_size" or to "remember_size".
+
+    sys_size = proc (s: system, n: int)
+	if showing_time() then show_time() end
+	if ~showing_new_objects() then return end
+	if n > 1 cand ~showing_ordering() then return end
+	neqs1, nrrs1, ndrs1: int := system$size(s)
+	if neqs1 = neqs cand nrrs1 = nrrs cand ndrs1 = ndrs then return end
+	neqs := neqs1
+	nrrs := nrrs1
+	ndrs := ndrs1
+	item_counts("The system now contains", neqs, nrrs, ndrs, ".")
+	   except when none:
+		       printer$text(pr, "\nThe system contains no formulas, ")
+		       printer$text(pr, "rewrite rules, or deduction rules.")
+		  end
+	if nrrs > 0 then
+	   printer$text(pr, "  The rewriting system is ")
+	   if ~s.terminates then printer$text(pr, "NOT ") end
+	   printer$text(pr, "guaranteed to terminate.")
+	   end
+        printer$newline(pr)
+	end sys_size
+
+
+    % Announces that LP is trying to apply the rewrite rule named "n".  At
+    % statistics level 3 or higher, records an attempted use of "n".
+
+    trying_rr = proc (n: name)
+	if showing_time() then show_time() end
+	if current_stat_level > 2 then
+	   u: uses := fact_uses(n, "(rr)")
+	   u.try.recent := u.try.recent + 1
+	   u.try.total := u.try.total + 1
+	   end
+	if ~showing_reduction_attempts() then return end
+	printer$text(pr, "~{")
+	print_time()
+	printer$text(pr, "Trying rewrite rule ")
+	name$print(pr, n)
+	printer$text(pr, ".~}\n")
+	end trying_rr
+
+
+    % Announces that LP was unable to order "eq".
+    
+    unoriented_eq = proc (eq: equation)
+	if showing_time() then show_time() end
+	if ~showing_tasks() then return end
+	printer$text(pr, "\n~{Unable to orient formula ")
+	name$print(pr, eq.name)
+	printer$text(pr, ".~}\n")
+	end unoriented_eq
+    
+
+    % Announces a reduction of "a1" to "a2".
+    
+    changed_axiom = proc [t: type] (a1, a2: t, msg1, msg2: string,
+				    immunized: bool)
+		where t in display_type
+	printer$text(pr, "\n~{")
+	printer$text(pr, msg1)
+	printer$filled_blanks(pr, 1)
+	name$print(pr, a1.name)
+	printer$filled_blanks(pr, 1)
+	printer$text(pr, msg2)
+	pr.indent := 2
+	printer$aligned_blanks(pr, 1)
+	t$print(pr, a2, stab)
+	if immunized then
+	   printer$text(pr, ",~I~1A")
+	   printer$text(pr, "which was immunized because further reductions ")
+	   printer$text(pr, "might result in an infinite rewriting loop.")
+	   end
+	printer$text(pr, "~}\n")
+	end changed_axiom
+
+
+    % (Internal procedure)  Returns the usage count for the fact of kind "t"
+    % named "n".  Creates a zero count for "n" if no count already
+    % exists.
+
+    fact_uses = proc (n: name, t: string) returns (uses)
+	return(use_map$image(usage, n, name$hash_val, same_incarnation))
+	   except when missing: end
+	u: uses := uses${apply: use_count${total: 0, recent: 0},
+			 crit:  use_count${total: 0, recent: 0},
+			 try:   use_count${total: 0, recent: 0},
+			 kind: t,
+			 name: n}
+	use_map$insert(usage, n, u, name$hash_val, same_incarnation)
+	return(u)
+	end fact_uses
+    
+    
+    % (Internal procedure) Returns "true" if "n1" and "n2" are the same
+    % incarnation of the same name.
+    
+    same_incarnation = proc (n1, n2: name) returns (bool)
+	return(n1 = n2 cand n1.incarnation = n2.incarnation)
+	end same_incarnation
+
+
+    % (Internal procedure)  Prints the path "p".
+
+    print_path = proc (p: path)
+	if path$size(p) = 0
+	   then printer$text(pr, "the entire term")
+	   else printer$text(pr, "~{subterm ")
+		pr.indent := 0
+		printed: bool := false
+		for i: int in path$elements(p) do
+		    if printed then printer$text(pr, ".~F") end
+		    if i < 0 then i := i + 3 end
+		    printer$puts(pr, int$unparse(i))
+		    printed := true
+		    end
+		printer$text(pr, "~}")
+	   end
+	end print_path
+
+
+    % (Internal procedure) Prints a string representing the current time and
+    % sets the indent two spaces to the right.
+
+    print_time = proc ()
+	if ~showing_action_time() then return end
+	printer$puts(pr, date$unparse_time(now()))
+	printer$text(pr, "  ~J")
+	end print_time
+
+
+    % (Internal procedure)
+    
+    show_time = proc ()
+	own delta: time := time$create(0, 0, 0, 10, 0, 0)
+	last_time: time := current_time
+	current_time := run_time()
+	if current_time - last_time > delta then
+	    printer$text(pr, "\n~{Elapsed running time: ")
+	    printer$text(pr, time$format(current_time, 0))
+	    printer$text(pr, "~}\n")
+	    end except when negative_time: end
+	end show_time
+    
+    
+    % (Internal procedure)
+    
+    state_change = proc (s: string)
+	if ~showing_tasks() then return end
+	printer$text(pr, s)
+	end state_change
+
+
+    % Returns a copy of the tracer "t".
+
+    copy = proc (t: cvt) returns (cvt)
+	return(rep$copy(t))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    % Displays the equations in "eqs".
+
+    show_eqs = proc (eqs: eq_arr)
+	printer$text(pr, "~{~ ~ ~J")
+	for eq: equation in eq_arr$elements(eqs) do
+	    printer$text(pr, "~{~5I")
+	    name$print(pr, eq.name)
+	    printer$text(pr, ": ")
+	    equation$print(pr, eq, stab)
+	    printer$text(pr, "~}\n")
+	    end
+	printer$text(pr, "~}")
+	end show_eqs
+
+
+    % Displays the rewrite rules in "rules".
+
+    show_rules = proc (rules: rr_arr)
+	show_eqs(rules)
+	end show_rules
+
+
+    end tracer
+
+
+% Prints "x.name" followed by "x" and a newline using the formats
+%     "~{~ ~ ~Jx.name~I5: x~}\n"       if x.name is long
+%     "~{~ ~ ~Jx.name~I5:~ x~}\n"      if x.name is short
+
+
+show = proc [t: type] (pr: printer, x: t, stab: symtab)
+	    where t in display_type
+    threshhold = 12
+    printer$text(pr, "~{~ ~ ~J")
+    name$print(pr, x.name)
+    printer$puts(pr, ":")
+    if x.name.size < threshhold
+       then printer$puts(pr, " ")
+       else printer$text(pr, "~5I~1F")
+       end
+    t$print(pr, x, stab)
+    printer$text(pr, "~}\n")
+    end show
+
+
+% Prints "x.name" followed by "x" using the format "x.name~2I, x~I".
+
+show_inline = proc [t: type] (pr: printer, x: t, stab: symtab)
+	    where t in display_type
+    name$print(pr, x.name)
+    printer$text(pr, "~2I, ")
+    t$print(pr, x, stab)
+    pr.indent := 0
+    end show_inline
+

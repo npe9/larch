@@ -1,0 +1,164 @@
+#extend
+
+% Terms for the satisfier do not contain variables, but they may contain
+% unknown constants, which are interpreted as 0-ary operators.
+
+% A term is boolean if its top-level operator has range bool.  A term is bool
+% atomic if it is boolean and its top-level operator is not one of boolean
+% connectives /\, \/, =>, <=>, ~, =, or ~=.
+
+% A literal is either an atomic term or its negation.
+
+% A term also can contain rational numbers (known as constants).
+
+
+% Returns true iff "t" is an unknown constant.
+
+term_is_unknown = proc (t: term) returns (bool)
+    return(t.root.arity = 0 cand ~term_is_num(t) cand ~is_logical_constant(t))
+       except when wrong_tag: return(false) end
+    end term_is_unknown
+
+
+% Returns true iff "t" is a rational constant.
+
+term_is_num = proc (t: term) returns (bool)
+    return(operator$is_numeral(t.root))
+       except when wrong_tag: return(false) end
+    end term_is_num
+
+
+% Returns a term representing the rational constant "num".
+
+rat2term = proc (nt: numeric_theory, num: rat) returns (term) 
+		  signals (impossible)
+    op: operator := operator$make_numeral(num, nt)
+    	resignal impossible
+    return(term$make_funct_without_checking(op, term_seq$[]))
+    end rat2term
+
+
+% Returns the rational number represented by "t".  Signals "not_number" if
+% "t" is not a rational constant.
+
+term2rat = proc (t: term) returns (rat) signals (not_number)
+    return(t.root.numeral) 
+       except when none, wrong_tag: signal not_number end
+    end term2rat
+
+
+% Returns true iff "t" is an R-valued term with root "*" or "/".
+
+term_is_multiplicative = proc (nt: numeric_theory, t: term) returns (bool)
+    if t.sort ~= nt.sort then return(false) end
+    op: operator := t.root
+    if numeric_theory$is_real(nt) 
+       then return(op = nt.mul cor op = nt.div)
+       else return(op = nt.mul)
+       end
+    end term_is_multiplicative
+
+
+% Returns false if top level operator is either +, or -,
+% or * and one of args is just a number,
+% or / and second arg is just a number,
+% or is not of sort R
+    
+term_is_num_atomic = proc (nt: numeric_theory, t: term) returns (bool)
+    own one: rat := rat$one()
+    if t.sort ~= nt.sort then return(false) end
+    op: operator := t.root
+    if op = nt.add then return(false) end
+    if op = nt.sub then return(false) end except when none: end
+    if op = nt.minus then return(false) end except when none: end
+    args: term_seq := t.args
+    if op = nt.mul then
+       if term_is_num(args[1]) cor term_is_num(args[2]) then return(false) end
+       end
+    if op = nt.div then
+       if term_is_num(args[2]) then return(false) end
+       if term_is_num(args[1]) then
+	  if term2rat(args[1]) ~= one then return(false) end
+	  end
+       end except when none: end
+    return(true)
+    end term_is_num_atomic
+
+
+term_is_num_atomic1 = proc (tsys: theory_system, t: term) returns (bool)
+    nt: numeric_theory := tsys[t.sort]
+       except when missing: return(false) end
+    return(term_is_num_atomic(nt, t))
+    end term_is_num_atomic1
+
+
+term_is_num_compound = proc (nt: numeric_theory, t: term) returns (bool)
+    return(t.sort = nt.sort cand ~term_is_num_atomic(nt, t))
+    end term_is_num_compound
+
+
+% Returns a term equivalent to "t" modulo TheoryR, with all numeric subterms
+% involving constants having been evaluated, with all multiplicative subterms
+% having arity 2 (e.g., with "3 * x * 5 * y" replaced by "15 * (x * y)"), and
+% with all double negations eliminated.
+
+term_evaluate = proc (tsys: theory_system, t: term) returns (term) 
+		  signals (overflow)
+    op: operator := t.root
+    op_is_known: bool := false
+    op_is_ac: bool := false
+    sort_is_numeric: bool := false
+    nt: numeric_theory
+    begin 
+	nt               := tsys[t.sort]
+	sort_is_numeric  := true
+	op_is_ac         := op = nt.add cor op = nt.mul
+	op_is_known      := op_is_ac cor op = nt.sub 
+	op_is_known      := op_is_known cor op = nt.minus
+	op_is_known      := op_is_known cor op = nt.div
+	end except when missing, none: end
+    args: term_arr := term_arr$[]
+    all_args_are_constants: bool := true
+    some_args_are_constants: bool := false
+    r: rat := rat$zero()
+    first: bool := true
+    for t1: term in term_seq$elements(t.args) do
+	t1 := term_evaluate(tsys, t1)
+	t1_is_constant: bool := false
+	if sort_is_numeric then
+	   n: rat := term2rat(t1)
+	   t1_is_constant := true
+	   some_args_are_constants := true
+	   if op = nt.minus then 
+	      r := -n
+	      break
+	      end except when none: end
+   	   if first then 
+	      r := n
+	      first := false
+	    elseif op = nt.add then r := r + n
+	    elseif op = nt.mul then r := r * n 
+	    elseif op = nt.sub then r := r - n 
+	    elseif op = nt.div then r := r / n 
+	    end except when none: end
+	   end except when not_number: all_args_are_constants := false end
+	if ~op_is_ac cor ~t1_is_constant then term_arr$addh(args, t1) end
+	end resignal overflow
+    if all_args_are_constants cand op_is_known then return(rat2term(nt, r)) end
+    if sort_is_numeric cand some_args_are_constants then
+       if op = nt.add then term_arr$addl(args, rat2term(nt, r))
+	elseif op = nt.mul then
+	  if term_arr$size(args) < 2
+	     then term_arr$addl(args, rat2term(nt, r)) 
+	     else t1: term :=
+		      term$make_funct_without_checking(op, term_seq$a2s(args))
+		  args := term_arr$[rat2term(nt, r), t1]
+	     end
+	end
+       end
+    if op = op_not() then 
+       t1: term := args[1]
+       if t1.root = op_not() then return(t1.args[1]) end
+       end
+    return(term$make_funct_without_checking(op, term_seq$a2s(args)))
+    end term_evaluate

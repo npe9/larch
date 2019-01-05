@@ -1,0 +1,17 @@
+\doc{Proofs by contradiction}
+\ref{proof-by-contradiction}
+\ref{contradiction}
+
+Proofs by contradiction provide an indirect method of proof.  The command
+\fq{prove F by contradiction} directs LP to prove a formula \f{F} by deriving
+an \llink{inconsistency}{inconsistency} from LP's logical system supplemented
+by the hypothesis \f{~F'}, where \f{F'} is the result of substituting new
+\llink{constant}{constants} for the free variables in \f{F}.  (This hypothesis
+is logically equivalent to the negation of \f{F} because introducing new
+constants is equivalent to replacing the implicit universal quantifiers by
+existential quantifiers.)  The name of the hypothesis has the form
+\s{simpleId}\fq{ContraHyp.}\s{number}, where \s{simpleId} is the current value
+of the \setlink{name-prefix} setting.
+\p
+The command \fq{resume by contradiction} directs LP to resume the proof of the
+current conjecture by contradiction.

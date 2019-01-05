@@ -1,0 +1,304 @@
+#extend
+
+% A "command_table" is an abstraction for obtaining multiple choice input.  It
+% associates objects of type "choice" with strings entered by the user.
+% Objects may be identified by more than one string.
+
+% The "choose" procedure prompts the user for input and returns the object
+% associated with that input; it prints an error message and signals an
+% exception if there is no such object or there is more than one such object.
+% The "choose_with_retry" procedure does the same, except that it prompts the
+% user to resupply input when the input does not identify a unique object.
+
+
+command_table = cluster [choice: type] is
+	create, append, change_help, choose, choose_if_in, choose_with_retry, 
+	help, help_retry, s2ct, copy
+	    where choice in equal_type,
+		  choice in copy_type
+
+    % The "actions" associate command names with objects; "actions1" associates
+    % a single command name with each object.  The "delims" are characters
+    % (generally " \t") that terminate command names.  The "help" procedure is
+    % called if the user types `?' as a choice.  The "label" describes the type
+    % of items in the command table.
+
+    rep = struct[actions, actions1: actions, delims: string, 
+    		 help: help_proctype, label: string]
+
+    actions 	    = array[action]
+    act_seq 	    = sequence[action]
+    action 	    = record[choice: choice, 	% object to select
+    			     duplicate: bool,	% true object has another name
+			     name: string, 	% name for object
+			     rank: int]		% desirability of this name
+    unranked_action = struct[name: string, choice: choice]
+    ua_seq	    = sequence[unranked_action]
+    help_proctype   = proctype (iodev, command_table[choice]) 
+		        signals (no_response)
+
+    % This allows us to view the operations abstractly within the cluster.
+    command_tab = command_table[choice]
+
+    
+    % Returns a new "command_table".  The "#extend" mode of the CLU compiler
+    % provides sugared invocations of the form
+    %     command_tab${as: ua_seq, delims: string, help: help_proctype, 
+    %                  label: string}
+    % Signals "duplicate_names" if two actions in "as" have the same name.  If
+    % several actions in "as" have the same choice, regards the name of the
+    % first such action as the preferred name for that choice.
+
+    create = proc (a: arg) returns (command_tab) 
+	       signals (duplicate_names(command_tab, string))
+	arg = struct[as: ua_seq, delims: string, help: help_proctype, 
+	             label: string]
+	ct: rep := rep${help: a.help, delims: a.delims, actions: actions$[],
+			actions1: actions$[], label: a.label}
+	return(append(up(ct), a.as))
+	   resignal duplicate_names
+	end create
+
+
+    % (Internal procedure) Defines "less than" operation for "action", so that
+    % an array of actions can be sorted using the library function "quicksort".
+
+    action_less = proc (a1, a2: action) returns (bool)
+	return(a1.name < a2.name)
+	end action_less
+
+
+    % Returns a new command table formed by adding the actions in "as" to "ct".
+    % Signals "duplicate_names" if there would be any name conflicts in the new
+    % command table.
+
+    append = proc (ct: cvt, as: ua_seq) returns (cvt)
+	       signals (duplicate_names(cvt, string))
+	rank: int := actions$size(ct.actions)
+	for ac: unranked_action in ua_seq$elements(as) do
+	    rank := rank + 1
+	    dup: bool := false
+	    for ac1: action in actions$elements(ct.actions) do
+		if ac.choice = ac1.choice then
+		   ac1.duplicate := true
+		   dup := true
+		   break
+		   end
+		end
+	    a: action := action${name: slower(ac.name),
+				 choice: ac.choice,
+				 duplicate: dup,
+				 rank: rank}
+	    actions$addh(ct.actions, a)
+	    if ~dup then actions$addh(ct.actions1, a) end
+	    end
+
+	% Sort the actions in increasing order by name for ease of search.
+	quicksort[action](ct.actions, actions$low(ct.actions),
+			  actions$size(ct.actions), action_less)
+	quicksort[action](ct.actions1, actions$low(ct.actions1),
+			  actions$size(ct.actions1), action_less)
+	dups: string := ""
+	for i: int in actions$indexes(ct.actions) do
+	    if ct.actions[i].name = ct.actions[i+1].name then
+	       if dups ~= "" then dups := dups ||", " end
+	       dups := dups || ct.actions[i].name
+	       end
+	    end except when bounds: end
+	if dups ~= "" then signal duplicate_names(ct, dups) end
+	return(ct)
+	end append
+    
+    
+    % Returns a "command_table" identical to "ct", but with "h" as its help
+    % procedure.
+    
+    change_help = proc (ct: cvt, h: help_proctype) returns (cvt)
+	return(rep${help: h, delims: ct.delims, actions: ct.actions,
+		    actions1: ct.actions1, label: ct.label})
+	end change_help
+
+
+    % Behaves like "choose_if_in", except prints an errors message if there is
+    % no match and signals "error" if there is no match or more than one match.
+
+    choose = proc (ct: command_tab, message: string, io: iodev) 
+	       returns (choice) signals (no_response, end_of_file, error)
+	return(choose_if_in(ct, message, io))
+	   resignal no_response, end_of_file
+	   except when no_match (s: string):
+		       iodev$error(io)
+		       iodev$prints(io, "\nUnrecognized ")
+		       iodev$prints(io, down(ct).label)
+		       iodev$prints(io, ": ")
+		       iodev$printl(io, s)
+		  when ambiguous:
+		  end
+        signal error
+	end choose
+
+
+    % Behaves like "choose", except reprompts the user if there is no match or
+    % more than one match.
+
+    choose_with_retry = proc (ct: command_tab, message: string, io: iodev) 
+			  returns (choice) signals (no_response, end_of_file)
+	while true do
+	    return(choose(ct, message, io))
+	       resignal no_response, end_of_file
+	       except when error: end
+	    end
+	end choose_with_retry
+
+
+
+    % Prints "message" if there is no pending input on "io".  Then invokes
+    % "io$gets" to discard leading spaces or tabs in "io", get a string
+    % delimited by one of the delimiters in "ct" or by the end of the line, and
+    % trim trailing spaces and tabs from the string.  Signals "no_response" if
+    % this string is empty.  Signals "end_of_file" if there was no input.  If
+    % the string is "?", invokes "ct.help" and starts over or resignals
+    % "no_response".  
+    
+    % Once a string has been obtained in this fashion, attempts to match it
+    % with the names of "ct.actions".  If the string matches the name of some
+    % action exactly, returns the "choice" associated with that action.
+    % Otherwise, checks for unique prefix matching of hyphen-separated
+    % components.  If each hyphen-separated component of the entered string
+    % matches (is equal to a prefix of its length of) the corresponding
+    % component of a name of exactly one choice, returns that choice.  If more
+    % than one match occurs, selects that with the minimum number of hyphens.
+    % Signals "no_match" if there are no matches; signals "ambiguous" if there
+    % is more than one.
+    
+    choose_if_in = proc (ct: cvt, message: string, io: iodev) returns (choice)
+		     signals (ambiguous, no_response, end_of_file,
+			      no_match(string))
+	s: string
+	while true do
+	    s := slower(trim_tail(iodev$gets(io, message, ct.delims)))
+	    if string$size(s) = 0 then signal no_response end
+	    if s ~= "?" then break end
+	    ct.help(io, up(ct))
+	    end resignal end_of_file, no_response
+	matches: actions := actions$[]
+	for a: action in actions$elements(ct.actions) do
+	    if s = a.name then return(a.choice)
+	     elseif components_match(s, a.name) then 
+	       if a.duplicate then
+		  for i: int in actions$indexes(matches) do
+		      a1: action := matches[i]
+		      if a.choice ~= a1.choice then continue end
+		      if a.rank < a1.rank then
+			 matches[i] := a
+			 end
+		      exit duplicate
+		      end
+		  end
+	       actions$addh(matches, a)
+	     end except when duplicate: end
+	    end
+	if actions$size(matches) = 0 then
+	   signal no_match(s)
+	 elseif actions$size(matches) = 1 then
+	   return(actions$top(matches).choice)
+	 end
+	matches1: actions := actions$[]
+	small_h: int := string_count_char(actions$top(matches).name, '-')
+	for a: action in actions$elements(matches) do
+	    h: int := string_count_char(a.name, '-')
+	    if h < small_h then
+	       matches1 := actions$[a]
+	       small_h := h
+	     elseif h = small_h then
+	       actions$addh(matches1, a)
+	     end
+	    end
+	if actions$size(matches1) = 1
+	   then return(actions$top(matches1).choice)
+	   else iodev$error(io)
+		iodev$prints(io, "`" || s || "' ")
+		iodev$prints(io, "matches any of the following ")
+		iodev$prints(io, ct.label)
+		iodev$printl(io, "s:")
+		ambigs: string_arr := string_arr$[]
+		for a: action in actions$elements(matches) do
+		    string_arr$addh(ambigs, a.name)
+		    end
+		iodev$put_table(io, ambigs, 5)
+		signal ambiguous
+	   end
+	end choose_if_in
+
+
+    % (Internal procedure) Returns "true" if each hyphen-separated component of
+    % "s1" is a prefix of the corresponding component of "s2".
+
+    components_match = proc (s1, s2: string) returns (bool)
+	while true do
+	    p1: int := string$indexc('-', s1)
+	    if p1 = 0 then return(is_initial_substring(s1, s2)) end
+	    p2: int := string$indexc('-', s2)
+	    if p2 = 0 cor ~is_initial_substring(string$substr(s1, 1, p1-1),
+						string$substr(s2, 1, p2-1))
+	       then return(false) end
+	    s1 := string$rest(s1, p1+1)
+	    s2 := string$rest(s2, p2+1)
+	    end
+	end components_match
+
+
+    % This is a rudimentary help procedure, which just lists the possible
+    % commands offered by the command table.  Signals "no_response" to indicate
+    % that the prompt for the command should not be repeated.
+
+    help = proc (io: iodev, ct: cvt) signals (no_response)
+	iodev$prints(io, "\nLegal ")
+	iodev$prints(io, ct.label)
+	iodev$printl(io, "s:")
+	names: string_arr := string_arr$[]
+	for a: action in actions$elements(ct.actions1) do
+	    string_arr$addh(names, a.name)
+	    end
+	iodev$put_table(io, names, 2)
+	iodev$putl(io, "")
+	signal no_response
+	end help
+
+
+    % Like "help", but does not signal "no_response".
+
+    help_retry = proc (io: iodev, ct: cvt) signals (no_response)
+	iodev$printl(io, "\nEnter one of the following, or type <ret> to exit.")
+	names: string_arr := string_arr$[]
+	for a: action in actions$elements(ct.actions1) do
+	    string_arr$addh(names, a.name)
+	    end
+	iodev$put_table(io, names, 2)
+	iodev$putl(io, "")
+	end help_retry
+
+
+    % Returns a "command_table" for selecting choices of type "label" in "s".
+
+    s2ct = proc (s: choice_seq, delims, label: string) returns (command_tab)
+		where choice has get_name: proctype (choice) returns (string)
+	choice_seq = sequence[choice]
+    	ua_arr = array[unranked_action]
+	acts: ua_arr := ua_arr$[]
+	for c: choice in choice_seq$elements(s) do
+	    ua_arr$addh(acts, unranked_action${name: c.name, choice: c})
+	    end
+	return(command_tab${as: ua_seq$a2s(acts), delims: delims, 
+	    		    label: label, help: help})
+	end s2ct
+
+
+    % Returns a copy of "ct".
+    
+    copy = proc (ct: cvt) returns (cvt)
+	return(rep$copy(ct))
+	end copy
+    
+
+    end command_table

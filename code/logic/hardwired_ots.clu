@@ -1,0 +1,48 @@
+#extend
+
+% The following operator theories are hardwired when LP starts up.  When new
+% sorts are introduced, the equality operators on those sorts are given the
+% commutative theory.
+
+hardwired_op_theories = proc () returns (ot_seq)
+    own ots: ot_seq := ot_seq$[and_ac_ot(), iff_ac_ot(), 
+    			       or_ac_ot(), true_false_free_ot()]
+    return(ots)
+    end hardwired_op_theories
+
+and_ac_ot = proc () returns (op_theory)
+    own ot: op_theory := name_ot(op_theory$make_ac(op_and()), "lp_ac_and")
+    return(ot)
+    end and_ac_ot
+
+iff_ac_ot = proc () returns (op_theory)
+    own ot: op_theory := name_ot(op_theory$make_ac(op_iff()), "lp_ac_iff")
+    return(ot)
+    end iff_ac_ot
+
+or_ac_ot = proc () returns (op_theory)
+    own ot: op_theory := name_ot(op_theory$make_ac(op_or()), "lp_ac_or")
+    return(ot)
+    end or_ac_ot
+
+true_false_free_ot = proc () returns (op_theory)
+    own ot: op_theory := 
+	    name_ot(op_theory$make_free(op_set$[op_true(), op_false()]), 
+		    "lp_free_true_false")
+    return(ot)
+    end true_false_free_ot
+
+name_ot = proc (ot: op_theory, s: string) returns (op_theory)
+    ot.name := name$create(s)
+    return(ot)
+    end name_ot
+
+equals_commutative_name = proc () returns (name)
+    own n: name := name$create("lp_commutative_equals")
+    return(n)
+    end equals_commutative_name
+
+equals_ac_name = proc () returns (name)
+    own n: name := name$create("lp_ac_equals")
+    return(n)
+    end equals_ac_name

@@ -1,0 +1,43 @@
+\doc{The complete command}
+\ref{complete-command}
+\ref{completion-procedure}
+\ref{Knuth-Bendix}
+
+The \def{complete command} provides a method of forward inference that extends
+the \cflink{critical-pairs} command.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{complete-command} ::= \f{complete}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+complete
+\end{verbatim}
+
+\head{2}{Usage}
+The \fq{complete} command enlarges LP's logical system by adding consequences
+of facts already in the system.  It operates by computing critical pair
+equations between rewrite rules in the system, orienting them into new rewrite
+rules, and iterating this procedure until there are no further nontrivial
+critical pair equations.
+\p
+When LP's logical system consists solely of active, nonimmune, quantifier-free
+equations and rewrite rules, the \fq{complete} command attempts to transform
+the logical system into a \glink{convergent}{convergent} set of
+rewrite rules that has the same equational theory.  The completion procedure is
+based on the Peterson and Stickle extension of the 
+\def{Knuth-Bendix completion procedure}.
+\p
+LP terminates the completion procedure if the current conjecture reduces to 
+\fq{true}.
+\p
+A convergent rewriting system can be used to prove theorems by normalization
+using the \cflink{prove} command or to reduce terms to a canonical form using
+the \dflink{show}{show normal-form} command.  The \setlink{completion-mode}
+setting controls the operation of the completion procedure.  You can
+\olink{interrupt}{interrupt} and resume the operation of the completion
+procedure.
+\p
+See also \dlink{../proof/by-consistency}{proofs by consistency}.

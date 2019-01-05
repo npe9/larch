@@ -1,0 +1,321 @@
+#extend
+
+% Returns a list of all nontrivial critical pairs between "rr1" and "rr2".
+% Signals "interrupt" if the user types ^G.
+
+all_pairs = proc (rr1, rr2: rewrite_rule, osys: op_system,
+	          rsys: rewriting_system, stab: symtab, ai: ai_settings)
+	      returns (eq_prop_list) signals (interrupt(eq_prop_list))
+    tracer$critical_pairs()
+    cps: eq_prop_list := eq_prop_list$[]
+    for cp: equation in critical_pairs(rr1, rr2, rsys, stab, osys) do
+	unnormalized_cp: equation := cp
+	immunized: bool := false
+	if ai.immune ~= immunity_on then 
+	   cp := equation$normal_form(cp, rsys, osys, stab, false)
+	   end except when already_normal_form:
+		      when might_loop (e: equation): cp := e
+						     immunized := true
+		      end
+	identity: bool := equation$is_identity(cp)
+	if ~identity then 
+	   cp.name := symtab$new_name(stab)
+	   eqp: eq_prop := eq_prop$create(cp, ai)
+	   if immunized then eqp.immune := immunity_on end
+	   eq_prop_list$addh(cps, eqp)
+	   tracer$count_pair(rr1.name, rr2.name)
+	   end
+	tracer$superposition(rr1, rr2, unnormalized_cp, cp, identity, immunized)
+	if front_end$interrupt() then signal interrupt(cps) end
+	end
+    return(cps)
+    end all_pairs
+
+
+% Yields all the critical pairs between "rr1" and "rr2".  Presently, this
+% procedure is fairly specific for the AC theory: it computes critical pairs
+% using Peterson and Stickel extensions.  The hope is that we can find
+% analogous methods for other theories, and that they will fit in this general
+% framework.
+
+critical_pairs = iter (rr1, rr2: rewrite_rule, rsys: rewriting_system, 
+		       stab: symtab, osys: op_system) yields (equation)
+    ex = rewriting_system$extension
+
+    statistics$start_unify()
+    same_rule: bool := rewrite_rule$similar(rr1, rr2)
+    yielded: bool := false
+
+    x1_exists: bool := true
+    rr1x: rewrite_rule := ex(rsys, rr1, osys, stab)
+       except when none: x1_exists := false end
+
+    x2_exists: bool := true
+    rr2x: rewrite_rule := 
+	rewrite_rule$rename_variables(ex(rsys, rr2, osys, stab))
+       except when none: x2_exists := false end
+
+    rr2 := rewrite_rule$rename_variables(rr2)
+
+    for cp: equation in overlap_all(rr1, rr2, osys, stab) do
+	t: term := term$unrename_variables(cp.formula, stab)
+	e: equation := formula$create(flatten(t, osys))
+	statistics$success_unify(1)
+	yielded := true
+	yield(e)
+	statistics$start_unify()
+	end
+
+    if x1_exists cand x2_exists then
+       for cp: equation in overlap_all(rr1x, rr2x, osys, stab) do
+	   t: term := term$unrename_variables(cp.formula, stab)
+	   e: equation := formula$create(flatten(t, osys))
+	   statistics$success_unify(1)
+	   yielded := true
+	   yield(e)
+	   statistics$start_unify()
+	   end
+       end
+
+    for cp: equation in overlap_subs(rr1, rr2, osys, stab) do
+	t: term := term$unrename_variables(cp.formula, stab)
+	e: equation := formula$create(flatten(t, osys))
+	statistics$success_unify(1)
+	yielded := true
+	yield(e)
+	statistics$start_unify()
+	end
+
+    if ~same_rule then
+       for cp: equation in overlap_subs(rr2, rr1, osys, stab) do
+	   t: term := term$unrename_variables(cp.formula, stab)
+	   e: equation := formula$create(flatten(t, osys))
+	   statistics$success_unify(1)
+	   yielded := true
+	   yield(e)
+	   statistics$start_unify()
+	   end
+       end
+
+    if x2_exists then
+       for cp: equation in overlap_subs(rr1, rr2x, osys, stab) do
+	   t: term := term$unrename_variables(cp.formula, stab)
+	   e: equation := formula$create(flatten(t, osys))
+	   statistics$success_unify(1)
+	   yielded := true
+	   yield(e)
+	   statistics$start_unify()
+	   end
+       end
+
+    if ~same_rule cand x1_exists then
+       for cp: equation in overlap_subs(rr2, rr1x, osys, stab) do
+	   t: term := term$unrename_variables(cp.formula, stab)
+	   e: equation := formula$create(flatten(t, osys))
+	   statistics$success_unify(1)
+	   yielded := true
+	   yield(e)
+	   statistics$start_unify()
+	   end
+       end
+
+    if yielded
+       then statistics$success_unify(0)
+       else statistics$fail_unify()
+       end
+
+    end critical_pairs
+
+
+% Yields any critical pairs formed by overlapping the entire left sides of
+% "rr1" and "rr2".
+
+overlap_all = iter (rr1, rr2: rewrite_rule, osys: op_system, stab: symtab) 
+		yields (equation)
+    vg: var_gen := var_gen$[]
+    for sigma: substitution 
+	  in general_unify(rr1.left, rr2.left, osys, stab, vg) do
+	yield(equation$make_cp(rr1, rr2, rr2.right, sigma, stab))
+	end except when not_unifiable: end
+    end overlap_all
+
+
+% Yields all the critical pairs formed by overlapping "rr2.left" with a proper
+% nonvariable subterm of "rr1.left".  Dispatches to the proper procedure for
+% the "op_theory" of the top operator of the left side of "rr2".
+
+overlap_subs = iter (rr1, rr2: rewrite_rule, osys: op_system, stab: symtab) 
+		 yields (equation)
+    left1: term := rr1.left
+    if term$is_var(left1) then return end
+    left2: term := rr2.left
+    if term$is_var(left2) then return end
+    ot: op_theory := op_system$lookup_theory_quickly(osys, left2.root_or_quant)
+    for sigma: substitution, new_left: term
+	  in ot.overlap_subs(left1, left2, rr2.right, osys, stab) do
+	yield(equation$make_cp(rr1, rr2, new_left, sigma, stab))
+	end
+    end overlap_subs
+
+
+% Yields all the substitutions that unify "left2" with a proper nonvariable
+% subterm of "left1".  Also yields the term formed by inserting "right2" in
+% "left1" at the occurence where the overlap was found.  ASSUMES: the top
+% operator of "left2" is not AC.
+
+overlap_empty_subs = iter (left1, left2, right2: term, osys: op_system, 
+			   stab: symtab) yields (substitution, term)
+    if term$is_var(left1) then return end
+    tagcase left2
+       tag var: 
+           return
+       tag funct:
+	   ot: op_theory := op_system$lookup_theory_quickly(osys, left2.root)
+	   for i: int in term_seq$indexes(left1.args) do
+	       sub: term := left1.args[i]
+	       if sub.root = left2.root then
+		  for sigma1: substitution
+			in ot.unify(sub, left2, osys, stab, var_gen$[]) do
+		      yield(sigma1, term$replace_arg(left1, i, right2))
+		      end except when not_unifiable: end
+		  end except when wrong_tag: end
+	       end
+       tag quant:
+	   sub: term := left1.subform
+	   if sub.quant.is_universal = left2.quant.is_universal then
+	      v: variable := left1.quant.var
+	      for sigma1: substitution
+		    in quant_unify(sub, left2, osys, stab, var_gen$[]) do
+		  if sigma1[v].var = v
+		       cand ~var_set$exists(sigma1.range_vars, v) then
+		     yield(sigma1, term$make_quant(left1.quant, right2))
+		     end
+		  end except when not_unifiable: end
+	      end except when wrong_tag: end
+       end except when wrong_tag: end
+
+    % Now yield any found below.
+    for sigma2: substitution, t2: term
+	  in overlap_subs_below(left1, left2, right2, osys, stab) do
+	yield(sigma2, t2)
+	end
+    end overlap_empty_subs
+
+
+% Yields all the substitutions that unify "left2" with one of the subterms of
+% the arguments of "left1".  Also yields the term formed by inserting "right2"
+% in "left1" at the occurence where the overlap was found.  ASSUMES: the top
+% operator of "left2" is not AC and "left1" is not a variable.
+
+overlap_subs_below = iter (left1, left2, right2: term, osys: op_system,
+			   stab: symtab)
+		       yields (substitution, term)
+    ot: op_theory := op_system$lookup_theory_quickly(osys, left2.root_or_quant)
+    tagcase left1
+       tag funct:
+	   for j: int in term_seq$indexes(left1.args) do
+	       argj: term := left1.args[j]
+	       for sigma2: substitution, new_left_below: term
+		     in ot.overlap_subs(argj, left2, right2, osys, stab) do
+		   yield(sigma2, term$replace_arg(left1, j, new_left_below))
+		   end except when wrong_tag: end
+	       end
+       tag quant:
+	   sub: term := left1.subform
+	   v: variable := left1.quant.var
+	   for sigma2: substitution, new_left_below: term
+		 in ot.overlap_subs(sub, left2, right2, osys, stab) do
+	       if sigma2[v].var = v cand ~var_set$exists(sigma2.range_vars, v) 
+		  then yield(sigma2,
+			     term$make_quant(left1.quant, new_left_below))
+		  end except when wrong_tag: end
+	       end except when not_unifiable: end
+       end
+    end overlap_subs_below
+
+
+% Yields all the substitutions that unify "left2" with one of the subterms of
+% "left1".  Also yields the term formed by inserting "right2" in "left1" at the
+% occurrence where the overlap was found.  ASSUMES: the top operator of "left2"
+% is AC.  Note that the concept of subterm for AC terms is different than it is
+% for normal terms, since a subset of the argument terms forms a subterm,
+% because of flattening.  (Actually, the implementation returns substitutions
+% that unify the entire terms as well as the subterms.)
+
+overlap_ac_subs = iter (left1, left2, right2: term, osys: op_system, 
+			stab: symtab) yields (substitution, term)
+    if term$is_var(left1) cor term$is_var(left2) then return end
+    if left1.root = left2.root then
+       ts: ac_term_space := ac_term_space$create(left1.root)
+       eqn: plh_eqn[term] :=
+	   plh_eqn[term]$create(ac_term_space$term2poly(ts, left1),
+				ac_term_space$term2poly(ts, left2))
+
+       % Compute the substitutions that unify the entire term "left2" with
+       % some (possibly non-proper) subterm of "left1".
+       for soln: term_soln in overlap_solns(eqn, left2.args) do
+	   ocs: int_seq, terms: term_seq := plh_eqn[term]$get_left(eqn)
+	   vg: var_gen := var_gen$[]
+	   tbs: tb_seq, leftover: term_seq :=
+	       ac_term_space$soln2seq_remainder(ts, soln, terms, ocs, vg)
+	   for sigma: substitution in unify_seq(tbs, osys, stab, vg) do
+	       if term_seq$empty(leftover)
+		  then yield(sigma, right2)
+		  else yield(sigma, 
+			     term$make_funct(left1.root,
+			                     term_seq$addh(leftover, right2)))
+	               % ENHANCE: calculate whether result was flipped
+		  end
+	       end except when not_unifiable: end
+	   end except when unsolvable: return
+		      when trivial: yield(substitution$[], right2)
+		      end
+       end except when wrong_tag: end
+
+    % Now yield any found below.
+    for sigma2: substitution, t2: term
+	  in overlap_subs_below(left1, left2, right2, osys, stab) do
+	yield(sigma2, t2)
+	end
+    end overlap_ac_subs
+
+
+% This procedure is very much like the procedure "constrained_solns" in the
+% file "solutions.clu".  The difference is that where "constrained_solns" uses
+% the procedure "no_zeros", this procedure uses "no_right_zeros".  When we are
+% unifying, we want to unify two entire terms, which implies that we want our
+% solutions to have nonzero values for all elements.  When we are overlapping,
+% we overlap an entire left side of one rule with (not necessarily proper)
+% subterms of the left side of the other rule.  Therefore, when we are
+% overlapping with an AC rule, we admit solutions that have no zeros for the
+% elements corresponding to an argument of the rule whose whole left side is
+% being used.
+
+overlap_solns = iter (eqn: plh_eqn[term], needed_terms: term_seq)
+		  yields (term_soln) signals (unsolvable, trivial)
+    basis: term_soln := diophan_basis[term](eqn)
+       resignal trivial, unsolvable
+    for tgs: tgen_set in partition[term_gen, term_seq, null]
+			     (term_soln$s2set(basis), no_right_zeros,
+			      needed_terms, no_clashes, nil) do
+	yield(term_soln$set2s(tgs)) 
+	   except when empty: end
+	end
+    end overlap_solns
+
+
+% Returns "true" iff "ts" contains no zeros in places corresponding to terms in
+% "needed_terms".
+
+no_right_zeros = proc (ts: tgen_set, needed_terms: term_seq) returns (bool)
+    soln: term_soln := term_soln$set2s(ts)
+       except when empty: return(false) end
+    for bind: ti_bind in ti_assn$bindings(term_soln$assign_total(soln)) do
+	if bind.range = 0 then
+	   for tt: term in term_seq$elements(needed_terms) do
+	       if term$equal(bind.domain, tt) then return(false) end
+	       end
+	   end
+	end
+    return(true)
+    end no_right_zeros

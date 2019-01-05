@@ -1,0 +1,141 @@
+% In Hullot's thesis, "lower_p" is the predicate named "P" and "upper_p" is the
+% predicate name "Q".  The "partition" routine requires that the following
+% properties be true of lower_limit and upper_limit.  If they are not, the
+% behavior of partition is not defined.
+
+partition = iter [elem, p_arg, q_arg: type] (s: e_set, p: p_pred, parg: p_arg,
+					     q: q_pred, qarg: q_arg)
+	      yields (e_set)
+	    where elem in equal_type
+    e_tree = partition_tree[elem]
+    e_set = set[elem]
+    p_pred = proctype (e_set, p_arg) returns (bool)
+    q_pred = proctype (e_set, q_arg) returns (bool)
+
+    part_tree: e_tree := e_tree$create(s)
+    for es: e_set in tree_partitions[elem, p_arg, q_arg]
+			 (part_tree, p, parg, q, qarg) do
+	yield(es)
+	end
+    end partition
+
+
+
+tree_partitions = iter [elem, p_arg, q_arg: type] 
+			   (et: e_tree, p: p_pred, parg: p_arg, 
+			    q: q_pred, qarg: q_arg)
+		    yields (e_set)
+	    where elem in equal_type
+    e_set = set[elem]
+    p_pred = proctype (e_set, p_arg) returns (bool)
+    q_pred = proctype (e_set, q_arg) returns (bool)
+    e_tree = partition_tree[elem]
+
+    if (e_tree$is_left_son(et) cand p(e_tree$value(et), parg))
+	 cor (e_tree$is_right_son(et) cand q(e_tree$value(et), qarg)) then
+       for es: e_set in tree_partitions[elem, p_arg, q_arg]
+			    (e_tree$left_son(et), p, parg, q, qarg) do
+	   yield(es)
+	   end
+       for es: e_set in tree_partitions[elem, p_arg, q_arg]
+			    (e_tree$right_son(et), p, parg, q, qarg) do
+	   yield(es)
+	   end
+       end except when leaf: yield(e_tree$value(et)) end
+    end tree_partitions
+
+
+partition_tree = cluster [t: type] is create, left_son, right_son, is_leaf, 
+				      is_root, is_left_son, is_right_son,
+				      value, equal, similar, similar1, 
+				      copy, copy1
+	    where t in equal_type
+
+    rep = struct[values: t_seq,
+		 occurrence: bool_seq]
+
+    t_seq = sequence[t]
+    t_set = set[t]
+
+    create = proc (vals: t_set) returns (cvt)
+	return(rep${values: t_set$s2seq(vals),
+		    occurrence: bool_seq$[]})
+        end create
+
+
+    left_son = proc (pt: cvt) returns (cvt) signals (leaf)
+	if is_leaf(up(pt)) then signal leaf end
+	return(rep${values: pt.values,
+		    occurrence: bool_seq$addh(pt.occurrence, false)})
+        end left_son
+
+
+    right_son = proc (pt: cvt) returns (cvt) signals (leaf)
+	if is_leaf(up(pt)) then signal leaf end
+	return(rep${values: pt.values,
+		    occurrence: bool_seq$addh(pt.occurrence, true)})
+        end right_son    
+
+    is_leaf = proc (pt: cvt) returns (bool)
+	return(t_seq$size(pt.values) = bool_seq$size(pt.occurrence))
+	end is_leaf
+
+    is_root = proc (pt: cvt) returns (bool)
+	return(bool_seq$size(pt.occurrence) = 0)
+	end is_root
+
+
+    % By convention, the root is considered to be a left_son.
+
+    is_left_son = proc (pt: cvt) returns (bool)
+	if bool_seq$empty(pt.occurrence) 
+	   then return(true)
+	   else return(~bool_seq$top(pt.occurrence))
+	   end
+        end is_left_son
+
+    is_right_son = proc (pt: cvt) returns (bool)
+	if bool_seq$empty(pt.occurrence) 
+	   then return(false)
+	   else return(bool_seq$top(pt.occurrence))
+	   end
+        end is_right_son
+
+
+    value = proc (pt: cvt) returns (t_set)
+	mask: bool_seq := pt.occurrence || 
+			  bool_seq$fill(t_seq$size(pt.values)
+					  - bool_seq$size(pt.occurrence),
+					is_left_son(up(pt)))
+	result: t_set := t_set$new()
+	for i: int in t_seq$indexes(pt.values) do
+	    if mask[i] then t_set$insert(result, pt.values[i]) end
+	    end
+	return(result)
+        end value
+
+    equal = proc (ts1, ts2: cvt) returns (bool)
+	return(ts1 = ts2)
+        end equal
+
+    similar = proc (ts1, ts2: cvt) returns (bool)
+		where t in similar_type
+	return(rep$similar(ts1, ts2))
+        end similar
+
+    similar1 = proc (ts1, ts2: cvt) returns (bool)
+	return(ts1 = ts2)
+        end similar1
+
+    copy = proc (ts: cvt) returns (cvt)
+		where t in copy_type
+	return(rep${values: t_seq$copy(ts.values),
+		    occurrence: ts.occurrence})
+        end copy
+
+    copy1 = proc (ts: cvt) returns (cvt)
+	return(rep${values: ts.values,
+		    occurrence: ts.occurrence})
+	end copy1
+
+    end partition_tree

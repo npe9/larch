@@ -1,0 +1,30 @@
+\doc{The reduction-strategy setting}
+\ref{reduction-strategy-setting}
+
+The \def{reduction-strategy setting} controls the order in which LP applies
+rewrite rules when reducing a term.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-reduction-strategy-command} ::= \f{set reduction-strategy} 
+                                        ( \f{inside-out} | \f{outside-in} )
+\end{verbatim}
+
+Note: The \fq{reduction-strategy} can be
+\dlink{../misc/abbreviation}{abbreviated}.
+
+
+\head{2}{Examples}
+\begin{verbatim}
+set reduction in
+\end{verbatim}
+
+\head{2}{Usage}
+When the \fq{reduction-strategy} is \fq{outside-in} (the default), LP attempts
+to \olink{reduce}{reduce} a term by attempting to rewrite the entire term
+before attempting to reduce any of its subterms.  If it is \fq{inside-out}, LP
+still applies the hardwired rewrite rules outside-in, but it attempts to apply
+other rewrite rules to the subterms of a term before it applies them to the
+entire term.
+\p
+The \fq{reduction-strategy} is local to the current proof context.

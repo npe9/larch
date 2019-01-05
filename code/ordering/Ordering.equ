@@ -1,0 +1,168 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%  Equates for lp/code/ord  %%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% (see also Genlib.equ and Logic.equ)
+
+
+
+%%%%%%%%%%%%%%%%%%%%  Data types
+
+
+% Arrays
+
+poly_arr 	= array[polynomial]
+
+
+% Lists
+
+mono_list	= list[monomial]
+term_list 	= list[term]
+
+
+% Multisets
+
+term_mset 	= multiset[term]
+
+
+% Sequences
+
+poly_seq 	= sequence[polynomial]
+poly_pair_seq 	= sequence[poly_pair]
+
+
+% Structs
+
+poly_pair 	= struct[left, right: polynomial]
+
+
+
+%%%%%%%%%%%%%%%%%%%%  Orderings
+
+% Each ordering provides three procedures with the following signatures and
+% functionality:
+ 
+quiet_proc = proctype (registry, equation) returns (rewrite_rule)
+	       signals (cannot_orient)
+
+% If the equation can be ordered into a rewrite_rule using the information in
+% the registry, subject to any constraint imposed by the user, returns the
+% result.  Signals "cannot_orient" if the equation cannot be ordered without
+% user interaction, or if it can only be ordered from right to left and the
+% user has constrained the order to be from left to right.  Has no side
+% effects; it neither prompts the user nor changes the registry.
+
+
+auto_proc = proctype (registry, equation, int) returns (rewrite_rule)
+	      signals (cannot_orient, modified_registry(rewrite_rule))
+
+% Like the "quiet" procedure, except that when the equation cannot be ordered
+% using the information in the registry, the "auto" procedure computes
+% suggestions for extending the registry and uses suggestion number "choice".
+% Signals "cannot_orient" if the equation can only be ordered from right to
+% left and the user has constrained the order to be from left to right, or if
+% "choice" is not the number of a suggestion.  Signals "modified registry" if
+% the registry has been changed.
+
+
+user_proc = proctype (printer, registry, symtab, equation) 
+	      returns (order_action)
+
+% Attempts to order the equation into a rewrite rule, using the information in
+% the registry, subject to any constraint imposed by the user.  This procedure
+% may interact with the user via the query cluster to extend the registry so
+% that the equation can be ordered.  Returns an "order_action", which can be
+% examined using a "tagcase" statement, as follows.
+
+
+order_action = oneof[auto, user, manual: rewrite_rule, divide: operator,
+		     postpone, kill, interrupt: null]
+
+interrupt_order_action = order_action$make_interrupt(nil)
+
+% tag auto (rr: rewrite_rule):  
+
+%     "eq" was ordered into "rr" without user interaction, probably because
+%     the user has interrupted the completion or ordering procedure and
+%     extended the precedence since the last time "eq" was considered.
+
+% tag user (rr: rewrite_rule):  
+
+%     "eq" was ordered into "rr" with user interaction.
+
+% tag manual (rr: rewrite_rule):  
+
+%     The ordering procedure could not order "eq", but the user chose to
+%     order it manually into "rr".  The termination of the rewriting system
+%     may be compromised.
+
+% tag divide (op: operator):  
+
+%     The user has elected to divide the equation into two equations by
+%     introducing a new operator "op".
+
+% tag postpone:  
+
+%     The user has elected to postpone consideration of this equation, perhaps
+%     in the hope that the precedence will be extended enough to order it when
+%     it is considered again.
+
+% tag kill:  
+
+%     The user has elected to delete this equation from the system.
+
+% tag interrupt:  
+
+%     The user has chosen to interrupt the ordering or completion procedure.
+
+
+% A command table containing an appropriate subset of the following commands
+% is used to give the user an opportunity to select one of these actions.
+
+order_command = oneof[accept: int, divide, interrupt, kill, l2r, ordering,
+		      postpone, r2l, reverse, suggestions, unconditional: null]
+order_ct = command_table[order_command]
+
+
+%%%%%%%%%%%%%%%%%%%% Precedence
+
+% "Sym" is used in "p_graph" and in "dsmpos".
+
+sym 		= oneof[gt, gt_eq, eq: null]
+gt_sym 		= sym$make_gt(nil)
+eq_sym 		= sym$make_eq(nil)
+gt_eq_sym 	= sym$make_gt_eq(nil)
+
+
+
+%%%%%%%%%%%%%%%%%%%%  Status
+
+% The "status" of an operator is used by termination orderings.  A
+% "left-to-right" status for an operator "op" means (roughly) that when two
+% terms with "op" at their root both have the same arguments, but in a
+% different order, the term that is more "left-weighted" is greater than the
+% other in the ordering.  A "right-to-left" status means that the more
+% "right-weighted" term is greater.  A "multiset" status means that the
+% multiset of arguments of one term is compared against the multiset of
+% arguments of the other, without regard to the order of the arguments.
+% "Undefined" status means that the status of the operator has not yet been
+% determined.  All constants (i.e., all zero-ary operators) and unary operators
+% have "left-to-right" status.
+
+status 	     = oneof[left_to_right, right_to_left, multiset, undefined: null]
+l_to_r_stat  = status$make_left_to_right(nil)
+r_to_l_stat  = status$make_right_to_left(nil)
+mset_stat    = status$make_multiset(nil)
+undef_stat   = status$make_undefined(nil)
+
+
+
+%%%%%%%%%%%%%%%%%%%% DSMPOS ordering
+
+single_suggest 	= oneof[prec: prec_sug, stat: stat_sug]
+stat_sug 	= struct[op: operator, stat: status]
+prec_sug 	= struct[gt, lt: operator, val: sym]
+
+ss_arr 		= array[single_suggest]
+ss_seq		= sequence[single_suggest]
+ss_set		= set[single_suggest]
+
+ord_dbg	= false

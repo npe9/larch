@@ -1,0 +1,33 @@
+\doc{Equality operators}
+\ref{equality}
+\ref{equals}
+\ref{=}
+\ref{inequality}
+\ref{~=}
+
+LP automatically declares an equality operator \f{=} and an inequality operator
+\f{~=} with signature \fq{S,S:->Bool} for each sort \f{S}.  These operators 
+have the standard interpretation: two objects of some sort \f{S} are equal if
+and only if they are identical.
+\p
+Operationally, LP uses \olink{equational-rewriting}{equational term-rewriting}
+to reduce a term \fq{t} to a normal form \fq{t'} such that the formula 
+\fq{t = t'} is true.  For this purpose, LP:
+\begin{itemize}
+\item
+treats the equality operator as \dlink{operator-theory}{commutative} except
+when \f{S} is \f{Bool}, in which case LP treats it as a synonym for the
+associative-commutative operator \f{<=>} for 
+\dlink{connective}{logical equivalence}. 
+\item
+uses two hardwired rewrite rules for each sort \f{S}
+\begin{itemize}
+\item \f{x:S = x:S -> true}
+\item \f{x:S ~= y:S -> ~(x = y)}
+\end{itemize}
+\item
+\dlink{../commands/register}{registers} the operators \f{=} and \f{~=} as
+having \dlink{../ordering/status}{multiset status} for the purpose of
+\dlink{../commands/order}{orienting} formulas into rewrite rules.
+\end{itemize}
+

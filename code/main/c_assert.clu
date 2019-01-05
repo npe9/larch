@@ -1,0 +1,95 @@
+#extend
+
+% Processes the command "assert <axioms>".
+    
+c_assert = proc (i: interactive) signals (error)
+    scan: scanner := scanner$from_string("", i.p)
+    facts: fact_arr := assert_args(scan, i.symtab)
+       except when none: return
+	      when error: aborted(i.p, "error in assertions")
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    ai: ai_settings := system$get_default_ai(i.sys)
+    subsumed: bool_arr := bool_arr$fill(1, fact_arr$size(facts), false)
+    n: int := 0
+    for f: fact in fact_arr$elements(facts) do
+	n := n + 1
+	if ~fact_named(f) then set_fact_name(f, symtab$new_name(i.symtab)) end
+	tagcase f
+	   tag dr (dr: deduction_rule):
+	       system$add_deduction_rule(i.sys, dr, ai)
+	   tag eq (fo: formula):
+	       system$add_formula(i.sys, fo, ai, true)
+	   tag ir (ir: induction_rule):
+	       system$add_induction_rule(i.sys, ir)
+               if induction_rule$is_structural(ir) then
+	          % Put operators at the bottom of "i.sys.reg"
+		  system$register_extreme_ops(i.sys, ir.ops, true)
+		  end except when bottom, top (*): end
+	       for fo: formula in induction_rule$free_facts(ir, i.symtab) do
+		   system$add_formula(i.sys, fo, ai, true)
+		   end except when not_free: end
+	   tag ot (ot: op_theory):
+	       system$add_op_theory(i.sys, ot)
+	       % ENHANCE: Handle inconsistent op theories (e.g., when the
+	       % free operator theory is re-implemented).
+	       prover$reflatten(i)
+	   tag rr:
+	       fail("interactive$assert")
+	   end except when subsumed, inconsistent (*): subsumed[n] := true end
+	end
+    tracer$asserted(facts, subsumed)
+       except when none: return end		
+    prover$make_inferences(i, stabilize_task_mode)
+       except when interrupt, proved: end
+    end c_assert
+
+
+% Reads a list of semicolon-separated facts using the multiline input
+% convention.  Signals "none" if there is no input.  Writes messages to "scan",
+% and signals "error", if there are errors.  Otherwise returns an array
+% containing the facts.
+
+assert_args = proc (scan: scanner, stab: symtab) returns (fact_arr) 
+		signals (none, error)
+    query$get_more(scan, "the axioms", axiom_syntax)
+       resignal none
+    facts: fact_arr := fact_arr$[]
+    err: bool := false
+    while ~token$is_eof(scan.nextToken) do
+	err1: bool := false
+	f: fact := pfact$read(scan, stab)
+	   except when error: err1 := true end
+	if err1
+	   then err := true
+		find_semicolon(scan)
+	   else fact_arr$addh(facts, f)
+	   end
+	tagcase scan.nextToken
+	   tag semicolon: scanner$get(scan)
+	   tag eof: break
+	   others: scanner$error(scan, "expecting semicolon")
+		   signal error
+	   end
+	end
+    if err
+       then signal error
+       else return(facts)
+       end
+    end assert_args
+
+    
+% Advances "scan" to the next semicolon, or to the end of the scanner if there
+% are no semicolons.
+    
+% ENHANCE: stop at keyword?
+    
+find_semicolon = proc (scan: scanner)
+    while ~token$is_semicolon(scan.nextToken)
+	    cand ~token$is_eof(scan.nextToken) do
+	scanner$get(scan)
+	end
+    end find_semicolon
+
+
+    

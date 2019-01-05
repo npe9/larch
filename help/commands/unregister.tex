@@ -1,0 +1,32 @@
+\doc{The unregister command}
+\ref{unregister-command}
+\ref{ordering-information}
+
+The \def{unregister command} causes LP to discard information used to control
+the registered and polynomial orderings.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{unregister-command}   ::= \f{unregister} \s{ordering-information}
+\sd{ordering-information} ::= \f{registry} | ( \f{bottom} | \f{top} ) \slink{../logic/operator}{operator}+[,]
+\end{verbatim}
+
+Note: The first word in the \s{ordering-information} can be
+\dlink{../misc/abbreviation}{abbreviated}.
+
+
+\head{2}{Examples}
+\begin{verbatim}
+unregister bottom succ
+unregister registry
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{unregister registry} command deletes all information used by the
+\dlink{../ordering/registered}{registered} and
+\dlink{../ordering/polynomial}{polynomial} orderings to orient formulas into
+rewrite rules.
+\p
+The \fq{unregister top} and \fq{unregister bottom} commands remove the listed
+operators from the top and bottom of the registry used by the registered
+orderings. 

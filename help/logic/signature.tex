@@ -1,0 +1,41 @@
+\doc{Signatures}
+\ref{signatures}
+\ref{domain}
+\ref{range}
+
+The \def{signature} of an operator specifies its domain and range sorts.
+
+\head{2}{Syntax}
+\begin{verbatim}
+\sd{signature} ::= \s{domain} \f{->} \s{range}
+\sd{domain}    ::= \slink{sort}{sort}*,
+\sd{range}     ::= \slink{sort}{sort}
+\end{verbatim}
+
+
+\head{2}{Examples}
+\begin{quote}
+\begin{description}
+\dt \f{->Nat}                      
+\dd
+Signature for a nullary operator (constant) of sort \f{Nat}
+\p
+\dt \f{Bool->Bool}              
+\dd
+Signature for a unary operator from sort \f{Bool} to sort \f{Bool}
+\p
+\dt \f{Nat,Nat->Nat}  
+\dd        
+Signature for a binary operator from sort \f{Nat} to sort \f{Nat}
+\p
+\dt \f{Element,Set->Set}    
+\dd 
+Signature for a binary operator from sorts \f{Element} and \f{Set} to sort
+\f{Set}
+\end{description}
+\end{quote}
+ 
+\head{2}{Usage}
+
+Signatures appear in \dlink{../commands/declare}{declarations} and
+qualifications for \dlink{operator}{operators}.

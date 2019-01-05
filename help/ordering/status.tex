@@ -1,0 +1,48 @@
+\doc{Registered orderings: status}
+\ref{status-constraint}
+\ref{left-to-right-status}
+\ref{right-to-left-status}
+\ref{multiset-status}
+
+The status of an operator determines which of its arguments is given the most
+weight when using a \dlink{registered}{registered ordering} to orient an
+equation containing that operator into a provably terminating rewrite rule.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{status-constraint} ::= \f{status} \s{status} \slink{../logic/operator}{operator}+[,]
+\sd{status}            ::= \f{left-to-right} | \f{right-to-left} | \f{multiset}
+\end{verbatim}
+
+Note: The word \fq{status} and the \s{status} can be 
+\dlink{../misc/abbreviation}{abbreviated}.
+
+
+\head{2}{Examples}
+\begin{verbatim}
+status left-to-right f, g
+status multiset +
+\end{verbatim}
+
+\head{2}{Usage} 
+LP assigns a status to operators, if necessary, when using a registered
+ordering to orient equations into rewrite rules.  Users can assign a status to
+an operator with the \dflink{../commands/register}{register status} command.
+\p
+The \fq{left-to-right} and \fq{right-to-left} statuses are called
+\def{lexicographic} statuses.  The assign more weight, respectively, to the
+leftmost or rightmost arguments of an operator.  They are useful when orienting
+the associativity equation \fq{f(f(x,y),z) = f(x,f(y,z))}.  If \fq{f} has
+\fq{left-to-right}, this equation would be oriented from left to right.  If
+\fq{f} has \fq{right-to-left} status, it would be would be oriented from right
+to left.
+\p
+The \fq{multiset} status is appropriate for 
+\llink{operator-theory}{ac and commutative} operators, because it gives all
+arguments equal weight.
+\p
+The \dlink{dsmpos}{dsmpos} ordering is defined on terms containing an operator
+without a defined status if the ordering would produce the same results no
+matter what status was given to that operator.  This property allows LP or the
+user to define the status of an operator without invalidating the proof of
+termination for previously oriented rewrite rules.

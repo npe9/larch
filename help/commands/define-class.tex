@@ -1,0 +1,42 @@
+\doc{The define-class command}
+\ref{define-class-command}
+
+The \def{define-class command} introduces an abbreviation for a set of named
+facts.  This abbreviation can be used wherever \s{names} are required as an
+argument to a command.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{define-class-command} ::= \f{define-class} \slink{../misc/class}{class-name} [ \slink{../misc/names}{names} ]
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+define-class $facts nat, set
+define-class $facts1 copy($facts)
+define-class $old eval(*)
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{define-class} command defines \s{class-name} as an abbreviation for
+\s{names}.  If no \s{names} are specified, the command prints the current
+definition of \s{class-name}.  The examples define the following abbreviations:
+\begin{itemize}
+\item 
+\f{$facts} is an abbreviation for \fq{nat, set}.  The command 
+\fq{display $facts} is equivalent to the command \fq{display nat, set}.
+\p
+\item
+\f{$facts1} is also an abbreviation for \fq{nat, set}.  Without the \fq{copy}
+operation, it would be an abbreviation for \f{$facts}, whose meaning would
+change if \f{$facts} was redefined.
+\p
+\item
+\f{$old} is an abbreviation for the list of names of all facts in LP's logical 
+system when the \fq{define-class} command was executed; the \fq{eval} operation
+forces the evaluation of its argument \fq{*}.  The command
+\fq{display $old} displays the current forms of any of those facts that are
+still in LP's logical system when the \fq{display} command is executed.
+\end{itemize}
+
+See also \slink{../miscs/name}{name}.

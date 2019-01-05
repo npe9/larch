@@ -1,0 +1,109 @@
+#extend
+
+% A "rrp_table" maps operators (including pseudo-operators representing
+% quantifiers) to sets of active rewrite rules.  Each rewrite rule in the set
+% corresponding to a particular operator has that operator as the root of its
+% left side.  A "rrp_table" is used to reduce the number of rewrite rules that
+% must be examined when attempting to rewrite a term.
+
+rrp_table = cluster is
+	new, insert, all_images, exists, delete, copy, _gcd, decode, encode
+
+    % The rep maps (keys of) operators to sets of rewrite rules.
+    
+    rep = keyed_mapping[operator, rrp_set]
+    rrp_set = set[rr_prop]
+
+
+    % Returns an empty "rrp_table".
+
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+
+
+    % Inserts "rrp" into "rt", associating it with the root operator of its
+    % left side.  Signals "exists" if "rrp" is already in "rt".
+    % ENHANCE: insert unique?
+
+    insert = proc (rt: cvt, rrp: rr_prop) signals (exists)
+	begin
+	    rrp_set$insert(rep$image(rt, rrp.prop.left.root_or_quant), rrp)
+	    return
+	    end
+	   resignal exists
+	   except when missing: end
+	rep$insert(rt, rrp.prop.left.root_or_quant, rrp_set$[rrp])
+	   except when impossible: fail("rr_table$insert") end
+	end insert
+
+
+    % Yields all the rewrite rules in "rt" whose left side has "op" as its
+    % root operator and whose left side contains no operators not in "os".
+    
+    % NOTE: This procedure is not used.  If it is used, we need to think
+    % about how it interacts with quantifiers.
+
+    images = iter (rt: cvt, op: operator, os: op_set) yields (rewrite_rule)
+	for rrp: rr_prop in rrp_set$elements(rep$image(rt, op)) do
+            if op_set$is_subset(rrp.prop.left.ops, os) then yield(rrp.prop) end
+	    end except when missing: end
+	end images
+
+
+    % Yields all the rewrite rules in "rt" whose left side has "op" as its root
+    % operator.
+
+    all_images = iter (rt: cvt, op: operator) yields (rewrite_rule)
+	for rrp: rr_prop in rrp_set$elements(rep$image(rt, op)) do
+	    yield(rrp.prop)
+	    end except when missing: end
+	end all_images
+
+
+    % Return "true" iff "rrp" is in "rt".
+
+    exists = proc (rt: cvt, rrp: rr_prop) returns (bool)
+	return(rrp_set$exists(rep$image(rt, rrp.prop.left.root_or_quant), rrp))
+	   except when missing: return(false) end
+	end exists
+
+
+    % Deletes "rrp" from "rt".  Signals "missing" if "rrp" is not in "rt".
+
+    delete = proc (rt: cvt, rrp: rr_prop) signals (missing)
+	rs: rrp_set := rep$image(rt, rrp.prop.left.root_or_quant)
+	   resignal missing
+	rrp_set$delete(rs, rrp)
+	   resignal missing
+	if rrp_set$empty(rs) then
+	   rep$delete(rt, rrp.prop.left.root_or_quant)
+	   end
+	end delete
+
+
+    % Returns a copy of "x".
+
+    copy = proc (x: cvt) returns (cvt)
+	return(rep$copy(x))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end rrp_table

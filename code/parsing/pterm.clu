@@ -1,0 +1,831 @@
+#extend
+
+% This cluster parses external representations for terms using the following
+% syntax:
+
+%     term           ::= "if" term "then" term "else" term
+%			   | subterm
+%     subterm	     ::= subterm { simpleOp subterm }*
+%			   | { simpleOp | quantifier }* simpleOp secondary
+%			   | { simpleOp | quantifier }* quantifier primary
+%			   | secondary simpleOp+
+%     quantifier     ::= quantifierSym variable
+%     secondary      ::= primary
+%			   | [ primaryHead | primary DOT primaryHead ] 
+%			     bracketed 
+%			     [ primary | DOT primaryHead primaryTail* ]
+%     primary	     ::= primaryHead primaryTail*
+%     primaryHead    ::= simpleId [ "(" term+, ")" ]
+%                          | "(" term ")"
+%     primaryTail    ::= "." primary
+%                          | [ ":" sort ]
+%     bracketed      ::= openSym term*, closeSym [ ":" sort ]
+
+
+% The "token" cluster defines the terminal symbols "simpleOp", "simpleId",
+% "openSym", and "closeSym".  The "psort" cluster defines the nonterminal
+% symbol "sort".  The "variable" cluster defines the nonterminal "variable".
+% Each "simpleOp" used as an infix operator has a priority between
+% "lowInfixPriority" and "topInfixPriority".
+
+% Terms are sort checked and disambiguated in two passes.  The first pass is
+% performed by the internal procedure "findPossibleIds".  It works from the
+% bottom up, determining all possible sorts for a term and all variables and
+% operators in the symbol table that can possibly match the identifier in the
+% term, given the number of and possible sorts for the arguments of the term.
+% The second pass is performed by the procedure "disambiguate".  It works from
+% the top down, assigning a unique sort to each term and picking a unique
+% operator or variable to correspond to the identifier in each term.
+
+
+pterm = cluster is disambiguate, get_sorts, read, read_overloadings
+
+    rep    = record[loc: locator,	% locator for term
+    		    parens: bool,	% true if parenthesized
+		    psorts: sort_set,   % possible sorts for term
+		    qual: maybeSort,    % user-supplied qualification for term
+		    tree: tree]         % structure of term
+    tree   =  oneof[funct: funct, 	% function with non-simpleId operator
+		    quant: quant,	% quantified subterm
+		    var: var]           % variable or constant
+    var    = record[id: identifier,	% identifier for variable or constant
+		    pops: op_set,	% possible constants
+		    pvars: var_set]	% possible variables
+    funct  = record[args: pterm_arr,	% arguments of operator
+		    op: identifier,	% operator identifier
+		    oploc: locator,	% locator for operator
+		    pops: op_set]	% possible operators
+    quant  = record[id: identifier,	% identifier for quantified variable
+		    pquants: quant_set,	% possible quantifiers
+		    sort: maybeSort,	% user-supplied qualification for id
+		    term: pterm,	% subterm
+		    univ: bool,		% true if quantifier is universal
+		    vloc: locator]	% locator for variable
+
+    maybeSort   = oneof[exists: sortNode, 
+			none: null]
+    maybeQuant  = oneof[known: quantifier, 
+                        unknown: bool]	% true if quantifier is universal
+    pterm_arr   = array[pterm]
+    quant_set	= set[quantifier]
+    sortSet_arr = array[sort_set]
+    sortNode    = struct[sort: sort, loc: locator]
+
+
+    % Disambiguates "pt" and returns the corresponding term.  Writes a message
+    % to "scan", and signals "error", if "pt" is ambiguous.  Assumes: "pt" has
+    % been annotated by pass one of sort checking and that "s" is a member of
+    % "pt.psorts".
+
+    disambiguate = proc (pt: cvt, s: sort, scan: scanner) returns (term)
+		     signals (error)
+        tagcase pt.tree
+	   tag funct: return(assignFunctIds(pt, s, scan))
+	   tag quant: return(assignQuantIds(pt, s, scan))
+	   tag var:   return(assignVarIds(pt, s, scan))
+	   end resignal error
+	end disambiguate
+	   
+
+    % Returns the set of possible sorts for "pt".  Assumes: "pt" has been
+    % annotated by pass one of sort checking.
+    
+    get_sorts = proc (pt: cvt) returns (sort_set)
+	return(sort_set$copy1(pt.psorts))
+	end get_sorts
+
+
+    % Scans and returns a term from "scan".  Writes a message to "scan", and
+    % signals "error", if "scan" does not begin with a representation for an
+    % unambiguous term constructed from identifiers in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (term)
+	     signals (error)
+        pt: rep := down(read_overloadings(scan, stab))
+           resignal error
+        if sort_set$size(pt.psorts) = 1
+           then return(disambiguate(up(pt), sort_set$any_element(pt.psorts),
+		                    scan))
+           else scanner$error_at1(scan, pt.loc, "ambiguous sort for term")
+                psort$print_set(scan.printer, "Possible sorts: ", pt.psorts)
+		scanner$error_at2(scan, pt.loc)
+                signal error
+           end resignal error
+        end read
+
+
+    % Scans and returns a term from "scan".  Writes a message to "scan", and
+    % signals "error", if "scan" does not begin with a representation for a
+    % (possibly ambiguous) term constructed from identifiers in "stab".
+
+    read_overloadings = proc (scan: scanner, stab: symtab) returns (cvt)
+			  signals (error)
+        pt: rep := read_term(scan)
+           resignal error
+        findPossibleIds(pt, stab, scan)
+           resignal error
+	return(pt)
+        end read_overloadings
+
+
+    % Internal scanning procedures
+    
+    % (Internal procedure) Scans a "term" from "scan" and returns the
+    % corresponding "pterm".  Writes a message to "scan", and signals
+    % "error", if "scan" does not begin with a legal "term".
+
+    read_term = proc (scan: scanner) returns (rep) signals (error)
+	tok: token := scan.nextToken
+	loc: locator := tok.loc
+	if token$is_ifOp(scan.nextToken)
+	   then scanner$get(scan)
+		args: pterm_arr := pterm_arr$[up(read_term(scan))]
+		scanner$expecting_id(scan, "then")
+		pterm_arr$addh(args, up(read_term(scan)))
+		scanner$expecting_id(scan, "else")
+		pterm_arr$addh(args, up(read_term(scan)))
+		return(make_funct(identifier$ifOp(), args, loc, loc))
+	   else return(read_subterm(scan, topInfixPriority))
+	   end resignal error
+        end read_term
+    
+    
+    % (Internal procedure) Scans a "subterm" with infix operators having
+    % priority "priority" from "scan" and returns the corresponding "pterm".
+    % Writes a message to "scan", and signals "error", if "scan" does not begin
+    % with such a "subterm".
+
+    read_subterm = proc (scan: scanner, priority: int) 
+		     returns (rep) signals (error)
+	msg = "expecting variable, simple operator, or term"
+	pt: rep 
+	if priority > lowInfixPriority then 
+	   pt := read_subterm(scan, priority - 1)
+	 elseif priority = lowInfixPriority then
+	   tagcase scan.nextToken
+	      tag simpleOp, quantifierSym:
+		  return(read_prefixTerm(scan, true))
+	      tag openSym, left_paren, unreservedSimpleId:
+		  pt := read_secondary(scan)
+		  if token$is_somefixOp(scan.nextToken) then
+		     tok1: token := scan.lookAhead
+		     if ~token$is_openSym(tok1) 
+			  cand ~token$is_left_paren(tok1)
+			  cand ~token$is_unreservedSimpleId(tok1) then
+			return(read_postfixTerm(scan, pt))
+			end
+		     end
+	      others:
+		  scanner$error(scan, msg)
+		  signal error
+	      end resignal error
+	 else return(read_secondary(scan))
+	 end resignal error
+	optok: token := scan.nextToken
+	op: identifier := optok.infixId
+	   except when not_infix: return(pt) end
+	if op.priority > priority then return(pt) end
+	loc: locator := pt.loc
+	op1tok: token := optok
+	while true do
+	    scanner$get(scan)
+	    pt1: rep := read_subterm(scan, priority - 1)
+	    pt := make_funct(op, pterm_arr$[up(pt), up(pt1)], loc, optok.loc)
+	    op1: identifier := scan.nextToken.infixId
+	    if op1.priority > priority then return(pt) end
+	    if op1 ~= op cor ~op.left_assoc then
+	       scanner$error(scan,
+			     "parentheses needed to specify associativity")
+	       signal error
+	       end
+	    end resignal error
+	   except when not_infix: end
+	return(pt)
+	end read_subterm
+    
+
+    % (Internal procedure) Scans a prefix "subterm" from "scan", a "secondary"
+    % (if "secondaryOK" is true), or a "primary" (if "secondaryOK" is false),
+    % and returns the corresponding "pterm".  Writes a message to "scan", and
+    % signals "error", if "scan" does not begin with a legal such term.
+    % Assumes: the first token in "scan" can start a prefix "subterm" or a
+    % "secondary".
+
+    read_prefixTerm = proc (scan: scanner, secondaryOK: bool) returns (rep) 
+			signals (error)
+	tok: token := scan.nextToken
+	tagcase tok
+	   tag simpleOp:
+	       id: identifier := scanner$get(scan).prefixId
+	       return(make_funct(id, 
+		                 pterm_arr$[up(read_prefixTerm(scan, true))],
+				 tok.loc, tok.loc))
+	   tag quantifierSym:
+	       scanner$get(scan)
+	       idtok: token :=
+		   scanner$expecting(scan, token$is_unreservedSimpleId,
+				     "a variable")
+	       id: identifier := identifier$make_simple(idtok.text)
+	       ms: maybeSort
+	       if token$is_colon(scan.nextToken)
+		  then sloc: locator := scanner$get(scan).loc
+		       sn: sortNode :=
+			   sortNode${sort: psort$scan_sort(scan), loc: sloc}
+		       ms := maybeSort$make_exists(sn)
+		  else ms := maybeSort$make_none(nil)
+		  end
+	       q: quant := quant${id: id,
+				  pquants: quant_set$[],
+				  sort: ms,
+				  term: up(read_prefixTerm(scan, false)),
+				  univ: token$is_allSym(tok),
+				  vloc: idtok.loc}
+	       return(rep${loc: tok.loc,
+			   parens: false,
+			   psorts: sort_set$[],
+			   qual: maybeSort$make_none(nil),
+			   tree: tree$make_quant(q)})
+	   others:
+	       if secondaryOK
+		  then return(read_secondary(scan))
+		  else return(read_primary(scan))
+		  end
+	   end resignal error
+	end read_prefixTerm
+
+
+    % (Internal procedure) Scans the remainder of a postfix "subterm" that
+    % begins with "pt" from "scan" and returns the corresponding "pterm".
+    % Writes a message to "scan", and signals "error", if "scan" does not begin
+    % with the remainder of such a term.
+
+    read_postfixTerm = proc (scan: scanner, pt: rep) returns (rep)
+	while true do
+	    tok: token := scan.nextToken
+	    id: identifier := tok.postfixId
+	    scanner$get(scan)
+	    pt := make_funct(id, pterm_arr$[up(pt)], pt.loc, tok.loc)
+	    end except when not_postfix: end
+	return(pt)
+	end read_postfixTerm
+
+
+    % (Internal procedure) Scans an "secondary" from "scan" and returns the
+    % corresponding "pterm".  Writes a message to "scan", and signals
+    % "error", if "scan" does not begin with a legal "secondary".
+
+    read_secondary = proc (scan: scanner) returns (rep) signals (error)
+	loc: locator := scan.nextToken.loc
+	pt: rep
+	before: bool := false
+	tagcase scan.nextToken
+	   tag left_paren, unreservedSimpleId:
+	       % NOTE: We call read_primary even though the grammar disallows a
+	       % primary that ends with a qualification as the first argument
+	       % of a bracketed operator.  The effect is that the error
+	       % message produced for input like "a:T[n]" will complain that
+	       % no "a" is declared with sort "T[n]".
+	       pt := read_primary(scan)
+	       before := true
+	   others:
+	   end resignal error
+	if token$is_openSym(scan.nextToken) then
+	   open: token := scanner$get(scan)
+	   args: pterm_arr := pterm_arr$[]
+	   if before then pterm_arr$addh(args, up(pt)) end
+	   m: int := 0
+	   if ~token$is_closeSym(scan.nextToken) then
+	      pterm_arr$addh(args, up(read_term(scan)))
+	      m := m + 1
+	      while token$is_comma(scan.nextToken) do
+		  scanner$get(scan)
+		  pterm_arr$addh(args, up(read_term(scan)))
+		  m := m + 1
+		  end
+	      end
+	   close: token :=
+	       scanner$expecting(scan, token$is_closeSym, "closing symbol")
+	   sn: sortNode
+	   qualExists: bool := false
+	   if token$is_colon(scan.nextToken) then
+	      scanner$get(scan)
+	      loc1: locator := scan.nextToken.loc
+	      sn := sortNode${sort: psort$scan_sort(scan), loc: loc1}
+	      qualExists := true
+	      end
+	   after: bool := false
+	   select: bool := false
+	   tagcase scan.nextToken
+	      tag left_paren, unreservedSimpleId:
+		  after := true
+		  pterm_arr$addh(args, up(read_primary(scan)))
+	      tag selectSym:
+	          select := true
+	      others:
+	      end
+	   id: identifier :=
+	       identifier$make_mixfix(before, open.text, m, close.text, after)
+	   pt := make_funct(id, args, loc, open.loc)
+	   if qualExists then set_qual(pt, sn, scan) end
+	   if select then pt := read_primaryTail(scan, pt) end
+	   return(pt)
+	 elseif before then return(pt)
+	 else scanner$error(scan, "expecting primary term or opening bracket")
+	      signal error
+	 end resignal error
+	end read_secondary
+
+
+    % (Internal procedure) Scans a "primary" from "scan" and returns the
+    % corresponding "pterm".  Writes a message to "scan", and signals "error",
+    % if "scan" does not begin with a legal "primary".
+    
+    read_primary = proc (scan: scanner) returns (rep) signals (error)
+	return(read_primaryTail(scan, read_primaryHead(scan)))
+	   resignal error
+	end read_primary
+    
+
+    % (Internal procedure) Scans a (possibly empty) sequence of "primaryTail"s
+    % from "scan" and returns the "pterm" obtained by applying them to "pt".
+    % Writes a message to "scan", and signals "error", if "scan" does not begin
+    % with a legal sequence of "primaryTail"s.
+
+    read_primaryTail = proc (scan: scanner, pt: rep) returns (rep) 
+			 signals (error)
+	while true do
+	    tagcase scan.nextToken
+	       tag selectSym:   pt := read_selection(scan, pt)
+	       tag colon:       read_qualification(scan, pt)
+	       others:          break
+	       end resignal error
+	    end
+	return(pt)
+	end read_primaryTail
+
+
+    % (Internal procedure) Scans a "primaryHead" from "scan" and returns the
+    % corresponding "pterm".  Writes a message to "scan", and signals "error",
+    % if "scan" does not begin with a legal "primaryHead".
+
+    read_primaryHead = proc (scan: scanner) returns (rep) signals (error)
+	msg = "a right parenthesis"
+	tok: token := scan.nextToken
+	tagcase tok
+	   tag left_paren:
+	       scanner$get(scan)
+	       pt: rep := read_term(scan)
+	       pt.parens := true
+	       scanner$expecting(scan, token$is_right_paren, msg)
+	       return(pt)
+	   tag unreservedSimpleId:
+	       id: identifier := identifier$make_simple(tok.text)
+	       scanner$get(scan)
+	       if token$is_left_paren(scan.nextToken)
+		  then scanner$get(scan)
+		       args: pterm_arr := pterm_arr$[up(read_term(scan))]
+		       while token$is_comma(scan.nextToken) do
+			   scanner$get(scan)
+			   pterm_arr$addh(args, up(read_term(scan)))
+			   end
+		       scanner$expecting(scan, token$is_right_paren, msg)
+		       return(make_funct(id, args, tok.loc, tok.loc))
+		  else v: var := var${id: id,
+				      pops: op_set$[],
+				      pvars: var_set$[]}
+		       return(rep${loc: tok.loc,
+				   parens: false,
+				   psorts: sort_set$[],
+				   qual: maybeSort$make_none(nil),
+				   tree: tree$make_var(v)})
+		  end
+	   others:
+	       scanner$error(scan, "expecting a primary term")
+	       signal error
+	   end resignal error
+	end read_primaryHead
+
+
+    % (Internal procedure) Scans a "selectSym" and a "primaryHead" from "scan"
+    % and returns the "pterm" obtained by applying an infix "selectSym" to "pt"
+    % and the "primaryHead".  Writes a message to "scan", and signals "error",
+    % if "scan" does not begin with a "selectSym" followed by a legal
+    % "primaryHead".  Assumes: "scan.nextToken" is a "selectSym".
+
+    read_selection = proc (scan: scanner, pt: rep) returns (rep)
+		       signals (error)
+	tok: token := scanner$get(scan)
+	tagcase scan.nextToken
+	   tag left_paren, unreservedSimpleId:
+	       pt1: rep := read_primaryHead(scan)
+	       id: identifier := identifier$selectOp()
+	       return(make_funct(id, pterm_arr$[up(pt), up(pt1)],
+				 pt.loc, tok.loc))
+	   others:
+	       scanner$error(scan, "expecting primary after `.'")
+	       signal error
+	   end resignal error
+	end read_selection
+
+
+    % (Internal procedure) Scans a ":" and a "sort" from "scan".  Qualifies
+    % "pt" with this sort.  Writes a message to "scan", and signals "error", if
+    % "scan" does not begin with a ":" followed by a legal "sort", or if the
+    % "sort" cannot be the sort of "pt".  Assumes: "scan.nextToken" is a ":".
+
+    read_qualification = proc (scan: scanner, pt: rep) signals (error)
+	scanner$get(scan)
+	tok: token := scan.nextToken
+	set_qual(pt, sortNode${sort: psort$scan_sort(scan), loc: tok.loc},
+		 scan)
+	   resignal error
+	end read_qualification
+
+    
+    % (Internal procedure) Returns a "pterm" corresponding to a "funct" with
+    % operator identifier "id", arguments "args", term locator "ptloc", and
+    % operator locator "oploc".
+
+    make_funct = proc (id: identifier, args: pterm_arr, ptloc, oploc: locator)
+		   returns (rep)
+	f: funct := funct${args: args, op: id, oploc: oploc, pops: op_set$[]}
+	return(rep${loc: ptloc,
+		    parens: false,
+		    psorts: sort_set$[],
+		    qual: maybeSort$make_none(nil),
+		    tree: tree$make_funct(f)})
+	end make_funct
+
+    
+    % (Internal procedure) Sets "pt.qual" to "sn".  Writes a message to "scan",
+    % and signals "error", if "pt.qual" was already set to a different sort.
+
+    set_qual = proc (pt: rep, sn: sortNode, scan: scanner) signals (error)
+	if sn.sort ~= maybeSort$value_exists(pt.qual).sort then
+	   scanner$error_at(scan, sn.loc,
+			    "expecting same qualification as before")
+	   signal error
+	   end except when wrong_tag: end
+	if tree$is_quant(pt.tree) cand sn.sort ~= bool_sort() then
+	   scanner$error_at(scan, sn.loc,
+			    "expecting qualification to be `Bool'")
+	   signal error
+	   end
+	pt.qual := maybeSort$make_exists(sn)
+	end set_qual
+    
+
+    % Internal procedures for sort checking, pass 1
+
+    % (Internal procedure) Finds the set of possible sorts for "pt" and its
+    % subterms.  Annotates all identifiers in "pt" with the sets of variables
+    % and operators they can match in "stab".  Writes a message to "scan", and
+    % signals "error", if there is no possible match for some identifier.
+
+    findPossibleIds = proc (pt: rep, stab: symtab, scan: scanner)
+			signals (error)
+	tagcase pt.tree
+	   tag funct: findPossibleFunctIds(pt, stab, scan)
+	   tag quant: findPossibleQuantIds(pt, stab, scan)
+	   tag var:   findPossibleVarIds(pt, stab, scan)
+		      if sort_set$empty(pt.psorts) then
+			 scanner$error_at(scan, pt.loc,
+					  "undeclared constant or variable")
+			 signal error
+			 end
+	   end resignal error
+	end findPossibleIds
+
+
+    % (Internal procedure)  Performs the work of "findPossibleIds" for a
+    % functional term.
+
+    % ENHANCE: defer signalling, so as to check all arguments
+
+    findPossibleFunctIds = proc (pt: rep, stab: symtab, scan: scanner)
+			     signals (error)
+	msg1 = "Possible sorts for argument of selection operator: "
+	f: funct := tree$value_funct(pt.tree)
+	id: identifier := f.op
+	arity: int := pterm_arr$size(f.args)
+	rangeKnown: bool := true
+	range: sort := findSort(maybeSort$value_exists(pt.qual), stab, scan)
+	   resignal error
+	   except when wrong_tag: rangeKnown := false
+				  range := bool_sort()
+		  end
+	% Check for selectSym followed by a simpleId
+	selectOp: bool := false
+	id1: identifier
+	if id = identifier$selectOp() then
+	   arg2: rep := down(f.args[2])
+	   if arg2.parens then exit not_select end
+	   id1 := tree$value_var(arg2.tree).id.simple_to_postfix
+	      except when wrong_tag: exit not_select end
+	   selectOp := true
+	   end except when not_select: end
+	% Find matching operators
+	f.pops := op_set$[]
+	argSorts: sortSet_arr := sortSet_arr$predict(1, arity)
+	idFound: bool := false
+	id1Found: bool := false
+	if selectOp
+	   then arg1: rep := down(f.args[1])
+		findPossibleIds(arg1, stab, scan)
+		sortSet_arr$addh(argSorts, arg1.psorts)
+		arg2: rep := down(f.args[2])
+		findPossibleVarIds(arg2, stab, scan)
+		if sort_set$empty(arg2.psorts)
+		   then arity := 1
+		   else sortSet_arr$addh(argSorts, arg2.psorts)
+			idFound := findOps(id, 2, argSorts, rangeKnown, range,
+					   stab, f.pops)
+		   end
+		id1Found := findOps(id1, 1, argSorts, rangeKnown, range,
+				    stab, f.pops)
+	   else for arg: pterm in pterm_arr$elements(f.args) do
+		    findPossibleIds(down(arg), stab, scan)
+		    sortSet_arr$addh(argSorts, arg.sorts)
+		    end
+		idFound := findOps(id, arity, argSorts, rangeKnown, range,
+				   stab, f.pops)
+	   end resignal error
+	if op_set$empty(f.pops) then
+	   msg: string
+	   if identifier$is_logicalOp(id) then
+	      msg := "illegal signature for logical operator"
+	    elseif identifier$is_ifOp(id) then
+	      msg := "illegal signature for conditional operator"
+	    elseif id = identifier$eqOp() cor id = identifier$neqOp() then
+	      msg := "illegal signature for equality operator"
+	    elseif ~idFound cand ~id1Found then
+	      msg := "undeclared " || int$unparse(arity) || "-ary operator"
+	    elseif rangeKnown then
+	      msg := "no operator with matching signature"
+	    else msg := "no operator with matching domain sorts"
+	    end
+	   scanner$error_at1(scan, f.oploc, msg)
+	   p: printer := scan.printer
+	   if idFound cor id1Found then
+	      for i: int in sortSet_arr$indexes(argSorts) do
+		  psort$print_set(p, "Possible sorts for argument " ||
+				     int$unparse(i) || ": ", argSorts[i])
+		  end
+	      if rangeKnown then
+		 printer$text(p, "\nRange sort: ")
+		 psort$print(p, range)
+		 end
+	      end
+	   scanner$error_at2(scan, f.oploc)
+	   signal error
+	   end
+	pt.psorts := sort_set$[]
+	for op: operator in op_set$elements(f.pops) do
+	    sort_set$insert(pt.psorts, op.rng)
+	       except when exists: end
+	    end
+	end findPossibleFunctIds
+
+
+    % (Internal procedure) Adds to "ops" all operators in "stab" that match
+    % "id", have arity "arity", have domain sorts in "argSorts", and, if
+    % "rangeKnown" is true, have range "range".  Returns "true" if "stab"
+    % contains some operator matching "id" with arity "arity".
+    
+    findOps = proc (id: identifier, arity: int, argSorts: sortSet_arr,
+		    rangeKnown: bool, range: sort, stab: symtab, ops: op_set)
+		returns (bool)
+	foundId: bool := false
+	for op: operator in symtab$matching_ops(stab, id) do
+	    if op.arity ~= arity then continue end
+	    foundId := true
+	    for i: int in int$from_to(1, arity) do
+		if ~sort_set$exists(argSorts[i], op.dom[i]) then exit bad end
+		end except when bad: continue end
+	    if rangeKnown cand op.rng ~= range then continue end
+	    op_set$insert_unique(ops, op)
+	    end
+	return(foundId)
+	end findOps
+    
+    
+    % (Internal procedure)  Performs the work of "findPossibleIds" for a
+    % quantified term.
+
+    % ENHANCE: defer signalling, so as to check both quantifier and subterm
+    
+    findPossibleQuantIds = proc (pt: rep, stab: symtab, scan: scanner)
+			     signals (error)
+	q: quant := tree$value_quant(pt.tree)
+	pvars: var_set
+	tagcase q.sort
+	   tag exists:
+	       s: sort := findSort(maybeSort$value_exists(q.sort), stab, scan)
+	       v: variable := variable${id: q.id, sort: s}
+	       pvars := var_set$[symtab$lookup_var(stab, v)]
+	   tag none:
+	       pvars := symtab$lookup_vars(stab, q.id)
+	   end resignal error
+	   except when missing:
+		       scanner$error_at(scan, q.vloc, "undeclared variable")
+		       signal error
+		  end
+	q.pquants := quant_set$[]
+	for v: variable in var_set$elements(pvars) do
+	    qfr: quantifier
+	    if q.univ
+	       then qfr := quantifier$make_universal(v, stab)
+	       else qfr := quantifier$make_existential(v, stab)
+	       end
+	    quant_set$insert_unique(q.pquants, qfr)
+	    end
+	findPossibleIds(down(q.term), stab, scan)
+	   resignal error
+	pt.psorts := sort_set$[bool_sort()]
+	end findPossibleQuantIds
+
+
+    % (Internal procedure) Performs the work of "findPossibleIds" for a
+    % variable term, but does not report an error if no identifiers were found.
+
+    findPossibleVarIds = proc (pt: rep, stab: symtab, scan: scanner)
+			   signals (error)
+	v: var := tree$value_var(pt.tree)
+	id: identifier := v.id
+	tagcase pt.qual
+	   tag none:
+	       v.pvars := symtab$lookup_vars(stab, id)
+	   tag exists (sn: sortNode):
+	       v1: variable := variable${id: id, sort: sn.sort}
+	       v.pvars := var_set$[symtab$lookup_var(stab, v1)]
+	   end except when missing: v.pvars := var_set$[] end
+	sortKnown: bool := true
+	s: sort := findSort(maybeSort$value_exists(pt.qual), stab, scan)
+	   resignal error
+	   except when wrong_tag: sortKnown := false end
+	v.pops  := op_set$[]
+	for op: operator in symtab$matching_ops(stab, id) do
+	    if op.arity ~= 0 then continue end
+	    if sortKnown cand op.rng ~= s then continue end
+	    op_set$insert(v.pops, op)
+	    end
+	pt.psorts := var_and_op_sorts(v)
+	end findPossibleVarIds
+
+
+    % (Internal procedure) Returns the sort in "stab" that matches "sn".
+    % Writes a message to "scan", and signals "error", if there is no matching
+    % sort.
+
+    findSort = proc (sn: sortNode, stab: symtab, scan: scanner) returns (sort)
+		 signals (error)
+	return(symtab$lookup_sort(stab, sn.sort))
+	   except when missing: end
+	scanner$error_at(scan, sn.loc, "undeclared sort")
+	signal error
+	end findSort
+
+    
+    % (Internal procedure)  Returns a set containing the sorts of the variables
+    % in "vv.pvars" and the range sorts of the operators in "vv.pops".
+    
+    var_and_op_sorts = proc (vv: var) returns (sort_set)
+	ss: sort_set := sort_set$[]
+	for v: variable in var_set$elements(vv.pvars) do
+	    sort_set$insert(ss, v.sort)
+	       except when exists: end
+	    end
+	for op: operator in op_set$elements(vv.pops) do
+	    sort_set$insert(ss, op.rng)
+	       except when exists: end
+	    end
+	return(ss)
+	end var_and_op_sorts
+    
+
+    % Internal procedures for sort checking, pass 2
+
+    % (Internal procedure) Performs the work of "disambiguate" for function 
+    % terms.
+    
+    % ENHANCE: delay signalling, so as to check all arguments
+    
+    assignFunctIds = proc (pt: rep, s: sort, scan: scanner) returns (term)
+		       signals (error)
+	f: funct := tree$value_funct(pt.tree)
+	found: bool := false
+	ambiguous: bool := false
+	op: operator
+	for op1: operator in op_set$elements(f.pops) do
+	    if s ~= op1.rng then continue end
+	    if found
+	       then if identifier$is_selectOp(op.id) then
+		       if identifier$is_selectOp(op1.id)
+			  then exit ambiguous   % two selectOps
+			  else continue         % prefer the selectOp "op"
+			  end
+		     elseif ~identifier$is_selectOp(op1.id) then
+		       ambiguous := true
+		       continue                 % look for later selectOp
+		     end
+	       end
+	    found := true
+	    ambiguous := false
+	    op := op1
+	    end except when ambiguous: ambiguous := true end
+	if ambiguous then
+	   scanner$error_at1(scan, f.oploc, "ambiguous operator")
+	   printer$text(scan.printer, "\n~2JPossible signatures: ")
+	   selectOp: bool := identifier$is_selectOp(op.id)
+	   for op2: operator in op_set$elements(f.pops) do
+	       if op2.rng = s
+		    cand (~selectOp cor identifier$is_selectOp(op2.id)) then
+		  printer$text(scan.printer, "\n")
+		  psignature$print(scan.printer, op2.sig)
+		  end
+	       end
+	   scanner$error_at2(scan, f.oploc)
+	   signal error
+	   end
+	if ~found then
+	   scanner$error_at1(scan, f.oploc, "no operator declared with range ")
+	   p: printer := scan.printer
+	   psort$print(p, s)
+	   printer$text(p, "\n~2JPossible signatures: ")
+	   for op1: operator in op_set$elements(f.pops) do
+	       printer$text(p, "\n")
+	       psignature$print(p, op1.sig)
+	       end
+	   scanner$error_at2(scan, f.oploc)
+	   signal error
+	   end
+	dom: sort_seq := op.dom
+	n: int := sort_seq$size(dom)
+	% Note: This value of "n" will be "pterm_arr$size(f.args) - 1" when
+	% the last element in "f.args" was a "simpleId" that was disambiguated
+	% as part of a "selectOp".
+	args: term_arr := term_arr$predict(1, n)
+	for i: int in int$from_to(1, n) do
+	    term_arr$addh(args, disambiguate(f.args[i], dom[i], scan))
+	    end resignal error
+	return(term$make_funct(op, term_seq$a2s(args)))
+	end assignFunctIds
+
+
+    % (Internal procedure) Performs the work of "disambiguate" for quantified
+    % terms.
+    
+    assignQuantIds = proc (pt: rep, s: sort, scan: scanner) returns (term)
+		       signals (error)
+	q: quant := tree$value_quant(pt.tree)
+	qfr: quantifier
+	t: term := disambiguate(q.term, s, scan)
+	   resignal error
+	found: bool := false
+	for qfr1: quantifier in quant_set$elements(q.pquants) do
+	    if var_set$exists(t.fvars, qfr1.var) then
+	       if found
+		  then scanner$error_at(scan, q.vloc, "ambiguous variable")
+		       signal error
+		  else found := true
+		       qfr := qfr1
+		  end
+	       end
+	    end
+	if ~found then
+	   n: int := quant_set$size(q.pquants)
+	   if n = 0 then
+	      scanner$error_at(scan, q.vloc, "undeclared variable")
+	      signal error
+	    elseif n = 1 then
+	      qfr := quant_set$any_element(q.pquants)
+	    else scanner$error_at(scan, q.vloc, "ambiguous variable")
+		 signal error
+	    end
+	   end
+	return(term$make_quant(qfr, t))
+	end assignQuantIds
+
+
+    % (Internal procedure) Performs the work of "disambiguate" for variable and
+    % constant terms.
+    
+    assignVarIds = proc (pt: rep, s: sort, scan: scanner) returns (term)
+		     signals (error)
+	vv: var := tree$value_var(pt.tree)
+	for v: variable in var_set$elements(vv.pvars) do
+	    if s = v.sort then return(term$make_var(v)) end
+	    end
+	for op: operator in op_set$elements(vv.pops) do
+	    if s = op.rng then return(term0(op)) end
+	    end
+	scanner$error_at1(scan, pt.loc,
+			  "undeclared constant or variable of sort ")
+	psort$print(scan.printer, s)
+	scanner$error_at2(scan, pt.loc)
+	signal error
+	end assignVarIds
+    
+    
+    end pterm
+

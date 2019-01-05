@@ -1,0 +1,45 @@
+\doc{The order command}
+\ref{order-command}
+
+The \def{order command} directs LP to attempt to orient formulas into rewrite
+rules. 
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{order-command} ::= \f{order} [ \slink{../misc/names}{names} ]
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+order
+order nat
+\end{verbatim}
+
+\head{2}{Usage} 
+When the \setlink{automatic-ordering} setting is \fq{on}, LP attempts to orient
+formulas into \llink{rewrite-rule}{rewrite rules} automatically.  When it is
+\fq{off}, LP orients formulas only in response to an explicit \fq{order}
+or \cflink{complete} command.  If no \s{names} are specified in an \fq{order}
+command, LP attempts to orient all formulas in the system.  If \s{names} are
+specified, LP attempts to orient only the named formulas (including any new
+formulas that LP generates during the ordering process, for example, as a
+result of applying a \llink{deduction-rule}{deduction rule} to a newly reduced
+fact).
+\p
+When a formula is an equation \fq{t1 = t2} or \fq{t1 <=> t2}, LP uses the
+current \setlink{ordering-method}, if possible, to orient it into the rewrite
+rule \fq{t1 -> t2} or into the rewrite rule \fq{t2 -> t1}.  When a formula
+\fq{f} is not an equation (i.e., when its principal operator is neither \f{=}
+nor \f{<=>}), LP orients it into the rewrite rule \fq{f -> true} (or into the
+rewrite rule \fq{f1 -> false}, if \fq{f} has the form \fq{~f1}).
+\p
+If the current ordering method is a \dlink{../ordering/registered}{registered}
+or \dlink{../ordering/polynomial}{polynomial} ordering, the \fq{order} command
+also attempts to orient the formulas into a provably terminating set of rewrite
+rules.  If the current ordering method is a
+\dlink{../ordering/brute-force}{brute-force} ordering, the \fq{order}
+command may orient the formulas into a nonterminating set of rewrite rules.
+\p
+Users can \olink{interrupt}{interrupt} and resume the operation of the
+\fq{order} command.
+

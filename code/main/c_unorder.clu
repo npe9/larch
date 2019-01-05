@@ -1,0 +1,23 @@
+#extend
+
+% Processes the "unorder" command by turning named rewrite rules back into
+% equations .
+
+c_unorder = proc (i: interactive) signals (error)
+    msg: string := "names of rewrite rules to unorder"
+    keys: keyword_table := keyword_table$[]
+    key: string, ns: name_set :=query$one_name_set(i, msg, keys, true)
+       except when none: return
+	      when no_names (key1: string): key := key1
+					    ns := name_set$universal()
+	      when error: aborted(i.p, "error in names")
+	      end resignal error
+    n: int := system$unorder(i.sys, ns)
+    printer$text(i.p, "\nChanged " || int$unparse(n))
+    if n = 1
+       then printer$text(i.p, " rewrite rule into a formula.\n")
+       else printer$text(i.p, " rewrite rules into formulas.\n")
+       end
+    end c_unorder
+    
+    

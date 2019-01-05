@@ -1,0 +1,16 @@
+#extend
+
+% Processes an appearance of <> in the input.  If box-checking is enabled,
+% reports an error.  Otherwise strikes the <> from the script file, if any.
+
+c_diamond = proc (i: interactive) signals (error)
+    if iodev$reading_script(i.io) cand prover$get_box_checking() then
+       printer$error(i.p)
+       printer$text(i.p, "\nError: <> does not create a subgoal.\n")
+       signal error
+       end
+    if iodev$pending_input(i.io) then iodev$getl(i.io) end
+    iodev$strike_script(i.io)
+    end c_diamond
+
+

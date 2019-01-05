@@ -1,0 +1,322 @@
+#extend
+
+% A scanner provides a stream of tokens.  Associated with a scanner is a
+% "printer" to which error messages can be written using the "error" operation.
+
+% ENHANCE:
+% (1) Use history or script instead of rep.previous
+% (2) add offset argument to create operations
+
+scanner = cluster is create, from_string, add_string, get_printer,
+		     get, get_nextToken, get_lookAhead,
+                     push, empty, skip_line, expecting, expecting_id, 
+		     error, error_at, error_at1, error_at2
+
+
+    % The "source" is the origin of the characters for the scanner; it can be a
+    % stream or a string.  The "previous" array holds the lines that have been
+    % read from the source, except for the current line, which is in "chars".
+    % The "column" is the index of the current character within "chars" (if
+    % there are tabs in "chars", it may not be the column in which the current
+    % character is printed).  The values of "chars" is not defined once "eof"
+    % becomes "true" when the source is exhausted.  The value of "peek" is a
+    % stack of previously scanned tokens.  Error messages are written to
+    % "error".
+    
+    rep = record[chars:    string,
+		 column:   int,
+		 eof:      bool,
+		 error:    printer,
+		 peek:     token_stack,
+		 previous: string_arr,	
+		 source:   source_type]
+
+    source_type = oneof[stream: stream, chars: string]
+    token_stack = stack[token]
+
+
+    % Returns a new scanner, where "arg.read" contains the text to be scanned
+    % and "arg.error" is the destination for error messages.  The locators in
+    % scanned tokens are based on treating the first character in "arg.read" as
+    % being in column 1 of line 1.  The "#extend" mode of the CLU compiler
+    % provides sugared invocations of the form 
+    %      scanner${read: stream, error: printer}
+
+    create = proc (arg: argument) returns (cvt) signals (not_possible(string))
+	argument = struct[error: printer, read: stream]
+	eof: bool := false
+	line: string := stream$getl(arg.read) || "\n"
+	   except when end_of_file: eof := true end
+	   resignal not_possible
+	return(rep${chars: 	line,
+	    	    column: 	1,
+	    	    eof: 	eof,
+		    error: 	arg.error,
+		    peek:   	token_stack$[],
+		    previous: 	string_arr$[],
+		    source: 	source_type$make_stream(arg.read)})
+	end create
+
+
+    % Returns a new scanner, where the text to be scanned is in "s" and error
+    % messages will be written to "err".
+
+    from_string = proc (s: string, err: printer) returns (cvt)
+	eof: bool := string$empty(s)
+	if ~eof cand s[string$size(s)] ~= '\n' then s := s || "\n" end
+	line, delim, tail: string := string_divide(s, "\n")
+	line := line || delim
+	return(rep${chars:	line,
+	            column: 	1,
+	    	    eof: 	eof,
+		    error: 	err,
+		    peek:   	token_stack$[],
+		    previous: 	string_arr$[],
+		    source: 	source_type$make_chars(tail)})
+	end from_string
+
+
+    % Replaces the text being scanned by "scan" by "s".  Signals "impossible"
+    % if "scan" was not created from a string.
+    
+    add_string = proc (scan: cvt, s: string) signals (impossible)
+	old: string := source_type$value_chars(scan.source)
+	   except when wrong_tag: signal impossible end
+	scan.eof := string$empty(s)
+	if ~scan.eof cand s[string$size(s)] ~= '\n' then s := s || "\n" end
+	line, delim, tail: string := string_divide(s, "\n")
+	scan.chars := line || delim
+	scan.column := 1
+	scan.peek := token_stack$[]
+	scan.previous := string_arr$[]
+	scan.source := source_type$make_chars(tail)
+	end add_string
+    
+
+    % (Internal procedure) Removes eof tokens from the top of "s.peek".
+    
+    pop_eof_tokens = proc (s: rep)
+	while token$is_eof(token_stack$top(s.peek)) do
+	    token_stack$pop(s.peek) 
+	    end except when empty: end
+	end pop_eof_tokens
+
+    
+    % Returns the error printer in "s".
+    
+    get_printer = proc (s: cvt) returns (printer)
+	return(s.error)
+	end get_printer
+    
+    
+    % Returns the current token in "s".  Returns the "eof" token if there are
+    % no more tokens in "s".
+
+    get_nextToken = proc (s: cvt) returns (token)
+	if token_stack$empty(s.peek) then peek(s) end
+	return(token_stack$top(s.peek))
+	end get_nextToken
+    
+
+    % Returns the second token in "s" without removing the current token from
+    % "s".  Returns the "eof" token if fewer than two tokens remain in "s".
+
+    get_lookAhead = proc (s: scanner) returns (token)
+	t1: token := get(s)
+	t2: token := s.nextToken
+	pop_eof_tokens(down(s))
+	push(s, t1)
+	return(t2)
+	end get_lookAhead
+
+
+    % Removes and returns the current token from "s", causing the token
+    % following the current one to become the new current token.  Returns the
+    % "eof" token if there are no more tokens in "s".
+
+    get = proc (s: cvt) returns (token)
+	if token_stack$empty(s.peek) then peek(s) end
+	this: token := token_stack$pop(s.peek)
+	if token$is_eof(this) then token_stack$push(s.peek, this) end
+	return(this)
+	end get
+
+
+    % (Internal procedure) Replenishes "s.peek" from "s.chars" and "s.source".
+    % Ensures that "s.peek" is nonempty by pushing an "eof" token on "s.peek"
+    % if no tokens remain in "s".
+
+    peek = proc (s: rep)
+	if ~token_stack$empty(s.peek) then return end
+	tok: token
+	while ~s.eof do
+	    if s.column > string$size(s.chars) then
+	       string_arr$addh(s.previous, s.chars)
+	       tagcase s.source
+		  tag stream (str: stream):
+		      s.chars := stream$getl(str) || "\n"
+		  tag chars (str: string):
+		      if string$empty(str) then exit end_of_file end
+		      first, delim: string
+		      first, delim, str := string_divide(str, "\n")
+		      s.chars := first || delim
+		      s.source := source_type$make_chars(str)
+		  end
+	       s.column := 1
+	       end except when end_of_file: s.eof := true
+					    break
+			  end
+            c: int
+	    tok, c := token$extract(s.chars, 
+		                    string_arr$size(s.previous) + 1,
+				    s.column)
+	    s.column := c
+	    if ~token$is_whitespace(tok) cand ~token$is_comment(tok) then 
+	       break
+	       end
+	    end
+	if s.eof then 
+	   c: int := string$size(string_arr$top(s.previous))
+	      except when bounds: c := 1 end
+	   tok, c := token$extract("", string_arr$size(s.previous), c)
+	   s.column := c
+           end
+	token_stack$push(s.peek, tok)
+	end peek
+
+
+    % Pushes the token "tok" on the scanner "s", so that the next invocation of
+    % "s.nextToken" will return "tok".  Callers should take care to push tokens
+    % in an order such that later "gets" will return them in the order they
+    % occurred in the text.
+
+    push = proc (s: cvt, tok: token)
+	pop_eof_tokens(s)
+	token_stack$push(s.peek, tok)
+	end push
+
+
+    % Returns "true" iff there are no more tokens in "s" following the current
+    % one.
+
+    empty = proc (s: cvt) returns (bool)
+	if token_stack$empty(s.peek) then peek(s) end
+	return(token$is_eof(token_stack$top(s.peek)))
+	end empty
+
+
+    % Discards all previously scanned tokens and the remainder of the current
+    % line in "s".
+
+    skip_line = proc (s: cvt)
+	s.column := string$size(s.chars)
+	s.peek := token_stack$[]
+	end skip_line
+
+
+    % If "is_ok(s.nextToken)" is "true", removes the current token from "s" and
+    % returns.  Otherwise writes a message to "s.error" saying that "what" was
+    % expected, leaves the current token in "s", and signals "error".
+
+    expecting = proc (s: scanner, is_ok: tok2bool_proc, what: string)
+		  returns (token) signals (error)
+	tok2bool_proc = proctype (token) returns (bool)
+	if is_ok(s.nextToken) 
+	   then return(get(s))
+	   else error(s, "expecting " || what)
+	        signal error
+	   end
+	end expecting
+
+
+    % If "s.nextToken" matches the lowercase identifier "id", removes it from
+    % "s" and returns.  Otherwise, writes a message to "s.error" saying that
+    % "id" was expected, leaves the current token in "s", and signals "error".
+
+    expecting_id = proc (s: scanner, id: string) signals (error)
+	tok: token := s.nextToken
+	if token$is_simpleId(tok) cand slower(tok.text) = id
+	   then get(s)
+	   else error(s, "expecting `" || id || "'")
+	        signal error
+	   end
+	end expecting_id
+
+
+    % Writes a message to "s.error" indicating that the syntactic "problem" was
+    % detected at the current token.
+
+    error = proc (s: cvt, problem: string)
+	loc: locator := up(s).nextToken.loc
+	printer$error(s.error)
+	printer$text(s.error, "\n~{Syntax error on line ")
+	printer$puts(s.error, int$unparse(loc.line))
+	printer$text(s.error, ": ~2I")
+	printer$text(s.error, problem)
+	error_at2(up(s), loc)
+	end error
+
+
+    % Writes a message to "s.error" indicating that static semantic "problem"
+    % was detected at "loc".
+
+    error_at = proc (s: scanner, loc: locator, problem: string)
+	error_at1(s, loc, problem)
+	error_at2(s, loc)
+	end error_at
+
+    
+    % Writes the first half of a message to "s.error" indicating that the
+    % static semantic "problem" was detected at "loc".  NOTE: Callers can
+    % elaborate on the nature of "problem" by prettyprinting more information
+    % on "s.printer" after invoking "error_at1" and before invoking
+    % "error_at2".  This routine does not print a newline after "problem".
+
+    error_at1 = proc (s: cvt, loc: locator, problem: string)
+	printer$error(s.error)
+	printer$text(s.error, "\n~{Semantic error on line ")
+	printer$puts(s.error, int$unparse(loc.line))
+	printer$text(s.error, ": ~2I")
+	printer$text(s.error, problem)
+	end error_at1
+
+    
+    % Writes the remainder of a message to "s.error" indicating that an error
+    % was detected at "loc".
+
+    error_at2 = proc (s: cvt, loc: locator)
+	printer$text(s.error, "~}\n")
+	line: string := s.previous[loc.line]
+	   except when bounds: line := s.chars end
+	line := string$substr(line, 1, string$size(line) - 1)  	% Remove "\n"
+	   except when negative_size: end
+	printer$text(s.error, "~{")
+	printer$puts_broken(s.error, string$substr(line, 1, loc.column - 1))
+	   except when negative_size: end
+	if string$empty(line) 
+	   then printer$text(s.error, "<BLANK LINE>")
+	   else printer$text(s.error, "~J<ERROR>")
+	   end
+	unscanned: string := ""
+	begin
+	    loc1: locator := token_stack$top(s.peek).loc
+	    if loc1.line = loc.line cand loc.column < loc1.column then
+	       unscanned := string$rest(line, loc1.column)
+	       line := string$substr(line, 1, loc1.column - 1)
+	       end
+	    end except when empty, negative_size: end
+	line := string$rest(line, loc.column)
+	   except when bounds: line := "" end
+	if ~string$empty(line) then
+	   printer$text(s.error, "\n")
+	   printer$puts_broken(s.error, line)
+	   printer$text(s.error, "~J")
+	   end
+        if ~string$empty(unscanned) then
+	   printer$text(s.error, "<END OF SCAN>\n")
+	   printer$puts_broken(s.error, unscanned)
+	   end
+        printer$text(s.error, "~I~}\n")
+	end error_at2
+
+    end scanner

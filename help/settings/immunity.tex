@@ -1,0 +1,100 @@
+\doc{The immunity setting}
+\ref{immunity-setting}
+\ref{immune}
+\ref{nonimmune}
+\ref{ancestor-immune}
+\ref{immunize}
+
+LP automatically subjects all \def{nonimmunized} facts in its logical system to
+normalization and deduction.  By contrast, it subjects \def{immune} facts to
+these operations only upon explicit user command.  The immunity of newly
+asserted or conjectured facts is governed by the \def{immunity} setting.  The
+immunity of previously asserted or conjectured facts can be changed by the
+\cflink{make} command.  Unless instructed otherwise, LP does not treat any fact
+as immune.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-immunity-command} ::= \f{set immunity} ( \f{on} | \f{off} | \f{ancestor} )
+\end{verbatim}
+
+Note: The \fq{immunity} setting can be
+\dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+set immunity on
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \def{immunity} setting applies to facts and conjectures created by the
+\cflink{apply}, \cflink{assert}, \cflink{critical-pairs}, \cflink{fix}, 
+\cflink{instantiate}, and \cflink{prove} commands in the current proof context.
+Such facts are \def{immune} if the setting is \fq{on}, \def{nonimmune} if it is
+\fq{off}, and \def{ancestor-immune} if it is \fq{ancestor}.  Immune facts are
+indicated by a parenthesized letter \f{(I)} in the output of the
+\cflink{display} command; ancestor-immune facts are indicated by \f{(i)}.
+\p
+LP automatically reduces all terms in nonimmune \llink{formula}{formulas},
+\llink{rewrite-rule}{rewrite rules}, and 
+\llink{deduction-rule}{deduction rules} to \olink{normalization}{normal form}, 
+and it automatically applies all active deduction rules to all nonimmune
+formulas and rewrite rules.  LP behaves differently, however, with respect to
+immune and ancestor-immune facts.
+\begin{itemize}
+\item
+LP does not automatically reduce immune facts to normal form, and it does not
+automatically apply deduction rules to them.  Instead, LP reduces them only in
+response to the \cflink{normalize} or \cflink{rewrite} commands, and it uses
+them for deduction only in response to the \cflink{apply} command.
+\p
+\item
+LP does not automatically reduce an ancestor-immune fact by any ancestor of
+that fact, and it does not automatically apply a deduction rule that is an
+ancestor of a fact to that fact.  One fact is an \def{ancestor} of another if
+its \dlink{../misc/name}{name} is a prefix of the other's.  Thus, if rewrite
+rule \f{a.1.2.3} is ancestor-immune, it will not be reduced by rewrite rule
+\f{a.1.2} (from which it may have been obtained by 
+\dlink{../commands/instantiate}{instantiation}), and it will not have 
+deduction rule \f{a.1} (from which \f{a.1.2} may have been obtained by
+instantiation) applied to it.
+\end{itemize}
+Facts retain their immunity when they are normalized, and formulas retain their
+immunity when oriented into rewrite rules.  Likewise, immune conjectures may be
+reduced during an attempt to prove them, but are added to the system as immune
+facts in their original form when proved.
+\p
+There are several reasons to make facts immune or ancestor-immune in LP.
+\begin{itemize}
+\item
+Immune facts retain their original form and may be more readable than reduced
+versions of those facts.
+\p
+\item
+Immune rewrite rules may be useful in
+\dlink{../commands/critical-pairs}{critical-pair} computations.
+\p
+\item
+Setting immunity \fq{on} or to \fq{ancestor} makes it possible to preserve
+instantiations that might otherwise normalize to identities.
+\p
+\item
+Users can improve the performance of LP by declaring facts to be immune when
+they are known to be irreducible.  When LP subsequently adds new rewrite rules
+to the system, it will not attempt to reduce the immune facts using these
+rules.  
+\end{itemize}
+\p
+However, there are also disadvantages to making too many rules immune.
+\begin{itemize}
+\item
+The presence of immune rules can degrade the performance of LP, because
+additional rewrite rules increase the cost of normalization.  It can also
+increase the amount of nonconfluence in a rewriting system.
+\p
+\item
+An immune deduction rule with a reducible hypothesis may not match formulas as
+expected, because the deduction rule is applied only after the formulas have
+been normalized.
+\end{itemize}

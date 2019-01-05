@@ -1,0 +1,18 @@
+\doc{Proofs of conjunctions}
+\ref{proof-of-conjunction}
+\ref{/\-method}
+
+Proofs of conjunctions can be slow because the operator \f{/\} is
+\llink{operator-theory}{associative and commutative}, and 
+\olink{match}{matching} modulo such operators is inherently slow.
+The command \fq{prove t1 /\ ... /\ tn by /\} provides a way to reduce this
+expense by directing LP to prove each of the conjuncts as a separate subgoal.
+\p
+The command \fq{resume by /\} directs LP to resume the proof of the current
+conjecture using this method.  It is applicable only when the current
+conjecture has been reduced to a conjunction.
+\p
+Users should beware that employing this method too early in a proof can result
+in lengthening the proof considerably, for example, when the same sequence of
+commands or the same lemma is needed to prove more than one conjunct.
+

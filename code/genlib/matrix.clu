@@ -1,0 +1,206 @@
+#extend
+
+
+% A "matrix" is a two dimensional array.
+
+matrix = cluster [t: type] is new, fill, fill_copy, store, lookup, fetch,
+			      delete_row, delete_column,
+			      insert_row, insert_column,
+			      get_n_cols, get_n_rows,
+			      empty, equal, similar, similar1, copy, copy1
+	    where t in equal_type, t in similar_type
+
+
+    % The rep of a matrix is a list of its rows, which are lists of elements.
+    % Lists are used to ease insertion and deletion.
+    rep    = t_ll
+    t_ll   = list[t_list]
+    t_list = list[t]
+    t_seq  = sequence[t]
+    t_arr  = array[t]
+
+
+    % Creates an empty matrix.
+
+    new = proc () returns (cvt)
+	return(t_ll$[])
+	end new
+
+
+    % Creates and returns a new matrix with "rows" rows and "cols" cols, all of
+    % whose entries are "default".
+
+    fill = proc (rows, cols: int, default: t) returns (cvt)
+	     signals (non_positive)
+	if rows < 1 cor cols < 1 then signal non_positive end
+	t_row: t_list := t_list$fill(cols, default)
+	new_mat: t_ll := t_ll$predict(rows)
+	for i: int in int$from_to(1, rows) do
+	    t_ll$addh(new_mat, t_list$copy1(t_row))
+	    end
+	return(new_mat)
+	end fill
+
+
+    % Creates and returns a new matrix with "rows" rows and "cols" cols, all of
+    % whose entries are copies of "default".
+
+    fill_copy = proc (rows, cols: int, default: t) returns (cvt)
+		  signals (non_positive)
+		where t in copy_type
+	new_mat: t_ll := t_ll$fill_copy(rows, t_list$fill_copy(cols, default))
+	end fill_copy
+
+
+    % Causes "entry" to become the "col"th element of the "row"th row of "m".
+    % Signals "bounds if either of those indices do not exist in "m".
+
+    store = proc (m: cvt, row, col: int, entry: t) signals (bounds)
+	m[row][col] := entry
+	   resignal bounds
+	end store
+
+
+    % Returns "col"th element of the "row"th row of "m".  If either of those
+    % indices do not exist im "m", signals "bounds".  Note that "lookup" and
+    % "store" are duals; "lookup(store(m, i, j, e), i, j) = e" for all "i", "j"
+    % that are indices in "m".
+
+    lookup = proc (m: cvt, row, col: int) returns (t) signals (bounds)
+	    return(m[row][col])
+	   resignal bounds
+	end lookup
+
+
+    % Returns the "row"th row of "m".  The caller should not modify the
+    % returned array.  Signals "bounds" if "row" is not a row number of "m".
+
+    fetch = proc (m: cvt, row: int) returns (t_arr) signals (bounds)
+	return(t_list$l2a(m[row]))
+	   resignal bounds
+	end fetch
+
+
+    % Deletes and returns then "row"th row of "m".  Signals "bounds" if "row"
+    % is not a row of "m".
+
+    delete_row = proc (m: cvt, row: int) returns (t_arr) signals (bounds)
+	return(t_list$l2a(t_ll$delete_at(m, row)))
+	   resignal bounds
+	end delete_row
+
+
+    % Deletes and returns the "col"th column of "m".  Signals "bounds" if "col"
+    % is not a column of "m".
+
+    delete_column = proc (m: cvt, col: int) returns (t_arr) signals (bounds)
+	result: t_arr := t_arr$predict(1, t_ll$size(m))
+	for tl: t_list in t_ll$elements(m) do
+	    t_arr$addh(result, t_list$delete_at(tl, col))
+	    end resignal bounds
+	if t_list$empty(m[1]) then t_ll$trim(m, 1, 0) end
+	   except when bounds: end
+	return(result)
+	end delete_column
+
+
+    % Inserts "ta" as the "row"th row of "m".  Signals "bounds" if "row" is not
+    % in the range "1 <= row <= m.n_rows + 1", or if "ta" has a number of
+    % elements different from the number of columns in "m" (assuming that "m"
+    % has any columns.)
+
+    insert_row = proc (m: cvt, row: int, ta: t_arr) signals (bounds)
+	if t_arr$size(ta) ~= t_list$size(m[1]) then signal bounds end
+	   except when bounds: end
+	t_ll$insert_at(m, row, t_list$a2l(ta))
+	   resignal bounds
+	end insert_row
+
+
+    % Inserts "ta" as the "col"th column of "m".  Signals "bounds" if "col" is
+    % not in the range "1 <= col <= m.n_cols + 1", or if "ta" has a number of
+    % elements different from the number of rows in "m" (assuming that "m" has
+    % any rows.)
+
+    insert_column = proc (m: cvt, col: int, ta: t_arr) signals (bounds)
+	if t_ll$empty(m) then
+	   if col ~= 1 then signal bounds end
+		for elem: t in t_arr$elements(ta) do
+		    t_ll$addh(m, t_list$[elem])
+		    end
+		return
+	   end
+	if t_ll$size(m) ~= t_arr$size(ta) then signal bounds end
+	for i: int in t_ll$indexes(m) do
+	    t_list$insert_at(m[i], col, ta[i])
+	    end resignal bounds
+	end insert_column
+
+
+    % Returns the number of columns in "m".
+
+    get_n_cols = proc (m: cvt) returns (int)
+	return(t_list$size(m[1]))
+	   except when bounds: return(0) end
+	end get_n_cols
+
+
+    % Returns the number of rows in "m".
+
+    get_n_rows = proc (m: cvt) returns (int)
+	return(t_ll$size(m))
+	end get_n_rows
+
+
+    % Returns "true" iff "m" is empty.
+
+    empty = proc (m: cvt) returns (bool)
+	return(t_ll$size(m) = 0)
+	end empty
+
+
+    % Returns "true" iff "m1" and "m2" are the same object.
+
+    equal = proc (m1, m2: cvt) returns (bool)
+	return(m1 = m2)
+	end equal
+
+
+    % Returns "true" iff "m1" and "m2" have similar elements.
+
+    similar = proc (m1, m2: cvt) returns (bool)
+	return(rep$similar(m1, m2))
+	end similar
+
+
+    % Returns "true" iff "m1" and "m2" have the same elements.
+
+    similar1 = proc (m1, m2: cvt) returns (bool)
+	if t_ll$size(m1) ~= t_ll$size(m2) then return(false) end
+	for i: int in t_ll$indexes(m1) do
+	    if ~t_list$similar1(m1[i], m2[i]) then return(false) end
+	    end
+	return(true)
+	end similar1
+
+
+    % Returns a copy of "m".
+
+    copy = proc (m: cvt) returns (cvt)
+		where t in copy_type
+	return(rep$copy(m))
+	end copy
+
+
+    % Returns a matrix that whose elements are the same as "m's".
+
+    copy1 = proc (m: cvt) returns (cvt)
+	new_mat: t_ll := t_ll$predict(t_ll$size(m))
+	for tl: t_list in t_ll$elements(m) do
+	    t_ll$addh(new_mat, t_list$copy1(tl))
+	    end
+	return(new_mat)
+	end copy1
+
+
+    end matrix

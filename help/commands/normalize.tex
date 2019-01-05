@@ -1,0 +1,44 @@
+\doc{The normalize command}
+\ref{normalize-command}
+
+The \def{normalize command} provides manual control over the application of
+(possibly passive) rewrite rules to (possibly immune) formulas, rewrite rules,
+and deduction rules.  It also provides a means of backward inference.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{normalize-command} ::= \f{normalize} \s{target} [ \f{with} [ \f{reversed} ] \slink{../misc/names}{names} ]
+\sd{target}            ::= \slink{../misc/names}{names} | \f{conjecture}
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+normalize immune / lemmas with *
+normalize conjecture with distributiveLaws
+\end{verbatim}
+
+\head{2}{Usage} 
+
+The first version of the \fq{normalize} command
+\olink{normalization}{normalizes} the formulas, deduction rules, and rewrite
+rules in the \s{target}, whether or not they are immune, using the hardwired
+rewrite rules together with the rewrite rules obtained as described below.
+Rewrite rules in the \s{target} that are also named by \s{names} are not
+normalized.
+\p
+If \fq{reversed} is present, all named formulas and rewrite rules, whether or
+not they are active, that can be oriented from right to left into legal rewrite
+rules are used with that orientation.  If \fq{reversed} is not present, all
+named rewrite rules and formulas, whether or not they are active, that can be
+oriented from left to right are used with that orientation.  If no \s{names}
+are given, all rewrite rules and left-to-right orientable formulas are used.
+\p
+The second version of the \fq{normalize} command normalizes the current
+conjecture using the rewrite rules obtained as just described.
+\p
+The \fq{normalize} command is typically used to ``open up'' definitions using a
+set of passive rewrite rules.  When \fq{reversed} is present, the named rewrite
+rules should ordinarily be passive to prevent them from immediately undoing the
+result of the \fq{normalize} command.  See also the \cflink{rewrite} command.
+
+

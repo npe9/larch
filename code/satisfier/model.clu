@@ -1,0 +1,63 @@
+#extend
+
+% A model is a set of ground terms.
+
+model = cluster is new, add, add_without_checking, empty, print
+    
+    
+    rep = array[term]
+    
+    % I(r) : r.low <= i < j <= r.high -> r[i] ~= r[j]
+    % A(r) = {r[i]: r.low <= i <= r.high}
+    
+    
+    % Returns a new, empty model.
+    
+    new = proc () returns (cvt)
+        return(rep$[])
+	end new
+    
+    
+    % Modifies: a
+    % Effects:  a' = a^ + l
+    
+    add = proc (a: cvt, l: literal)
+	t: term := literal$lit2term(l)
+	if ~is_in(up(a), t) then rep$addh(a, t) end
+	end add
+    
+    
+    % Requires: ~(l \in a^)
+    % Modifies: a
+    % Effects:  a' = a^ + l
+    
+    add_without_checking = proc (a: cvt, l: literal)
+	rep$addh(a, literal$lit2term(l))
+	end add_without_checking
+    
+    
+    % Returns "true" if "a" is empty.
+    
+    empty = proc (a: cvt) returns (bool)
+	return(rep$empty(a))
+	end empty
+    
+   
+    % Prints "a" on "p".
+    
+    print = proc (a: cvt, p: printer, stab: symtab)
+	print_arr_with_ids[term](p, "Model: ", a, stab)
+	end print
+
+    
+    % (Internal)
+    % Effects: result =  (t \in a)
+    
+    is_in = proc (a: cvt, t: term) returns (bool)
+	for t1: term in rep$elements(a) do
+	    if t = t1 then return(true) end
+	    end
+	return(false)
+	end is_in
+    
+    end model

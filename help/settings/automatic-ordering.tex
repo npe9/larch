@@ -1,0 +1,25 @@
+\doc{The automatic-ordering setting}
+\ref{automatic-ordering-setting}
+
+The \def{automatic-ordering} setting controls whether LP orients formulas into
+rewrite rules with or without the user having to issue an explicit
+\cflink{order} command.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-automatic-ordering-command} ::= \f{set automatic-ordering} ( \f{on} | \f{off} )
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+set auto-ord off
+\end{verbatim}
+
+\head{2}{Usage}
+
+If \fq{automatic-ordering} is \fq{on} (the default), then LP attempts to orient
+all formulas (asserted axioms, proved conjectures, results of deductions,
+instantiations, critical pair equations, and hypotheses for subgoals in proofs)
+automatically into rewrite rules.  If it is \fq{off}, then the user must issue
+an explicit \fq{order} command to orient formulas into rewrite rules.  The
+value of this setting is local to the current proof context.

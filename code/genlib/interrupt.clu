@@ -1,0 +1,28 @@
+% The implementations of the modules in this file are Unix-specific.
+
+% The SIGQUIT signal is sent to a Unix process when the user types the QUIT
+% character at the terminal.  Under Unix, this character is ^\ by default.  It
+% can be changed to ^G, for example, by giving the command "stty quit ^G"
+% (where ^G is typed as a CTRL-G).
+
+% NOTE: The CLU library procedures "_signal$set" and "_signal$get" cause CLU to
+% count and return the number of occurrences of a specified signal; see
+% ~CLU/lib/_signal.spc.
+
+
+SIGQUIT = 3
+
+% Enables program to receive interrupts.
+
+OS_init_interrupt = proc ()
+    stream$primary_input()   % needed before _signal$set for SIGQUIT
+    _signal$set(SIGQUIT, false)
+    end OS_init_interrupt
+
+
+% Returns "true" iff "OS_init_interrupt" has been invoked and a QUIT has been
+% typed by the user since the last call to this procedure.
+
+OS_check_interrupt = proc () returns (bool)
+    return(_signal$get(SIGQUIT) > 0)
+    end OS_check_interrupt

@@ -1,0 +1,22 @@
+% Successive invocations of "var_gen$next" return distinct internal variables, 
+% which are distinct from user-entered variables.  Invoking "var_gen$reset" 
+% causes the next invocation of "var_gen$next" to start the sequence over.
+
+var_gen = cluster is new, reset, next
+
+    rep = record[count: int]
+
+    new = proc () returns (cvt)
+	return(rep${count: 0})
+	end new
+
+    reset = proc (vg: cvt) 
+	vg := rep${count: 0}
+	end reset
+
+    next = proc (vg: cvt, so: sort) returns (variable)
+	vg.count := vg.count + 1
+	return(variable$make_internal(vg.count, so))
+	end next
+
+    end var_gen

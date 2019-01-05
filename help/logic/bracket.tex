@@ -1,0 +1,33 @@
+\doc{Bracketed operators}
+\ref{bracket}
+\ref{bracketed}
+\ref{brackets}
+\ref{bracketing}
+
+LP allows users to employ \def{bracketed notations} for
+\dlink{operator}{operators}.  These notations consist of opening and closing
+symbols interspersed with arguments (in \dlink{term}{terms}) or markers (in
+\dlink{../commands/declare}{declarations}).  LP recognizes the following
+opening and closing symbols:
+\begin{itemize}
+\item opening symbols:    \f{[}, \f#{#, \f{\(}, \f{\<}
+\item closing symbols:    \f{]}, \f#}#, \f{\)}, \f{\>}
+\end{itemize}
+For example, the declarations 
+\begin{verbatim}
+declare operators
+  {}:                         -> Set
+  {__}:      Nat              -> Set
+  __[__]:    Array, Nat       -> Nat
+  __[__,__]: Matrix, Nat, Nat -> Nat
+  [__]__:    Nat, Matrix      -> Array
+  ..
+\end{verbatim}
+enable the following notations:
+\begin{itemize}
+\item empty set: \f#{}#
+\item singleton set: \f#{x}#
+\item element of an array: \f{a[n]}
+\item element of a matrix: \f{m[1, 2]}
+\item slice of a matrix: \f{[1]m}
+\end{itemize}

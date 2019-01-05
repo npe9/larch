@@ -1,0 +1,40 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%  Equates for lp/code/unify  %%%%%%%%%%%%%%%%%%%%%%%%%
+
+% (see also Genlib.equ and Logic.equ)
+
+
+
+% Unparsing constants
+
+unp_suffix = "-"
+elem_length = 5
+next_line = "\n"
+
+
+% Parameterized types containing terms
+
+term_bind = binding[term, term]
+term_plhp = plh_poly[term]
+term_soln = solution[term]
+ti_bind = binding[term, int]
+tis_bind = binding[term, int_seq]
+tis_assn = assignment[term, int_seq]
+ti_assn = assignment[term, int]
+tb_arr = array[term_bind]
+tb_seq = sequence[term_bind]
+term_gen = generator[term]
+tgen_set = set[term_gen]
+
+
+% Types containing integers
+
+si_coll = collection[int_seq]
+int_set = set[int]
+int_mat = matrix[int]
+infin_arr = array[infinite_int]
+
+
+% Type sets
+
+gt_type = {t | t has gt: proctype (t, t) returns (bool)}
+lt_type = {t | t has lt: proctype (t, t) returns (bool)}

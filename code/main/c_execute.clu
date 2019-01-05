@@ -1,0 +1,62 @@
+#extend
+
+% Processes the "execute" command.  Prompts the user for the name of a file
+% from which to obtain commands.  If the user enters the name of a readable
+% file, causes commands to be obtained from this file until it is exhausted, at
+% which time commands are obtained again from the source of the "execute"
+% command (i.e., the terminal or a .lp file containing the command).  Useful
+% for "playing back" files made with the "script" command.
+
+c_execute = proc (i: interactive) signals (error)
+    execute_work(i, false)
+       resignal error
+    end c_execute
+
+
+% Processes the "execute-silently" command as for the "execute" command, but
+% suppresses output while commands are being executed from the file.  Useful
+% for executing files created by "write".
+
+c_execute_silently = proc (i: interactive) signals (error)
+    execute_work(i, true)
+       resignal error
+    end c_execute_silently
+
+
+% Called by "execute" and "execute_silently".
+
+execute_work = proc (i: interactive, silent: bool) signals (error)
+    msg = "File containing LP commands (default suffix is `.lp'): "
+    fn: file_name := get_existing_file_name(i.io, msg, i.search_path,
+					    "lp", help_execute)
+       resignal error
+       except when no_response: return end
+    check_end_of_line(i.io)
+       resignal error
+    error: string := ""
+    iodev$read_script(i.io, stream$open(fn, "read"), silent)
+       except when not_possible (*):
+		   error := "\nCan't read commands from `"
+	      when in_use_as_input:
+		   error := "\nYou are already executing commands from `"
+	      when in_use_as_output:
+		   error := "\nYou are currently writing to `"
+	      end
+    if string$empty(error) then
+       iodev$comment_out_command(i.io)
+       return
+       end
+    printer$error(i.p)
+    printer$text(i.p, error || file_name$unparse(fn) || "'.\n")
+    signal error
+    end execute_work
+
+
+% A help procedure for use with "execute".
+
+help_execute = proc (io: iodev)
+    prints = iodev$prints
+    prints(io, "Enter the name of the file from which input should be ")
+    prints(io, "taken, or type <ret> to quit.  The default suffix ")
+    prints(io, "is `.lp'.\n")
+    end help_execute

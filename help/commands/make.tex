@@ -1,0 +1,35 @@
+\doc{The make command}
+\ref{make-command}
+\ref{fact-status}
+
+The \def{make command} changes the \setlink{activity} or \setlink{immunity} of
+a collection of facts or of the current conjecture.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{make_command} ::= \f{make} \s{fact-status} ( \slink{../misc/names}{names} | \f{conjecture} )
+\sd{fact-status}  ::= \f{active} | \f{passive} | \f{immune} | \f{nonimmune} | \f{ancestor-immune}
+\end{verbatim}
+
+Note: The \s{fact-status} can be \dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+
+\begin{verbatim}
+make inactive rewrite-rules
+make immune conjecture
+\end{verbatim}
+
+\head{2}{Usage}
+
+LP automatically uses any rewrite rules made active by the \fq{make} command to
+normalize terms appearing in the current conjecture or in nonimmune facts in
+LP's logical system.  It also automatically applies any deduction rules made
+active by the \fq{make} command.
+\p
+LP automatically normalizes any rewrite rules and deduction rules made
+nonimmune by the \fq{make} command, and it applies all active deduction rules
+to these deimmunized rules.
+\p
+See the \setlink{activity} and \setlink{immunity} settings.
+

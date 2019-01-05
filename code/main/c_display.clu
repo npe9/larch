@@ -1,0 +1,116 @@
+#extend
+
+% Processes the "display" command.
+
+c_display = proc (i: interactive) signals (error)
+    own keys1: keyword_table :=
+	    keyword_table$["classes", "conjectures", "facts", "names",
+			   "ordering-constraints", "proof-status", "symbols"]
+    own keys2: keyword_table :=
+	    keyword_table$["classes", "conjectures", "facts", "ground-facts",
+	    		   "names", "ordering-constraints", "proof-status", 
+			   "symbols"]
+    keys: keyword_table
+    if interactive$get_experimental()
+       then keys := keys2
+       else keys := keys1
+       end
+    default: bool := false
+    key: string, ns: name_set :=
+	query$one_name_set(i, "objects to display", keys, true)
+       except when none: return
+	      when no_names (key1: string): default := true
+					    key := key1
+					    ns := name_set$universal()
+	      when error: aborted(i.p, "error in names")
+	      end resignal error
+    % NOTE: "check_end_of_line" not needed here
+    if key = "symbols"  then
+       ops: op_set
+       sorts: sort_set
+       vars: var_set
+       if default
+	  then ops := i.symtab.ops
+	       op_set$delete_all(ops, op_iff(), unwritten_op)
+	       sorts := i.symtab.sorts
+	       vars := i.symtab.vars
+	  else sorts, ops, vars := system$subsystem_ids(i.sys, ns)
+	  end
+       if sort_set$empty(sorts) then return end
+       sorta: sort_arr := sort_set$s2arr(sorts)
+       quicksort[sort](sorta, 1, sort_arr$size(sorta), sort$lt)
+       print_arr[sort](i.p, "\nSorts:\n", sorta)
+       printer$newline(i.p)
+       display_ids[operator](i.p, "Operators", op_set$s2arr(ops), i.symtab)
+       display_ids[variable](i.p, "Variables", var_set$s2arr(vars), i.symtab)
+     elseif key = "ordering-constraints" then
+       ops: op_set
+       if default
+	  then ops := i.symtab.ops
+	  else sorts: sort_set, ops1: op_set, vars: var_set :=
+		   system$subsystem_ids(i.sys, ns)
+	       ops := ops1
+	       for s: sort in sort_set$elements(sorts) do
+		   op_set$insert(ops, op_exists(s, i.symtab))
+		      except when exists, missing (*): end
+		   op_set$insert(ops, op_forall(s, i.symtab))
+		      except when exists, missing (*): end
+		   end
+	  end
+       system$display_ordering(i.p, i.sys, ops, i.symtab)
+     elseif key = "names" then
+       if ~default then
+	  aborted(i.p, "not expecting names with `names'")
+	  end resignal error
+       % FIX: remove "inconsistency" from list
+       print_arr[name](i.p, "\nRoot names:",
+		       name_seq$s2a(symtab$root_names(i.symtab)))
+     elseif key = "classes" then
+       if ~default then
+	  aborted(i.p, "not expecting names with `classes'")
+	  end resignal error
+       % FIX: remove "inconsistency" from list
+       printer$text(i.p, "\n~{Class names:~2I~1A~{")
+       printed: bool := false
+       for cn: class_name, ce: class_expression 
+	     in class_table$elements(i.symtab.classes) do
+	   if printed then printer$text(i.p, ", ") end
+	   printer$puts(i.p, cn)
+	   printed := true
+	   end
+       printer$text(i.p, "~}~}\n")
+     elseif key = "conjectures" then
+       prover$display(i.p, i.prover, ns)
+     elseif key = "proof-status" then
+       if ~default then
+	  aborted(i.p, "not expecting names with `proof-status'")
+	  end resignal error
+       prover$display_stack(i.p, i.prover)
+     elseif key = "facts" cor key = "" then
+       system$display(i.p, i.sys, ns, i.symtab)
+     elseif key = "ground-facts" then
+       system$display_ground_facts(i.p, i.sys, i.symtab)
+     else fail("c_display: bad key `" || key || "'")
+     end except when interrupt:
+     		     printer$end_of_output(i.p)
+		     iodev$restart_output(i.io)
+		     printer$error(i.p)
+		     printer$text(i.p, "\nInterrupt...\n")
+		end
+    end c_display
+
+
+% Displays the identifiers in "items".
+
+display_ids = proc [t: type] (p: printer, label: string, items: t_arr,
+			      stab: symtab)
+	    where t has print: proctype (printer, t, symtab),
+		  t has lt: proctype (t, t) returns (bool)
+    t_arr = array[t]
+    if t_arr$empty(items) then return end
+    quicksort[t](items, 1, t_arr$size(items), t$lt)
+    print_arr_with_ids[t](p, "\n" || label || ":\n", items, stab)
+    printer$newline(p)
+    end display_ids
+
+

@@ -1,0 +1,36 @@
+% Translates a directory name such as "~lp" to a directory such as
+% "/usr/local/lib/lp".
+
+
+home_directory = cluster is get_name, set_name, get_location, set_location
+    
+    rep = null
+    
+    own dir: string := "/"
+    own name: string := "/"
+    
+    get_name = proc () returns (string)
+	return(name)
+	end get_name
+    
+    set_name = proc (s: string)
+	n: int := string$size(s)
+	if n = 0 then name := "/"
+	 elseif s[n] = '/' then name := s
+	 else name := s || "/"
+	 end
+	end set_name
+    
+    get_location = proc () returns (string)
+	return(dir)
+	end get_location
+    
+    set_location = proc (s: string)
+	n: int := string$size(s)
+	if n = 0 then dir := "/"
+	 elseif s[n] = '/' then dir := s
+	 else dir := s || "/"
+	 end
+	end set_location
+    
+    end home_directory

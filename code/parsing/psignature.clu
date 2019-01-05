@@ -1,0 +1,62 @@
+#extend
+
+% This cluster parses and unparses external representations for signatures 
+% using the following syntax:
+
+%     signature ::= sort*, "->" sort
+
+% The "psort" cluster defines the nonterminal symbol "sort".
+
+psignature = cluster is print, read
+
+    rep = null
+    
+    
+    % Prettyprints "sig" on "p".  Formats the signature "s1,...,sn->s" as
+    % "~{~2I~{s1,~A...,~Asn~}~F->~Fs~}" so that it will be displayed in one of 
+    % three formats:
+    % (1)  s1,...,sn->s          (2)  s1, ..., sn          (3)  s1,
+    %                                   ->s                     ...,
+    %                                                           sn
+    %                                                             ->
+    %                                                             s
+    
+    print = proc (p: printer, sig: signature)
+	printer$text(p, "~{~2I~{")
+	printed: bool := false
+	for so: sort in sort_seq$elements(sig.dom) do
+	    if printed then printer$text(p, ",~A") end
+	    psort$print(p, so)
+	    printed := true
+	    end
+	printer$text(p, "~}~F->~F")
+	psort$print(p, sig.rng)
+	printer$text(p, "~}")
+	end print
+
+
+    % Scans "scan" and returns a signature constructed from sorts in "stab".
+    % Writes a message to "scan", and signals "error", if "scan" does not begin
+    % with a signature constructed from sorts in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (signature) 
+	     signals (error)
+	domain: sort_seq := sort_seq$[]
+	msg: string := "`->'"
+	begin
+	    if token$is_simpleId(scan.nextToken) then
+	       sorts: sort_arr := sort_arr$[psort$read(scan, stab)]
+	       while token$is_comma(scan.nextToken) do
+		   scanner$get(scan)
+		   sort_arr$addh(sorts, psort$read(scan, stab))
+		   end
+	       domain := sort_seq$a2s(sorts)
+	       msg := "a sort or `->'"
+	       end
+	    scanner$expecting(scan, token$is_mapSym, msg)
+	    return(signature${dom: domain, rng: psort$read(scan, stab)})
+	    end resignal error
+	end read
+
+
+    end psignature

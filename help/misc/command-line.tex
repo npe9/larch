@@ -1,0 +1,41 @@
+\doc{Unix command-line options}
+\ref{command-line}
+
+The following options can be specified on the Unix command line when invoking LP:
+\begin{description}
+\dt \f{-c}
+\dd
+Enables experimental features for conditional rewriting.
+\p
+\dt \f{-d} \v{fileName}
+\dd
+Specifies the location of LP's run-time library, to which \fq{~lp} in the
+\setlink{lp-path} setting refers.  The default is \fq{/usr/local/lib/LP}.
+\p
+\dt \fq{-e}
+\dd
+Enables undocumented experimental features in LP.
+\p
+\dt \fq{-max_heap} \s{number}
+\dd
+Sets an upper bound, in megabytes, on the size of LP's heap.  This bound should
+be large enough for LP top handle a proof without running its collector too
+often (for example, 10 meg on a 32-bit machine and 20-meg on a 64-bit machine).
+It should be small enough for LP to run without paging (for example, half of
+the total amount of memory on a single-user machine).
+
+Improvements in garbage collection, as well as increases in memory sizes, that
+have occurred since LP's initial development make this and the \fq{-min_gc}
+command-line option less useful than before.  Hence they are being deprecated
+and may not be available in recent distributions of LP.  
+\p
+\dt \fq{-min_gc} \s{number}
+\dd
+Sets the minimum threshhold, in megabytes, beneath which LP's collector will
+not run automatically.
+\p
+\dt \fq{-t}
+\dd
+Prevents LP from aborting execution of \fq{.lp} files when an error occurs;
+useful for testing LP.
+\end{description}

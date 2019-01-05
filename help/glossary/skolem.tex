@@ -1,0 +1,28 @@
+\doc{Skolem constants and functions}
+\ref{Skolem-constant}
+\ref{Skolem-function}
+
+A \def{Skolem constant} is a new constant that is substituted for a variable
+when eliminating an \llink{quantifier}{existential quantifier} from a fact or a
+universal quantifier from a conjecture.  For example, the fact 
+\fq{\A x (f(x) = c)} can be obtained by eliminating the existential quantifier 
+from \fq{\E y \A x (f(x) = y)} and replacing \fq{y} by the Skolem constant
+\fq{c}.  As long as \fq{c} does not appear in any other fact or in the current
+conjecture, this Skolemization represents a 
+\dlink{conservative}{conservative extension} of LP's logical system.
+\p
+For another example, the conjecture \fq{\A x (f(x) = 0)} can be proved from the
+subgoal \fq{f(c) = 0}, where \fq{c} is a Skolem constant.  As long as \fq{c} is
+new, the proof is sound.
+\p
+When an existential quantifier is being eliminated from a fact that contains
+free variables, or when the existential quantifier occurs in the scope of a
+universal quantifier, the quantified variable must be replaced by a term
+involving a \def{Skolem function} applied to the free and universally
+quantified variables.  For example, the fact \fq{\A x (x < bigger(x))} can be
+obtained by eliminating the existential quantifier from \fq{\A x \E y (x < y)}
+and replacing \fq{y} by \fq{bigger(x)}.
+
+See the \cflink{fix} command and the 
+\dlink{../proof/by-generalization}{generalization} proof method.
+

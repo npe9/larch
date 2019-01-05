@@ -1,0 +1,67 @@
+#extend
+
+% Processes the "freeze" command.  Prompts the user for the name of an output
+% file.  If the user enters a valid file name to write to, writes all of "i"
+% except "io" and "p" to the file in object format.  This saves the current
+% state of LP, but the file is not human readable.
+
+c_freeze = proc (i: interactive) signals (error)
+    freeze_work(i, true)
+       resignal error
+    end c_freeze
+
+c_freeze_current = proc (i: interactive) signals (error)
+    freeze_work(i, false)
+       resignal error
+    end c_freeze_current
+
+freeze_work = proc (i: interactive, all: bool) signals (error)
+    mess = "Output file (default suffix is `.lpfrz'): "
+    fn: file_name := get_file_name(i.io, mess, "lpfrz", help_freeze)
+       resignal error
+       except when no_response: return end
+    check_end_of_line(i.io)
+       resignal error
+    fname: string := file_name$unparse(fn)
+    d: dumped_rep 
+    if all
+       then d := dumped_rep${history: i.io.history,
+			     history_size: i.history_size,
+			     prover: i.prover,
+			     settings: settings$freeze(i),
+			     sorts: sort$get_owns(),
+			     symtab: i.symtab,
+			     sys: i.sys,
+			     a_freeze_version: lp_freeze_version()}
+       else d := dumped_rep${history: command_arr$[],
+			     history_size: 0,
+			     prover: prover$current_only(i.prover),
+			     settings: settings$freeze(i),
+			     sorts: sort$get_owns(),
+			     symtab: i.symtab,
+			     sys: i.sys,
+			     a_freeze_version: lp_freeze_version()}
+       end
+    gc_dump[dumped_rep](d, fn)
+       except when not_possible (why: string):
+		   printer$error(i.p)
+		   printer$text(i.p, "\nCan't freeze to `")
+		   printer$text(i.p, fname || "': " || why || ".\n")
+		   signal error
+	      end
+    if all
+       then printer$text(i.p, "\nSystem frozen in `")
+       else printer$text(i.p, "\nCurrent proof attempt frozen in `")
+       end
+    printer$text(i.p, fname || "'.\n")
+    end freeze_work
+
+
+% A help procedure for use with "freeze".
+
+help_freeze = proc (io: iodev)
+    iodev$prints(io, "Enter the name of an output file, or type <ret> to ")
+    iodev$printl(io, "quit.  The default suffix is `.frz'.")
+    end help_freeze
+
+

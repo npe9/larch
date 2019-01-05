@@ -1,0 +1,45 @@
+\doc{The completion-mode setting}
+\ref{completion-mode-setting}
+
+The \def{completion-mode setting} sets the operating mode for the 
+\dlink{../commands/complete}{completion procedure}.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-completion-mode-command} ::= \f{set completion-mode} \s{completion-mode}
+\sd{completion-mode}             ::= \f{standard} | \f{expert} | \f{big}
+\end{verbatim}
+
+Note: The \s{completion-mode} can be \dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+set completion-mode expert
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{completion-mode} setting affects the order in which completion tasks
+are executed in the current proof context.  It also affects the amount of user
+interaction during the completion procedure.
+\begin{itemize}
+\item
+The \def{standard} mode (the default) computes 
+\dlink{../commands/critical-pairs}{critical pair equations} before extending 
+the \dlink{../commands/register}{registry}.  When the
+\setlink{automatic-registry} setting is \fq{off}, this reduces the amount of
+interaction required from the user to extend the registry; however, it can be
+inefficient.
+\p
+\item
+The \def{expert} mode gives higher priority to orienting formulas into rewrite
+rules than to computing critical pair equations.  When the
+\setlink{automatic-registry} setting is \fq{off}, this gives the user more
+explicit control over the completion process by prompting for guidance more
+often.  In particular, user interaction to order unordered formulas is
+requested before the system attempts to compute new critical pairs.
+\p
+\item
+The \def{big} mode postpones the computation of critical pairs even farther,
+so that big formulas are examined before critical pairs are computed.
+\end{itemize}

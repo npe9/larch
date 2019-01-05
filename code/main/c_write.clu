@@ -1,0 +1,96 @@
+#extend
+
+% Processes the "write" command.  Prompts the user for the name of a file
+% followed by an optional list of names.  Writes declarations for all variables
+% and operators (unless "i.symtab.unparse_mode" is "unqualified_mode") followed
+% by all facts in the named subsystem of "i.sys" to the file in a format that
+% can later be recovered by the "execute" operation.
+
+c_write = proc (i: interactive) signals (error)
+    msg = "Output file (default suffix is `.lp'): "
+    own keys: keyword_table := keyword_table$[]
+    fn: file_name :=  get_file_name(i.io, msg, "lp", help_write)
+       resignal error
+       except when no_response: return end
+    fname: string := file_name$unparse(fn)
+    default: bool := false
+    key: string, ns: name_set :=
+	query$one_name_set(i, "facts to write", keys, true)
+       except when none: return
+	      when no_names (key1: string): default := true
+					    key := key1
+					    ns := name_set$universal()
+	      when error: aborted(i.p, "error in names")
+	      end resignal error
+    out: stream := stream$open(fn, "write")
+       except when not_possible (why: string):
+		   printer$error(i.p)
+		   printer$text(i.p, "\nCan't write `" || fname || "': ")
+		   printer$text(i.p, why || "\n")
+		   signal error
+	      end
+    pp: printer := printer$create_stream(out)
+    printer$text(pp, "push-settings\n")
+    printer$text(pp, "unset activity\n")
+    printer$text(pp, "unset immunity\n\n")
+    ops: op_set
+    sorts: sort_set
+    vars: var_set
+    if default
+       then ops := i.symtab.ops
+	    sorts := i.symtab.sorts
+	    vars := i.symtab.vars
+       else sorts, ops, vars := system$subsystem_ids(i.sys, ns)
+       end
+    sorta: sort_arr := sort_set$s2arr(sorts)
+    quicksort[sort](sorta, 1, sort_arr$size(sorta), sort$lt)
+    write_arr[sort](pp, "declare sorts", sorta)
+    printer$newline(pp)
+    i.symtab.unparse_mode := qualified_mode
+    ops1: op_set := op_set$copy(ops)
+    op_set$delete_all(ops1, op_iff(), unwritten_op)
+    write_decs[variable](pp, "Variables", var_set$s2arr(vars), i.symtab)
+    write_decs[operator](pp, "Operators", op_set$s2arr(ops1), i.symtab)
+    printer$newline(pp)
+    for s: sort in sort_arr$elements(sorta) do
+	op_set$insert(ops, op_exists(s, i.symtab))
+	   except when exists, missing (*): end
+	op_set$insert(ops, op_forall(s, i.symtab))
+	   except when exists, missing (*): end
+	end
+    system$write(pp, i.sys, ops, ns, i.symtab)
+    settings$write(pp, i)
+    stream$close(out)
+    printer$text(i.p, "\nSystem written to `" || fname || "'.\n")
+    end c_write
+
+
+% Used to prevent declarations from being written for hardwired operators and
+% quantifiers.
+    
+unwritten_op = proc (op1, op2: operator) returns (bool)
+    return(is_hardwired_op(op2))
+    end unwritten_op
+
+
+% Writes the declarations for the items in "items".
+% ENHANCE: Collect items with like sorts or signatures.
+    
+write_decs = proc [t: type] (p: printer, label: string, items: t_arr,
+			     stab: symtab)
+	    where t has print: proctype (printer, t, symtab),
+		  t has lt: proctype (t, t) returns (bool)
+    t_arr = array[t]
+    if t_arr$empty(items) then return end
+    quicksort[t](items, 1, t_arr$size(items), t$lt)
+    write_arr_with_ids[t](p, "declare " || slower(label), items, stab)
+    printer$newline(p)
+    end write_decs
+
+
+% A help procedure for use with "write".
+
+help_write = proc (io: iodev)
+    iodev$prints(io, "Enter the name of an output file, or type <ret> to ")
+    iodev$printl(io, "quit.  The default suffix is `.lp'.")
+    end help_write

@@ -1,0 +1,208 @@
+#extend
+
+% An object T of type TheoryB is a set of formulas, some of which are 
+% literals and some of which are not.
+
+% Definitions
+
+% Literals(T) = {l: l or ~l is in some formula in T} \union {true, false}
+% Asserted(T) = Literals(T) \intersect T
+% Known(T)    = Literals(T) \intersect {l: l or ~l is in TheoryB}
+% Remaining_lits(T) = {l: l or ~l is in some nonliteral formula of T}
+
+% A literal is "relevant" to T iff it is in Literals(T).
+
+% The consequences of T are closed under equivalence:
+% (1) if T |= l1 = l2, then T |= l2 = l1.
+% (2) if T |= l1 = l2 and T |= l2 = l3, then T |= l1 = l2.
+
+% Therefore, T defines an equivalence relation on Literals(T).  Making
+% "true" and "false" the representatives of class(true) and class(false), it
+% follows that 
+%   Known(T) = class(true) \union class(false) - {true, false}
+
+% T can undo assertions.
+%        undo(save(T)) = T
+%	 undo(add(T, l)) = T
+%        undo(assert(T, l)) = undo(T)
+
+% We'll say T is satisfiable if conjunction of formulas from it
+% is satisfiable under theory of Boolean propositional logic.
+
+% Let's also describe some useful properties of T:
+% P1(T): T does not contain simply redundant non-literal formulas
+%          All nonliteral formulas in T are in simple form
+%          (see clause cluster for definition of redundant and simple)
+% P2(T): Remaining_lits(T) = {representatives of eq. classes of literals} 
+%                                - {true, false}
+% P3(T): if T "simply_implies" l  then l \in Asserted(T)
+% Let P(T) = P1(T) /\ P2(T) /\ P3(T)
+% %%%Simply imply?????
+
+TheoryB = cluster is new, add, relevant, assert, get_prevalent_literal, model,
+                     remaining, get_remaining_size, print, save, undo, _gcd
+    
+    rep = record[non_units: clause_list, lits: literal_table]
+
+    % A(r) = r.non_units \union Asserted(r.lits)
+    % I(r): if l is in Literals(r.non_units) then l is in elements(r.lits);
+    %       r.non_units does not have unit clauses
+    %       l \in literals(r.non_units) iff 
+    %         l.class_rep = l /\ l ~= truth /\ l ~= falsity
+    %      SIclosed(r.non_units, asserted(r.lits))(see clause_list cluster for def)
+    
+
+    % Returns a new, empty TheoryB.
+    % NOTE: P(T) = true
+    
+    new = proc() returns (cvt)
+        return(rep${non_units: clause_list$[], lits: literal_table$[]})
+	end new
+    
+    
+    % Requires: f is of boolean sort, P(T^)
+    %           No iteration already in progress
+    % Modifies: T
+    % Effects:  T' is satisfiable iff T^ \union {f} is satisfiable.
+    %           Literals(T^) \union Literals(f) \subset Literals(T').
+    %           P(T')
+    %           Signals Contradiction => T' is not satisfiable 
+    %           T' is not satistiable /\ Remaining_lits(T') = empty 
+    %                 => Signals Contradiction
+    % Yields:   All literals l such that l is not a constant or negation of a 
+    %           constant, T' simply implies l, and T^ does not simply imply 
+    %           l.
+
+    add = iter (T: cvt, f: term) yields (literal) signals (contradiction)
+	for cl: clause in term2cnf(f, T.lits) do
+            if clause$is_unit(cl) 
+	       then l: literal := cl.literal
+		    literal_table$assert(T.lits, l)
+		    if ~literal$is_fresh(l) then yield(l) end
+	       else clause_list$insert(T.non_units, cl) 
+	       end
+	    end resignal contradiction
+	for l: literal in clause_list$simplify(T.non_units, T.lits) do
+            if ~literal$is_fresh(l) then yield(l) end 
+	    end resignal contradiction
+	end add
+
+    
+    % Returns true if l \in Literals(T).
+    
+    relevant = proc (T: cvt, l: literal) returns (bool)
+	return(literal_table$is_relevant(T.lits, l))
+	end relevant
+
+    
+    % Requires: P(T^)
+    %		No iteration already in progress.
+    % Modifies: T
+    % Effects:  T' is satisfiable iff T^ \union {l} is satisfiable.
+    %           l \in Asserted(T')
+    %           P(T')
+    %           Signals Contradiction => T' is not satisfiable 
+    %           T' is not satistiable /\ Remaining_lits(T') = empty 
+    %                 => Signals Contradiction
+    % Yields:   All non-constant literals l such that T' simply implies l and 
+    %           T^ does not simply imply l
+    
+    % FIX: Do we need "if relevant"?
+    
+    assert = iter (T: cvt, lits: lit_seq) yields (literal)
+	       signals (contradiction)
+	asserted: bool := false
+	for l: literal in lit_seq$elements(lits) do
+	    if relevant(up(T), l) then
+	       asserted := true
+	       literal_table$assert(T.lits, l)
+	       end 
+	    end resignal contradiction
+	if asserted then
+	   for l: literal in clause_list$simplify(T.non_units, T.lits) do
+	       if ~literal$is_fresh(l) then yield(l) end
+	       end
+	   end resignal contradiction
+	end assert
+    
+
+    % Requires: P(T)
+    % Returns:  some literal in Remaining_lits(T)
+
+    get_prevalent_literal =  proc (T: cvt) returns (literal) signals (none)
+	return(clause_list$prevalent_literal(T.non_units, T.lits))
+	   resignal none
+	end get_prevalent_literal
+    
+    
+    % Yields all elements of Remaining_lits(T), each exactly once.
+    
+    remaining = iter (T: cvt) yields (literal)
+	for l: literal in literal_table$classes(T.lits) do yield(l) end
+	end remaining
+    
+    
+    % Returns the size of "T.non_units".
+    
+    get_remaining_size = proc (T: cvt) returns (int)
+	return(T.non_units.size)
+	end get_remaining_size
+    
+    
+    % Requires: P(T), Remaining_lits(T) is empty, and T is satisfiable.
+    % Yields a sequence of literals that is satisfiable iff T is satisfiable.
+    
+    model = iter (T: cvt) yields (literal)
+	for l: literal in literal_table$asserted(T.lits) do
+	    if ~literal$is_fresh(l) then yield(l) end
+	    end
+	end model
+ 
+    
+    % Modifies: T
+    % Effects:  T' = save(T^)
+    
+    save = proc (T : cvt)
+        clause_list$save(T.non_units)
+	literal_table$save(T.lits)
+	end save
+
+    
+    % Modifies: T
+    % Effects: T' = undo(T^)
+    %          Signals empty if undo(T^) is not defined
+    
+    undo = proc (T: cvt) signals (empty)
+	begin
+	    clause_list$undo(T.non_units)
+	    literal_table$undo(T.lits)
+	    end resignal empty
+	end undo
+
+    
+    % Effects: prints "T" on "pr".
+    
+    print = proc (pr: printer, T: cvt, stab: symtab)
+	literal_table$print(pr, T.lits, stab)
+	printer$text(pr, "\nNon-unit clauses: ")
+	clause_list$print(pr, T.non_units, stab)
+	end print
+    
+    
+    % Dumps "T" on the standard output (for debugging).
+    
+    dump = proc (T: cvt)
+	pr: printer := tracer$get_printer()
+	print(pr, up(T), tracer$get_symtab())
+	printer$newline(pr)
+	end dump
+
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    
+    end TheoryB

@@ -1,0 +1,39 @@
+\doc{The display-mode setting}
+\ref{display-mode-setting}
+\ref{qualification-mode}
+
+The \def{display-mode setting} controls the manner in which the \fq{display}
+command outputs identifiers and terms.
+
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-display-command} ::= \f{set display-mode} \s{qualification-mode}
+\sd{qualification-mode}  ::= \f{qualified} | \f{unambiguous} | \f{unqualified}
+\end{verbatim}
+
+Note: The \s{qualification-mode} can be \dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+set display-mode qualified
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{display-mode} setting controls the ouput of identifiers and terms by
+the \cflink{display} command in the current proof context.
+\begin{verbatim}
+display-mode       effect
+------------       ------
+qualified          print qualifications for all subterms, identifiers
+unqualified        print no qualifications
+unambiguous        print enough qualifications to enable reparsing
+\end{verbatim}
+The default display-mode is \fq{unambiguous}.
+
+\head{2}{See also}
+\begin{itemize}
+\item \llink{overload}{Overloaded} identifiers
+\item The \setlink{write-mode} setting
+\end{itemize}

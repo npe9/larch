@@ -1,0 +1,32 @@
+\doc{The cancel command}
+\ref{cancel-command}
+
+The \def{cancel command} enables users to abort proofs or to change proof
+methods. 
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{cancel-command} ::= \f{cancel} [ \f{all} | \f{lemma} ]
+\end{verbatim}
+
+\head{2}{Examples}
+\begin{verbatim}
+cancel
+cancel all
+cancel lemma
+\end{verbatim}
+
+\head{2}{Usage} 
+The \fq{cancel} command without either modifier cancels the proof of the
+current conjecture and suspends work on other proofs until an explicit
+\cflink{resume} command is issued.  If the current conjecture is a subgoal for
+proving a formula, LP pops the proof stack back to the parent of the subgoal
+and sets its proof \dlink{../proof/methods}{method} to \fq{default}; if it is a
+subgoal for a nonformula (e.g., for an induction rule), LP also cancels the
+proof of the parent of the subgoal.
+\p
+The command \fq{cancel all} cancels the proofs of all conjectures.  
+\p
+The command \fq{cancel lemma} cancels the proof of the conjecture introduced by
+the last \cflink{prove} command, together with the proofs of all subgoals
+introduced by LP during the proof of that conjecture.

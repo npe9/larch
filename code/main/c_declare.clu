@@ -1,0 +1,136 @@
+#extend
+
+% Processes the "declare" command.  
+%     declare-command := "declare variables" variable-dec,+
+%			     "declare operators" operator-dec,+
+%			     "declare sorts" sort,+
+%     variable-dec    := identifier,+ ":" sort
+%     operator-dec    := identifier,+ ":" signature
+% Enters the identifiers in "i.symtab".
+    
+c_declare = proc (i: interactive) signals (error)
+    cct = command_table[command]
+    command = proctype (scanner, symtab, system) signals (none, error)
+    act = struct[name: string, choice: command]
+    act_seq = sequence[act]
+    own ct: cct := cct${help: cct$help, delims: " \t",
+			label: "identifier type",
+			as: act_seq$[act${name: "operators",
+					  choice: declare_ops},
+				     act${name: "ops",
+					  choice: declare_ops},
+				     act${name: "sorts",
+					  choice: declare_sorts},
+				     act${name: "variables",
+					  choice: declare_vars},
+				     act${name: "vars",
+					  choice: declare_vars}]}
+    scan: scanner := scanner$from_string("", i.p)
+    cct$choose(ct, "\nType of identifiers to declare: ", i.io)
+	(scan, i.symtab, i.sys)
+       except when no_response, end_of_file, none:
+	      when error: aborted(i.p, "error in declarations")
+	      end resignal error
+    end c_declare
+
+
+% Reads operator declarations using the multiline input convention and enters
+% them in "stab".  Signals "none" if there is no input.  Signals "error", and
+% does not change "stab", if there is an error.
+
+declare_ops = proc (scan: scanner, stab: symtab, sys: system) 
+		signals (none, error)
+    query$get_more(scan, "operator declarations", opdec_syntax)
+       resignal none
+    symtab$begin_changes(stab)
+    err: bool := false
+    for id: identifier, loc: locator, sig: signature
+	  in poperator$read_opDcl(scan, stab) do
+	if id.arity ~= sig.arity then
+	   exit bad(loc, "illegal identifier for " ||
+			 int$unparse(sig.arity) || "-ary operator")
+	   end except when unknown: end
+	symtab$enter_op(stab, operator${id: id, sig: sig})
+	   except when illegal:
+		       exit bad(loc, "illegal overloading for operator")
+		  when overloaded:
+		       exit bad(loc, "constant conflicts with variable")
+		  end
+	end except when bad (loc: locator, msg: string):
+			scanner$error_at(scan, loc, msg)
+			err := true
+		   when error:
+			err := true
+		   end
+    finish_declaration(scan, stab, err)
+       resignal error
+    end declare_ops
+    
+    
+% Reads a comma-separated list of sorts using the multiline input convention
+% and enters them in "stab".  Signals "none" if there is no input.  Writes a
+% message to "p", does not change "stab", and signals "error" if there is an
+% error.
+    
+declare_sorts = proc (scan: scanner, stab: symtab, sys: system) 
+		  signals (none, error)
+    query$get_more(scan, "sort declarations", sort_syntax)
+       resignal none
+    symtab$begin_changes(stab)
+    err: bool := false
+    while true do
+	symtab$enter_sort(stab, psort$scan_sort(scan))
+	   except when numeric (nt: numeric_theory):
+	      	       if ~nt.named then
+			  nt.name := symtab$new_name(stab)
+			  end
+		       system$add_theory(sys, nt, stab)
+			  except when inconsistent: end
+		  end
+	if token$is_comma(scan.nextToken)
+	   then scanner$get(scan)
+	   else break
+	   end
+	end except when error: err := true end
+    finish_declaration(scan, stab, err)
+       resignal error
+    end declare_sorts
+
+    
+% Reads variable declarations using the multiline input convention and enters
+% them in "stab".  Signals "none" if there is no input.  Writes a message to
+% "p", does not change "stab", and signals "error" if there is an error.
+
+declare_vars = proc (scan: scanner, stab: symtab, sys: system)
+		 signals (none, error)
+    msg = "variable conflicts with constant"
+    query$get_more(scan, "variable declarations", vardec_syntax)
+       resignal none
+    symtab$begin_changes(stab)
+    err: bool := false
+    for tok: token, so: sort in pvariable$read_varDcl(scan, stab) do
+	id: identifier := identifier$make_simple(tok.text)
+	symtab$enter_var(stab, variable${id: id, sort: so})
+	   except when overloaded: scanner$error_at(scan, tok.loc, msg)
+				   err := true
+		  end
+	end except when error: err := true end
+    finish_declaration(scan, stab, err)
+       resignal error
+    end declare_vars
+
+
+finish_declaration = proc (scan: scanner, stab: symtab, err: bool)
+		       signals (error)
+    if ~err then
+       scanner$expecting(scan, token$is_eof, "the end of the declaration")
+       end except when error: err := true end
+    if err
+       then symtab$abort_changes(stab)
+	    signal error
+       else symtab$commit_changes(stab)
+       end
+    end finish_declaration
+
+
+

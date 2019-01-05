@@ -1,0 +1,52 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%  Equates for lp/code/terms  %%%%%%%%%%%%%%%%%%%%%%%%%
+
+% (see also Genlib.equ)
+
+
+%%%%%%%%%%%%%%%%%%%%  Data types
+
+
+% Arrays
+
+op_arr 		= array[operator]
+sort_arr	= array[sort]
+term_arr 	= array[term]
+var_arr 	= array[variable]
+
+% Maps (for decode/encode)
+
+op_map		= int_map[operator]
+var_map		= int_map[variable]
+maybe_op_map	= maybe_obj[op_map]
+maybe_var_map	= maybe_obj[var_map]
+
+% Sequences
+
+op_seq 		= sequence[operator]
+sort_seq 	= sequence[sort]
+sub_seq 	= sequence[substitution]
+term_seq 	= sequence[term]
+var_seq 	= sequence[variable]
+
+% Sets
+
+op_set 		= set[operator]
+sort_set	= set[sort]
+term_set 	= set[term]
+var_set 	= set[variable]
+
+
+%%%%%%%%%%%%%%%%%%%%  Terms
+
+% A "bterm" is a term of sort "bool".
+
+bterm = term
+
+
+% A "path" is an array of integers that denotes the position of a subterm in a
+% term.  For example, path$[2,3] denotes the third argument of the second
+% argument of the root of a term.  The routines that manipulate paths ensure
+% that the only nonpositive integers in a path are -1 and -2, which denote the
+% first and second arguments of a flipped term.
+
+path = int_arr

@@ -1,0 +1,49 @@
+\doc{Conditional operators}
+\ref{conditionals}
+\ref{if}
+\ref{then}
+\ref{else}
+
+LP automatically declares a conditional \dlink{operator}{operator}
+\f{if__then__else__} with \dlink{signature}{signature} \fq{Bool,S,S->S} for 
+each \dlink{sort}{sort} \f{S}.  The meaning of this operator is given by the
+following two hardwired rewrite rules.
+\begin{verbatim}
+if true then x else y  -> x
+if false then x else y -> y
+\end{verbatim}
+
+LP several additional hardwired rewrite rules to simplify terms containing
+conditional operators.  It always uses the following two rules:
+\begin{verbatim}
+if x then y else y -> y
+if ~x then y else z -> if x then z else y
+\end{verbatim}
+Unless the \setlink{hardwired-usage} setting dictates otherwise, it also uses
+the following rewrite rules:
+\begin{verbatim}
+if x then true else y  -> x \/ y
+if x then false else y -> ~x /\ y
+if x then y else true  -> x => y
+if x then y else false -> x /\ y
+\end{verbatim}
+Likewise, unless the \setlink{hardwired-usage} setting dictates otherwise, LP
+uses the if-simplification metarule
+\begin{verbatim}
+if t1 then t2[t1] else t3[t1] -> if t1 then t2[true] else t3[false]
+\end{verbatim}
+to reduce terms when \f{t1} occurs as a subterm of \f{t2} or \f{t3}; here
+\f{t2[true]} is the result of substituting \fq{true} for every occurrence of
+\f{t1} as a subterm of \f{t2}, and \f{t3[false]} is defined similarly.
+
+\head{2}{See also}
+\begin{itemize}
+\item
+Proving formulas containing conditional operators using the 
+\dlink{../proof/of-conditional}{if-method}
+\item
+\dlink{../ordering/status}{Left-to-right status} assigned to
+\f{if__then__else__} and used when
+\dlink{../commands/order}{orienting} formulas into rewrite rules
+\end{itemize}
+

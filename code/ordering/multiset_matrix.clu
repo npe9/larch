@@ -1,0 +1,320 @@
+#extend
+
+% A multiset_matrix is a table of pairwise comparisons (with respect to dsmpos)
+% between the terms in two multisets.  The elements of one multiset and their
+% counts label the rows, and the elements and their counts label the columns.
+% The table is reduced to eliminate "=" comparisons by deleting both the row
+% and the column if they have equal counts, deleting the row if it has a
+% smaller count, or the deleting column if it has a smaller count.
+
+% The entries in the table can be enhanced to contain suggestions for making
+% terms labeling the rows greater than or equal to terms labeling the columns.
+
+multiset_matrix = cluster is create, add_suggestions, is_gt, is_lt, suggest
+
+    rep = record[col_counts: int_list,	  % Multiplicities of column terms
+                 col_terms:  term_list,	  % Terms labeling columns
+                 row_counts: int_list,    % Multiplicities of row terms
+    	         row_terms:  term_list,   % Terms labeling rows
+		 row_was_gt: bool_list,	  % Already used with "gt" suggestions
+		 mat:        ent_matrix,  % Matrix of comparisons
+		 use_eq:     bool]	  % Generate eq suggestions if true
+
+    ent_matrix      = matrix[entry]
+    entry           = oneof[gt, lt, none: null, sugs: sug_pair]
+    entry_gt	    = entry$make_gt(nil)
+    entry_lt	    = entry$make_lt(nil)
+    entry_none	    = entry$make_none(nil)
+    sug_pair        = struct[gt, eq: suggestions]
+    
+    % Rep invariants:
+    % (1) r.mat.n_rows > 0
+    % (2) r.mat.n_cols > 0
+    % (3) r.col_counts[i] > 0
+    % (4) r.row_counts[i] > 0 \/ row_was_gt[i]
+
+    
+    % Returns a multiset_matrix for comparing the terms of "tms1" and "tms2".
+    % Signals "gt", "lt", or "eq" if the result of comparing "tms1" and "tms2"
+    % is known because one or both of the multisets is empty (or becomes empty
+    % upon removing elements that are equivalent in the dsmpos ordering).
+    
+    create = proc (ts1, ts2: term_seq, reg: registry, try_lt, use_eq: bool) 
+	       returns (cvt) signals (done(xcomparison))
+
+	% Remove common elements from "ts1", "ts2".
+	tms1: term_mset := term_mset$cons(ts1)
+	tms2: term_mset := term_mset$cons(ts2)
+	tms1, tms2 := (tms1 - tms2), (tms2 - tms1)
+
+	n_rows: int := term_mset$size(tms1)
+	n_cols: int := term_mset$size(tms2)
+	if n_rows + n_cols = 0 then signal done(xcomparison$make_eq())
+	 elseif n_rows = 0     then signal done(xcomparison$make_lt())
+	 elseif n_cols = 0     then signal done(xcomparison$make_gt())
+	 end
+	m: rep := rep${col_counts: int_list$predict(n_cols),
+	               col_terms:  term_list$predict(n_cols),
+		       row_counts: int_list$predict(n_rows),
+		       row_terms:  term_list$predict(n_rows),
+		       row_was_gt: bool_list$fill(n_rows, false),
+		       mat:        ent_matrix$fill(n_rows, n_cols, entry_none),
+		       use_eq:     use_eq}
+	for t: term, count: int in term_mset$elements(tms1) do
+	    term_list$addh(m.row_terms, t)
+	    int_list$addh(m.row_counts, count)
+	    end
+	for t: term, count: int in term_mset$elements(tms2) do
+	    term_list$addh(m.col_terms, t)
+	    int_list$addh(m.col_counts, count)
+	    end
+	col: int := 1
+	while col <= m.mat.n_cols do
+	    row: int := 1
+	    begin
+		while row <= m.mat.n_rows do
+		    begin
+			tagcase dsmpos(m.use_eq, false, false, try_lt,
+				       m.row_terms[row], m.col_terms[col], reg)
+			   tag gt: ent_matrix$store(m.mat, row, col, entry_gt)
+			   tag lt: ent_matrix$store(m.mat, row, col, entry_lt)
+			   tag eq: remove_equal_elements(m, row, col)
+			   others:
+			   end
+			row := row + 1
+			end except when row_deleted: end
+		    end
+		col := col + 1
+		end except when both_deleted, column_deleted: end
+	    end
+	if m.mat.n_rows + 
+	   m.mat.n_cols = 0       then signal done(xcomparison$make_eq())
+	 elseif m.mat.n_rows = 0  then signal done(xcomparison$make_lt())
+	 elseif m.mat.n_cols = 0  then signal done(xcomparison$make_gt())
+	 end
+	return(m)
+	end create
+
+    
+    % (Internal procedure) Reduces the counts for row "row" and column "col" of
+    % "m" by the minimum of the two counts.  Deletes an empty row and/or column
+    % (unless the row was used previously for a "gt" suggestion).  Signals
+    % "both_deleted" if both the row and the column are deleted (because they
+    % had the same counts).  Otherwise signals "column_deleted" if the column
+    % is deleted or "row_deleted" if the row is deleted.  Note: This procedure
+    % does not always preserve invariants (1) and (2).
+    
+    remove_equal_elements = proc (m: rep, row, col: int)
+			      signals (both_deleted, column_deleted, row_deleted)
+	remove: int := int$min(m.row_counts[row], m.col_counts[col])
+	row_deleted: bool := false
+	if m.row_counts[row] = remove cand ~m.row_was_gt[row]
+	   then term_list$delete_at(m.row_terms, row)
+		int_list$delete_at(m.row_counts, row)
+		ent_matrix$delete_row(m.mat, row)
+		   except when bounds: end
+		row_deleted := true
+	   else m.row_counts[row] := m.row_counts[row] - remove
+	   end
+	if m.col_counts[col] = remove
+	   then term_list$delete_at(m.col_terms, col)
+		int_list$delete_at(m.col_counts, col)
+		ent_matrix$delete_column(m.mat, col)
+		   except when bounds: end
+		if row_deleted 
+		   then signal both_deleted
+		   else signal column_deleted
+		   end
+	   else m.col_counts[col] := m.col_counts[col] - remove
+	   end
+        if row_deleted then signal row_deleted end
+	end remove_equal_elements
+
+    
+    % Returns "true" if every column of "m" contains a ">" comparison.
+    
+    is_gt = proc (m: cvt) returns (bool)
+	for col: int in int_list$indexes(m.col_counts) do
+	    for row: int in int_list$indexes(m.row_counts) do
+		e: entry := ent_matrix$lookup(m.mat, row, col)
+		if entry$is_gt(e) then exit next_column end
+		end except when next_column: continue end
+	    return(false)
+	    end
+	return(true)
+	end is_gt
+
+
+    % Returns "true" if every row of "m" contains a "<" comparison.
+
+    is_lt = proc (m: cvt) returns (bool)
+	for row: int in int_list$indexes(m.row_counts) do
+	    for col: int in int_list$indexes(m.col_counts) do
+		e: entry := ent_matrix$lookup(m.mat, row, col)
+		if entry$is_lt(e) then exit next_row end
+		end except when next_row: continue end
+	    return(false)
+	    end
+	return(true)
+	end is_lt
+
+
+    % Fills in suggestions for making the terms labeling the rows of "m"
+    % greater than or equal to (under dsmpos) the terms labeling the columns.
+
+    add_suggestions = proc (m: cvt, reg: registry)
+	for row: int in int_list$indexes(m.row_counts) do
+	    for col: int in int_list$indexes(m.col_counts) do
+		e: entry := ent_matrix$lookup(m.mat, row, col)
+		if entry$is_gt(e) cor entry$is_lt(e) then continue end
+		dsmpos(m.use_eq, false, true, false, m.row_terms[row], 
+		       m.col_terms[col], reg)
+		   except when suggest (gt_sugs, eq_sugs: suggestions):
+			       sp: sug_pair := 
+				   sug_pair${gt: gt_sugs, eq: eq_sugs}
+			       ent_matrix$store(m.mat, row, col, 
+						entry$make_sugs(sp))
+			  end
+		end
+	    end
+	end add_suggestions
+
+
+    % Returns boolean values and suggestions that indicate whether (and how)
+    % the multiset of rows of "m" can be made greater than or equal to the
+    % multiset of columns of "m".  Signals "gt" if the row multiset is greater
+    % than the column multiset without any suggestions.
+    
+    % This procedure works by recursion, computing suggestions for all ways of
+    % making some row greater than or equal to the first column, and then
+    % recursing to add suggestions for taking care of the remaining columns.
+
+    suggest = proc (mm: cvt) returns (bool, suggestions, bool, suggestions)
+		signals (gt)
+			 
+	gt_sugs: suggestions := suggestions$[]
+	eq_sugs: suggestions := suggestions$[]
+	found_gt: bool := false
+	found_eq: bool := false
+	new_gt_sugs, new_eq_sugs: suggestions
+	new_found_gt, new_found_eq: bool
+	m: ent_matrix := mm.mat
+	for i: int in int$from_to(1, m.n_rows) do
+	    e: entry := m[i][1]
+	    if entry$is_gt(e) then
+	       if m.n_cols = 1
+		  then signal gt
+		  else new_found_gt, new_gt_sugs, new_found_eq, new_eq_sugs :=
+			   try_i_gt(mm, i)
+		       if new_found_gt then
+			  suggestions$merge(gt_sugs, new_gt_sugs)
+			  end
+		       if new_found_eq then
+			  suggestions$merge(gt_sugs, new_eq_sugs)
+			  end
+		       found_gt := found_gt cor new_found_gt cor new_found_eq
+		  end resignal gt
+	       end
+	    sugs: sug_pair := entry$value_sugs(e)
+	       except when wrong_tag: continue end
+	    if ~suggestions$empty(sugs.gt) then
+	       if m.n_cols = 1
+		  then suggestions$merge(gt_sugs, sugs.gt)
+		       found_gt := true
+		  else new_found_gt, new_gt_sugs, new_found_eq, new_eq_sugs :=
+			   try_i_gt(mm, i)
+		       if new_found_gt then
+			  suggestions$merge(gt_sugs, new_gt_sugs || sugs.gt)
+			  end
+		       if new_found_eq then
+			  suggestions$merge(gt_sugs, new_eq_sugs || sugs.gt)
+			  end
+		       found_gt := found_gt cor new_found_gt cor new_found_eq
+		  end except when gt: suggestions$merge(gt_sugs, sugs.gt)
+				      found_gt := true
+			     end
+	       end
+	    if mm.row_counts[i] = 0 cor suggestions$empty(sugs.eq) then 
+	       % No point in trying to compute equality suggestions.
+	       continue
+	       end
+
+	    mm1: rep := rep$copy(mm)
+	    remove_equal_elements(mm1, i, 1)
+	       except when both_deleted, column_deleted, row_deleted: end
+	    if mm1.mat.n_rows + mm1.mat.n_cols = 0 then
+	       suggestions$merge(eq_sugs, sugs.eq)
+	       found_eq := true
+	     elseif mm1.mat.n_cols = 0 then
+	       suggestions$merge(gt_sugs, sugs.eq)
+	       found_gt := true
+	     elseif mm1.mat.n_rows > 0 then
+	       % Now "mm1" satisfies the rep invariant.
+	       new_found_gt, new_gt_sugs, new_found_eq, new_eq_sugs :=
+		   suggest(up(mm1))
+	       if new_found_gt then
+		  suggestions$merge(gt_sugs, new_gt_sugs || sugs.eq)
+		  found_gt := true
+		  end
+	       if new_found_eq then
+		  suggestions$merge(eq_sugs, new_eq_sugs || sugs.eq)
+		  found_eq := true
+		  end
+	     end except when gt: suggestions$merge(gt_sugs, sugs.eq)
+				 found_gt := true
+			end
+	    end
+	return(found_gt, gt_sugs, found_eq, eq_sugs)
+	end suggest
+
+
+    % (Internal procedure) Returns boolean values and suggestions that indicate
+    % whether (and how) the multiset of rows of "m" can be made greater than or
+    % equal to the multiset of columns of "m" by making the term labeling row
+    % "i" greater than the term labeling column 1.  Signals "gt" if the row
+    % multiset is greater than the column multiset without any further
+    % suggestions.
+
+    try_i_gt = proc (mm: rep, i: int)
+		 returns (bool, suggestions, bool, suggestions) signals (gt)
+        mm1: rep := rep$copy(mm)
+	ent_matrix$delete_column(mm1.mat, 1)
+	int_list$delete_at(mm1.col_counts, 1)
+	if ~mm1.row_was_gt[i] then
+	   mm1.row_was_gt[i] := true
+	   mm1.row_counts[i] := mm1.row_counts[i] - 1
+	   end
+	% Note: If "mm1.row_was_gt[i]", then we do not need to decrease the
+	% count for row "i" because the same element can be used many times in
+	% a greater than comparison (but only once in an equal comparison).
+	found_gt: bool, gt_sugs: suggestions, 
+	found_eq: bool, eq_sugs: suggestions := suggest(up(mm1))
+	   resignal gt
+	return(found_gt, gt_sugs, found_eq, eq_sugs)
+	end try_i_gt
+
+    dump_ent_matrix = proc (m: ent_matrix)
+	p: printer := tracer$get_printer()
+	stab: symtab := tracer$get_symtab()
+	for i: int in int$from_to(1, m.n_rows) do
+	    for j: int in int$from_to(1, m.n_cols) do
+		printer$text(p, "Row ")
+		printer$text(p, int$unparse(i))
+		printer$text(p, ", column ")
+		printer$text(p, int$unparse(j))
+		tagcase ent_matrix$lookup(m, i, j)
+		   tag gt:         printer$text(p, ": >\n")
+		   tag lt:         printer$text(p, ": <\n")
+		   tag none:       printer$text(p, ": incomparable\n")
+		   tag sugs (sp: sug_pair):
+		       printer$text(p, ": suggestions\n")
+		       suggestions$print(p, stab, ">", sp.gt, 0)
+		       suggestions$print(p, stab, "=", sp.eq, 0)
+		   end
+		end
+	    end
+	end dump_ent_matrix
+
+
+
+    end multiset_matrix

@@ -1,0 +1,42 @@
+\doc{Variables}
+\ref{variables}
+\ref{var}
+
+A \def{variable} is a symbol that represents an arbitrary element of some
+\dlink{sort}{sort}.  A variable can be an unqualified variable identifier or a
+variable identifier qualified by a sort.
+
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+
+\begin{verbatim}
+\sd{variable}   ::= \s{variableId} [ \f{:} \slink{sort}{sort} ]
+\sd{variableId} ::= \slink{../symbols/symbols}{simpleId}
+\end{verbatim}
+
+\head{2}{Examples}
+
+\begin{verbatim}
+x
+x:Int
+committee: Set[Person]
+\end{verbatim}
+
+\head{2}{Usage}
+
+All variables must be declared in a 
+\dflink{../commands/declare}{declare variables} command.  Case is 
+significant in variable identifiers.  Thus \fq{x} and \fq{X} are different
+variables.
+\p
+The same \s{variableId} can be \dlink{overload}{overloaded} to name two
+different variables, that is, two variables with different sorts.  It can also
+be used to name a variable and an \dlink{operator}{operator}, provided the
+operator is not a constant of the same sort.  LP uses context to disambiguate
+overloaded identifiers.
+\p
+At times (e.g., when computing critical pairs or when proving an induction
+rule), LP creates variables, the identifiers for which consist of the first
+letter of the sort of the variable, followed by digits if necessary to avoid
+conflicts with constants and with other variables in the same term or formula.
+

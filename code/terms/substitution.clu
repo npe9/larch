@@ -1,0 +1,344 @@
+#extend
+
+% A "substitution" maps terms to terms.  Any mapping "sigma" of variables
+% to terms extends to a substitution by defining "sigma(f(t1, ..., tn))" to be
+% "f(sigma(t1), ..., sigma(tn))".
+
+substitution = cluster is 
+	new, predict, size, store, fetch, apply, apply_renamed, canonical, add,
+	compose, empty, elements, exists, get_ops, get_domain, get_range_vars,
+	read, print, undefine, unparse, copy, equal, _gcd, decode, encode
+
+    % The rep for a substitution is a mapping from variables to terms.
+    % INVARIANT: no pair in the rep maps a variable to itself.
+
+    rep = mapping[variable, term]
+
+
+    % Returns an empty substitution.
+
+    new = proc () returns (cvt)
+	return(rep$new())
+	end new
+
+
+    % Returns an empty substitution, with a data structure allocated to hold
+    % "n" pairs.
+
+    predict = proc (n: int) returns (cvt) signals (negative_size)
+	return(rep$predict(n))
+	end predict
+
+
+    % Returns the size of the domain of "sigma".
+
+    size = proc (sigma: cvt) returns (int)
+	return(rep$size(sigma))
+	end size
+
+
+    % Changes "sigma" to map "v" to "t".  CLU syntactic sugar translates
+    % "sigma[v] := t" into "substitution$store(sigma, v, t)".
+    % ASSUMES: "v.sort = t.sort"
+    
+    store = proc (sigma: cvt, v: variable, t: term)
+	if debugging cand v.sort ~= t.sort then 
+	   fail("substitution$store")
+	   end
+	if term$is_var(t) cand t.var = v
+	   then rep$delete(sigma, v) except when missing: end
+	   else rep$change(sigma, v, t)
+	   end
+	end store
+
+
+    % Returns the image of "v" under "sigma".  CLU syntactic sugar translates
+    % "sigma[v]" into "substitution$fetch(sigma, v)".
+    
+    fetch = proc (sigma: cvt, v: variable) returns (term)
+	return(rep$image(sigma, v))
+	 except when missing: return(term$make_var(v)) end
+	end fetch
+    
+
+    % Returns the image of "t" under "sigma", changing bound variables as
+    % necessary in the result to prevent a variable in the range of "sigma"
+    % from being captured by a quantifier in "t".  To preserve shared subterms,
+    % returns "t" itself, and not a copy, if the image is the same as "t".
+    
+    apply = proc (sigma: cvt, t: term, stab: symtab) returns (term)
+	return(apply_work(sigma, t, stab, false))
+	end apply
+
+
+    % The same as "apply", but assumes that all variables in the range of
+    % "sigma" have been replaced by constants (by "term$get_renamed") and
+    % ensures that the same is true in the result.
+    
+    apply_renamed = proc (sigma: cvt, t: term, stab: symtab) returns (term)
+	return(apply_work(sigma, t, stab, true))
+	end apply_renamed
+
+    
+    % (Internal procedure)  Does the work for "apply" and "apply_renamed".
+
+    apply_work = proc (sigma: rep, t: term, stab: symtab, renamed: bool) 
+		   returns (term)
+	tagcase t
+	   tag var: 
+	       return(rep$image(sigma, t.var))
+		  except when missing: return(t) end
+	   tag funct:
+	       args: term_arr
+	       same_args: bool := true
+	       n: int := 0
+	       for arg: term in term_seq$elements(t.args) do
+		   n := n + 1
+		   arg1: term :=
+		       apply_work(sigma, arg, stab, renamed)
+		   if same_args then
+		      if term$same_object(arg, arg1) then continue end
+		      same_args := false
+		      args := term_seq$s2a(t.args)
+		      end
+		   args[n] := arg1
+		   end
+	       if same_args then return(t) end
+	       return(term$change_args(t, term_seq$a2s(args)))
+	   tag quant:
+	       q: quantifier := t.quant
+	       v: variable := q.var
+	       v0: variable := v
+	       v_changed: bool := false
+	       vc: operator := operator$v2c(v)
+	       % Code corrected 98/06/09 to consider all captured variables,
+	       % not just those associated with the first "v1".
+	       bad_vars: var_set := var_set$[]
+	       for v1: variable, t1: term in rep$elements(sigma) do
+		   if v1 = v then continue end
+	           if ~var_set$exists(t.subform.fvars, v1) then continue end
+		   if renamed
+		      then if op_set$exists(t1.ops, vc) then 
+			      var_set$merge(bad_vars, t.subform.unrenamed.vars)
+			      end
+		    	   % NOTE: This will change a quantifier unnecessarily
+			   % when "vc" only occurs in the scope of an inner
+			   % quantifier over the same variable.  But there is
+			   % no harm in doing this.
+		      else if var_set$exists(t1.fvars, v) then 
+			      var_set$merge(bad_vars, t1.vars)
+			      end
+		      end
+		   end 
+		if var_set$empty(bad_vars) then % Change bound variable
+		    v_changed := true
+		    symtab$begin_changes(stab)
+		    v := variable$different(v.sort, bad_vars, stab)
+		    symtab$commit_changes(stab)
+		    q := quantifier$change_var(q, v)
+		    if renamed then vc := operator$v2c(v) end
+		    end
+	       sigma1: rep := rep$copy1(sigma)
+	       if renamed then rep$change(sigma1, v0, term0(vc))
+		elseif v_changed then rep$change(sigma1, v0, term$make_var(v))
+		else rep$delete(sigma1, v0)
+		end except when missing: end
+	       subform: term := apply_work(sigma1, t.subform, stab, renamed)
+	       if v_changed cor ~term$same_object(subform, t.subform) then
+		  t := term$make_quant(q, subform)
+		  end
+	       return(t)
+	   end
+	end apply_work
+
+
+    % Restricts the domain of "sigma" to "dom" and renames in a canonical
+    % fashion all variables in the range of "sigma" but not in "dom".  More
+    % precisely, returns a substitution "sigma2" with domain a subset of "dom"
+    % such that, for any variable "v" in "dom", "sigma2[v] = rho[sigma[v]]",
+    % where "rho" is a substitution that renames variables in the range of
+    % "sigma", but not in "dom", by distinct variables.  Enters new variables
+    % in "stab".
+    
+    % NOTE: terms in the range of the substitution are not flattened.
+    % NOTE: aliased variables in "dom" and "sigma" are replaced by unaliased
+    % variables.
+    
+    canonical = proc (sigma: substitution, dom: var_set, stab: symtab)
+		  returns (substitution)
+	rho: substitution := substitution$[]
+	keep: var_set := var_set$copy(dom)
+	for v: variable in var_set$elements(sigma.range_vars) do
+	    v1: variable := v
+	    if variable$is_alias(v1) then v1 := v1.alias end
+	    if ~var_set$exists(keep, v1) then
+	       v2: variable := variable$different(v1.sort, keep, stab)
+	       var_set$insert(keep, v1)
+	       var_set$insert(keep, v2)
+	       rho[v] := term$make_var(v2)
+	       end
+	    end
+	sigma2: substitution := predict(var_set$size(dom))
+	for v: variable in var_set$elements(dom) do
+	    v1: variable := v
+	    if variable$is_alias(v1) then v1 := v1.alias end
+	    sigma2[v1] := substitution$apply(rho, sigma[v], stab)
+	    end
+	return(sigma2)
+	end canonical
+
+
+    % Returns the union of "sigma1" and "sigma2".  Signals "incompatible" if
+    % "sigma1[v]" differs from "sigma2[v]" for some "v" in the intersection of
+    % their domains.  CLU syntactic sugar translates "sigma1 + sigma2" into
+    % "substitution$add(sigma1, sigma2)".
+
+    add = proc (sigma1, sigma2: cvt) returns (cvt) signals (incompatible)
+	sum: rep := rep$copy(sigma1)
+	for v: variable, t: term in rep$elements(sigma2) do
+	    rep$insert(sum, v, t)
+	       except when exists: if t ~= rep$image(sum, v) then
+				      signal incompatible
+				      end
+		      end
+	    end
+	return(sum)
+	end add
+
+
+    % Return the composition of "sigma1" and "sigma2".  The result of applying
+    % this composition to a term "t" is "sigma1[sigma2[t]]".  This operation is
+    % NOT commutative.
+
+    compose = proc (sigma1, sigma2: cvt, stab: symtab) returns (cvt)
+	sigma: rep := rep$predict(rep$size(sigma1))
+	for v: variable, t: term in rep$elements(sigma2) do
+	    rep$insert(sigma, v, apply(up(sigma1), t, stab))
+	    end
+	for v: variable, t: term in rep$elements(sigma1) do
+	    rep$insert(sigma, v, t)
+	       except when exists: end
+	    end
+	return(sigma)
+	end compose
+
+
+    % Returns "true" iff "sigma" is an empty substitution.
+
+    empty = proc (sigma: cvt) returns (bool)
+	return(rep$empty(sigma))
+	end empty
+
+
+    % Yields the variable-term pairs in "sigma".
+
+    elements = iter (sigma: cvt) yields (variable, term)
+	for v: variable, t: term in rep$elements(sigma) do yield(v, t) end
+	end elements
+
+
+    % Returns "true" if "sigma[v]" is defined.
+    
+    exists = proc (sigma: cvt, v: variable) returns (bool)
+	return(rep$exists(sigma, v))
+	end exists
+    
+
+    % Returns the set of operators in the range of "sigma".
+
+    get_ops = proc (sigma: substitution) returns (op_set)
+	ops: op_set := op_set$[]
+	for v: variable, t: term in elements(sigma) do
+	    op_set$merge(ops, t.ops)
+	    end
+	return(ops)
+	end get_ops
+  
+
+    % Returns the domain of "sigma".
+
+    get_domain = proc (sigma: cvt) returns (var_set)
+	return(rep$domain(sigma))
+	end get_domain
+
+
+    % Returns the set of variables in the range of "sigma".
+    % WARNING: If "sigma" is the identity on some of the variables in "t",
+    % then "sigma[t]" may contain variables that are not in "sigma.range_vars".
+
+    get_range_vars = proc (sigma: substitution) returns (var_set)
+	vars: var_set := var_set$[]
+	for v: variable, t: term in elements(sigma) do
+	    var_set$merge(vars, t.vars)
+	    end
+	return(vars)
+	end get_range_vars
+
+
+    % Reads and returns a substitution from the head of "scan".  Writes a
+    % message to "scan", and signals "error", if "scan" does not start with a
+    % representation for a substitution based on identifiers in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (substitution) 
+	     signals (error)
+	return(psubstitution$read(scan, stab, "by"))
+	   resignal error
+	end read
+
+
+    % Prettyprints "sigma" on "p".
+    
+    print = proc (p: printer, sigma: substitution, stab: symtab)
+	psubstitution$print(p, sigma, stab, "<-")
+	end print
+
+
+    % Changes "sigma" by removing "v" from its domain.
+    
+    undefine = proc (sigma: cvt, v: variable)
+	rep$delete(sigma, v) except when missing: end
+	end undefine
+
+
+    % Returns a prettyprinted string representation of "sigma".  Uses the
+    % current value of the "display-mode" setting to determine how to
+    % qualify "sigma".
+    
+    unparse = proc (sigma: substitution) returns (string)
+	return(unparse_item_with_ids[substitution](sigma))
+	end unparse
+
+
+    % Returns a copy of the substitution "sigma".
+
+    copy = proc (sigma: cvt) returns (cvt)
+	return(rep$copy1(sigma))
+	end copy
+
+
+    % Returns "true" if "sigma1" and "sigma2" are the same object.
+    
+    equal = proc (sigma1, sigma2: cvt) returns (bool)
+	return(sigma1 = sigma2)
+	end equal
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end substitution

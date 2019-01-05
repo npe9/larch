@@ -1,0 +1,371 @@
+#extend
+
+% A "mapping" is a mapping from a domain object of type "dom" to a range object
+% of type "ran".  It is a collection of domain-range pairs, where each pair
+% associates a domain object with the range object that is its image under the
+% mapping.  The operations ensure that there are no two domain objects in the
+% mapping that are equal.
+
+mapping = cluster [dom, ran: type] is
+	new, predict, reset, insert, insert_unique, image, image_insert,
+	delete, delete_first, delete_all, change, change_all, exists, elements,
+	domain, range, size, empty, equal, similar, copy1, copy, _gcd,
+	decode, encode
+	    where dom in equal_type %, dom in similar_type
+
+    rep  = array[pair]
+    pair = record[dom: dom, ran: ran]
+    
+    % Abstraction function:
+    %   A(r) = {r[i]: rep$low(r) <= i <= rep$high(r)}
+
+    % Representation invariant:
+    %   r[i].dom ~= r[j].dom when rep$low(r) <= i < j <= rep$high(r)
+
+    % This allows us to view the operations abstractly within the cluster.
+    map = mapping[dom, ran]
+
+    dom_set = set[dom]
+    ran_arr = array[ran]
+    ran_seq = sequence[ran]
+
+
+    % Two fields have been removed from an earlier version of the rep because
+    % it was expensive to maintain them (particularly in mapping$copy and
+    % mapping$copy1) and because the operations they optimized were used
+    % infrequently (mapping$domain) or not at all (mapping$range) in LP.
+    % Formerly, the rep was
+    %
+    %    rep = record[pairs: pairs, dom_set: dom_set, ran_elems: ran_elems]
+    %    ran_elems = variant[ran_map: ran_map, empty: null]
+    %    ran_map = mapping[ran, count]
+    %    count = record[count: int]
+
+    % The "dom_set" field was a set containing each of the domain objects in
+    % mapping; it permitted an efficient implementation of "mapping$domain".  A
+    % "ran_map" mapped each range object in the mapping to its number of
+    % occurrences in the mapping; it permitted an efficient implementation of
+    % "mapping$range".  The "ran_elems" field was "empty" at first, but was
+    % changed to a ran_map the first time that "mapping$range" was called.
+    % From that time on, the ran_map was updated by the "insert" and "delete"
+    % operations.  The reason that the ran_map was not created until the first
+    % time it was needed is that the ran_map was an instantiation of this
+    % cluster.  If a ran_map were created for every mapping, the first "insert"
+    % operation on a mapping would never terminate, since an infinite number of
+    % mappings would need to be created.  Since the "range" operation is never
+    % called on the ran_map, we don't need to create an infinite number of
+    % mappings.
+
+
+
+    % Returns a new, empty mapping.  Note that using the "#extend" mode of the
+    % compiler, the form "mapping$[]" can be used to invoke this operation.
+
+    new = proc () returns (cvt)
+	return(rep$[])
+	end new
+
+
+    % Returns a new mapping, where it is predicted that at least "min" pairs
+    % will be inserted.  This may allow "insert" operations on the returned
+    % mapping to execute somewhat faster.  Signals "negative_size" if "min" is
+    % < 0.
+
+    predict = proc (min: int) returns (cvt)
+		signals (negative_size)
+	if min < 0 then signal negative_size end
+	return(rep$predict(1, min))
+	end predict
+
+
+    % Resets "m" so that it contains no pairs.
+
+    reset = proc (m: cvt)
+	rep$trim(m, 1, 0)
+	end reset
+
+
+    % Inserts the pair "<d, r>" into "m".  Signals "exists", and does not
+    % change "m", if "exists(m, d)".
+
+    insert = proc (m: cvt, d: dom, r: ran) signals (exists)
+	if exists(up(m), d) then signal exists end
+	insert_pair(m, d, r)
+	end insert
+
+
+    % Inserts the pair "<d, r>" into "m".  
+    % ASSUMES: not(exists(m, d))
+
+    insert_unique = proc (m: cvt, d: dom, r: ran) signals (exists)
+	insert_pair(m, d, r)
+	end insert_unique
+
+
+    % Returns the image of "d" under "m".  Signals "missing" if "exists(m, d)"
+    % is "false".
+
+    image = proc (m: cvt, d: dom) returns (ran) signals (missing)
+	return(find_pair(m, d).ran)
+	   resignal missing
+	end image
+
+
+    % If "exists(m, d)", returns "image(m, d)".  Otherwise, inserts "<d, r>"
+    % into "m" and returns "r".
+
+    image_insert = proc (m: cvt, d: dom, r: ran) returns (ran)
+	return(image(up(m), d))
+	   except when missing: end
+	insert_pair(m, d, r)
+	return(r)
+	end image_insert
+
+
+    % Deletes the pair of "d" and the range object associated with it from "m",
+    % and returns that range object.  Signals "missing" if "exists(m, d)" is
+    % "false".
+
+    delete = proc (m: cvt, d: dom) returns (ran) signals (missing)
+	for i: int in rep$indexes(m) do
+           if m[i].dom = d then
+              r: ran := m[i].ran
+	      delete_at_arr[pair](m, i)
+	      return(r)
+              end
+	   end
+	signal missing
+	end delete
+
+
+    % Deletes one pair "<d1, r1>" in "m" such that "cond(r1, r)" is true, and
+    % returns "r1".  If there is no such pair, signals "missing".
+
+    delete_first = proc (m: cvt, r: ran, cond: cond_type) returns (ran)
+		     signals (missing)
+	cond_type = proctype (ran, ran) returns (bool)
+
+	for i: int in rep$indexes(m) do
+           if cond(m[i].ran, r) then
+              r := m[i].ran
+	      delete_at_arr[pair](m, i)
+	      return(r)
+              end
+	   end
+	signal missing
+	end delete_first
+
+
+    % Deletes all pairs "<d1, r1>" in "m" for which "cond(r1, r)" is true,
+    % and returns a sequence containing the range objects of those deleted
+    % pairs.
+
+    delete_all = proc (m: cvt, r: ran, cond: cond_type) returns (ran_seq)
+	cond_type = proctype (ran, ran) returns (bool)
+
+	deleted: ran_arr := ran_arr$[]
+	keep: int := rep$low(m) - 1
+	for i: int in rep$indexes(m) do
+	    if cond(m[i].ran, r) 
+	       then ran_arr$addh(deleted, m[i].ran)
+	       else keep := keep + 1
+		    if keep < i then m[keep] :=  m[i] end
+	       end
+	    end
+	rep$trim(m, 1, keep)
+	return(ran_seq$a2s(deleted))
+	end delete_all
+
+
+    % If "exists(m, d)", changes the range object paired with "d" to "r".
+    % Otherwise, inserts "<d, r>" into "m".
+
+    change = proc (m: cvt, d: dom, r: ran)
+	find_pair(m, d).ran := r
+	   except when missing: insert_pair(m, d, r) end
+	end change
+
+
+    % Replaces each distinct range object "r" in "m" with "chng(r)".
+
+    change_all = proc (m: cvt, chng: change_proc)
+	change_proc = proctype (ran) returns (ran)
+
+	for p: pair in rep$elements(m) do
+	    p.ran := chng(p.ran)
+	    end
+	end change_all
+
+
+    % Returns "true" iff "d" is associated with some range object in "m".
+
+    exists = proc (m: cvt, d: dom) returns (bool)
+	for p: pair in rep$elements(m) do
+	    if p.dom = d then return(true) end
+	    end
+	return(false)
+	end exists
+
+
+    % For each pair in "m", yields its domain and range object.  Yields each
+    % domain object exactly once even if range objects are changed during the
+    % course of the iteration.  Elements are yielded in the same order each
+    % time this operation is invoked on a given mapping, provided the domain of
+    % the mapping does not change between invocations.
+
+    elements = iter (m: cvt) yields (dom, ran)
+	for p: pair in rep$elements(m) do
+	    yield(p.dom, p.ran)
+	    end
+	end elements
+
+
+    % Returns the domain of "m"; i.e., returns a set containing each of the
+    % domain objects in "m".  An earlier optimization returned a "copy1" of a
+    % set kept in the rep.
+
+    domain = proc (m: cvt) returns (dom_set)
+	ds: dom_set := dom_set$predict(rep$size(m))
+        for p: pair in rep$elements(m) do
+	    dom_set$insert_unique(ds, p.dom)
+	    end
+	return(ds)
+	end domain
+
+
+    % Returns the range of "m"; i.e., returns a set containing each of the
+    % range objects in "m".  An earlier optimization returned a "copy1" of a
+    % set kept in the rep.
+
+
+    range = proc (m: cvt) returns (ran_set)
+		where ran in equal_type %, ran in similar_type
+        ran_set = set[ran]
+	rs: ran_set := ran_set$[]
+        for p: pair in rep$elements(m) do
+	    ran_set$insert(rs, p.ran)
+	       except when exists: end
+	    end
+	return(rs)
+	end range
+
+
+    % Returns the number of pairs in "m".
+
+    size = proc (m: cvt) returns (int)
+	return(rep$size(m))
+	end size
+
+
+    % Returns "true" iff there are no pairs in "m".
+
+    empty = proc (m: cvt) returns (bool)
+	return(rep$size(m) = 0)
+	end empty
+
+
+    % Returns "true" iff "m1" and "m2" are the same object.
+
+    equal = proc (m1, m2: cvt) returns (bool)
+	return(m1 = m2)
+	end equal
+
+
+    % Returns "true" iff "m1" and "m2" contain the same number of pairs, and
+    % every pair "<d1, r1>" of "m1" can be matched with a pair "<d2, r2>" of
+    % "m2", such that "d1 = d2" and "ran$similar(r1, r2)".
+
+    similar = proc (m1, m2: map) returns (bool)
+		where ran in similar_type
+	if map$size(m1) ~= map$size(m2) then return(false) end
+	for d: dom, r: ran in elements(m1) do
+	    if ~ran$similar(map$image(m2, d), r) then return(false) end
+	       except when missing: return(false) end
+	    end
+	return(true)
+	end similar
+
+
+    % Returns a new mapping containing the same pairs, with the same domain and
+    % range objects, as in "m".  (We must use pair$copy1 because two mappings
+    % should not share any domain-range pairs, which are mutable objects.)
+
+    copy1 = proc (m: cvt) returns (cvt)
+	ans: rep := rep$predict(1, rep$size(m))
+	for p: pair in rep$elements(m) do
+	    rep$addh(ans, pair$copy1(p))
+	    end
+	return(ans)
+	end copy1
+
+
+    % Returns a new mapping containing a copy of each of the pairs, and a copy
+    % of the domain and range objects themselves, that are in "m".  (If "dom"
+    % and "ran" are entirely immutable, then we can speed this up by using
+    % rep$copy.)
+
+    copy = proc (m: map) returns (cvt)
+		where ran in copy_type, dom in copy_type,
+		      ran in equal_type %, ran in similar_type
+	r_map = mapping[ran, ran]
+	new_m: rep := down(map$predict(map$size(m)))
+	new_r: r_map := r_map$[]
+	for d: dom, r: ran in map$elements(m) do
+	    d1: dom := dom$copy(d)
+	    r1: ran := r_map$image(new_r, r)
+	       except when missing: r1 := ran$copy(r)
+				    r_map$insert_unique(new_r, r, r1)
+		      end
+	    insert_pair(new_m, d1, r1)
+	    end
+	return(new_m)
+	end copy
+
+
+    % (Internal procedure.)  Returns the pair in "m" that contains "d".
+    %  Signals "missing" if "exists(m, d)" is "false".
+
+    find_pair = proc (m: rep, d: dom) returns (pair) signals (missing)
+	for p: pair in rep$elements(m) do
+	    if p.dom = d then return(p) end
+	    end
+	signal missing
+	end find_pair
+
+
+    % (Internal procedure.)  Inserts the pair "<d, r>" into "m".  Assumes
+    % that "exists(m, d)" is false prior to invoking this procedure.
+
+    insert_pair = proc (m: rep, d: dom, r: ran)
+	rep$addh(m, pair${dom: d, ran: r})
+	end insert_pair
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where dom in gcd_type, ran in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    % The following do not preserve sharing
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where dom has decode: proctype(istream) returns (dom)
+    	 	              signals (end_of_file, not_possible(string)),
+	      ran has decode: proctype(istream) returns (ran)
+    	 	              signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where dom has encode: proctype(dom, istream)
+			      signals(not_possible(string)),
+	      ran has encode: proctype(ran, istream)
+			      signals(not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    end mapping

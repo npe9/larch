@@ -1,0 +1,40 @@
+\doc{The proof-methods setting}
+\ref{proof-methods-setting}
+
+The \def{proof-methods} setting provides a list of default proof methods for LP
+to use when attempting to prove a formula.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{set-proof-methods-command} ::= \f{set proof-methods} \slink{../proof/methods}{default-proof-method}+[,]
+\end{verbatim}
+
+Note: Each \s{default-proof-method} can be \dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+set proof =>, normalization
+\end{verbatim}
+
+\head{2}{Usage}
+
+The \fq{set proof-methods} command provides a list of default proof methods for
+the current proof context.  LP uses the first method in the list that applies
+to the conjecture.  The default list is \fq{normalization}.  Any method (other
+than \fq{contradiction}) that does not mention a variable or constant can
+appear on the list.  If the proof-method list is \fq{explicit-commands}, then
+LP will await a \cflink{resume} command before beginning the proof.
+
+\head{2}{See also}
+\begin{itemize}
+\item The \cflink{prove} command
+\item The \dflink{../proof/of-conjunction}{/\-method}
+\item The \dflink{../proof/of-implication}{=>-method}
+\item The \dflink{../proof/of-biconditional}{<=>-method}
+\item The \dflink{../proof/of-conditional}{if-method}
+\item The \dflink{../proof/explicit}{explicit-commands} method
+\item The \dflink{../proof/by-normalization}{normalization} method
+\end{itemize}
+
+
+

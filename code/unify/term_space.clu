@@ -1,0 +1,207 @@
+#extend
+
+
+% A term_space is a cluster that provides routines to map terms input to a
+% unification algorithm into arithmetic equations, which we use to solve such
+% problems.  The name "term_space" is used to emphasize the fact that the
+% domain in which the equations are being solved forms a vector space over
+% terms.  The "add" and "mul" operations are the operators on the space;
+% "term2poly" and "soln2seq" convert the unification problem to a problem of
+% polynomial equality in a particular vector space (characterized by the AC
+% operator) and back again.
+
+% There are a few things that make this less than the most elegant of clusters.
+% First, it could be argued that the main procedures provided by the cluster
+% (term2poly and soln2seq) should be free-standing procedures and that the
+% ac_term_space data type is unnecessary.  What we would really like is to
+% parametrize both free-standing procedures over the operator so that,
+% conceptually, the mapping and its inverse are in some sense "typed" by the
+% operator with which we are working.  This would automatically check that the
+% operator used to turn two terms into a polynomial is the same for both terms
+% and the same operator that is later used to make a sequence of pairs
+% (bindings) of terms from the resulting solution to the equation.
+% Unfortunately, this would require dynamic types (since the operator value is
+% not known at compile time), which are not provided by CLU.
+
+% By grouping term2poly and soln2seq into a cluster, our intuition that these
+% are in some sense inverse mappings is supported.  In addition, it gives us
+% the type checking that we would get if the operator were a parameter to a 
+% dynamic type generator.
+
+ac_term_space = cluster is create, term2poly, soln2seq,
+			   soln2seq_remainder, add, multiply
+
+    rep = operator
+
+    % Creates a term space for an operator that is associative and commutative.
+
+    create = proc (op: operator) returns (cvt) signals (not_ac)
+	return(op)
+	end create
+
+
+    % Given a term space, return the 'arithmetic' plh_poly that corresponds to
+    % the given input term.  A plh_poly is made up of all proper arguments to
+    % "t" as variables.  The number of occurences of a given argument in the
+    % original term is the coefficient of the term/variable in the resulting
+    % polynomial.
+
+    % Note that we do not differentiate between variable and constant (nullary
+    % function) terms in the argument list.  Lankford suggests an algorithm
+    % which takes advantage of knowing the difference between variables and
+    % constant and uses an inhomogeneous linear diophantine equation for its
+    % representation rather that a homogeneous one.  In cases where many
+    % constants occur in the terms, his method may accrue significant time
+    % savings, although the magnitude and threshold of constants is not clear.
+    % We have, therefore, implemented the simpler algorithm, at least as a
+    % first step.
+
+    term2poly = proc (ts: cvt, t: term) returns (term_plhp)
+	if t.root = ts then
+	   result: term_plhp := term2poly(up(ts), term_seq$top(t.args))
+	   for t1: term in term_seq$elements(term_seq$remh(t.args)) do
+	       term_plhp$add(result, term2poly(up(ts), t1))
+	       end
+	   return(result)
+	   end except when wrong_tag: end
+	return(term_plhp$make_var(t))
+	end term2poly
+
+
+    % Returns a term which corresponds to "t1 + t2" in the ac_term_space "ts".
+    % Adding two terms results in a term which has the operator of the
+    % ac_term_space as its root and the two terms as arguments.  (Note that
+    % since we are working with AC operators only, they are known to be binary
+    % so the arity works out.)
+
+    add = proc (ts: cvt, t1, t2: term) returns (term)
+	args: term_arr := term_arr$new()
+	term_arr$addh(args, t1)
+	term_arr$addh(args, t2)
+	return(term$make_funct(ts, term_seq$a2s(args)))
+	end add
+
+
+    % Returns a term which corresponds to "c * t" in ac_term_space "ts".
+    % Multiplying a term by a positive integer coefficient, "c", is the same as
+    % adding "t" to itself "c" times.  Since the operator is AC, the order of
+    % constructing the term is not important, e.g., (w + x) + (y + z) = w + (x
+    % + (y + z))).
+
+    multiply = proc (ts: cvt, c: int, t: term) returns (term) 
+		 signals (negative, zero)
+	if c < 0 then signal negative 
+	 elseif c = 0 then signal zero
+	 elseif c = 1 then return(t)
+	 else return(add(up(ts), t, multiply(up(ts), c - 1, t)))
+	 end
+	end multiply
+
+
+    % We characterize a class of solutions by a single elementary nonzero
+    % solution.  By multiplying each basis in the nonzero elementary solution
+    % by a new variable, (allowed to range over the positive integers) an
+    % infinite set of solutions can be represented.  The solution space is thus
+    % partitioned by the nonzero elementary solutions.  The morphism from a
+    % solution to an arithmetic equation back to the term_map in the world of
+    % terms is done by "multiplying" each basis by a unique new variable and
+    % "adding" the results for each element in the domain to get a term as its
+    % range value. We define mulitiplication as a binary operation taking one
+    % positive integer and one term and resulting in a new term, t.  The
+    % operator, op, is the root of t and its arguments are all the input term
+    % and it occurs n times.
+
+    soln2seq = proc (ts: ac_term_space, s: term_soln, vg: var_gen) 
+		 returns (tb_seq) signals (bad_soln)
+
+	result: tb_arr := tb_arr$[]
+	% Assign a new variable to each generator in the solution.
+        so: sort := down(ts).rng
+	new_vars: term_arr := term_arr$[]
+	for i: int in int$from_to(1, term_soln$gen_size(s)) do
+	    t: term := term$make_var(var_gen$next(vg, so))
+	    term_arr$addh(new_vars, t)
+	    end
+
+	for b: tis_bind in tis_assn$bindings(term_soln$assigns(s)) do
+	    i_sum: int := 0
+	    t_sum: term
+	    for i: int in int_seq$indexes(b.range) do
+		if b.range[i] > 0 then
+		   if i_sum ~= 0 
+		      then t_sum := add(ts, t_sum, multiply(ts, b.range[i],
+							    new_vars[i]))
+		      else t_sum := multiply(ts, b.range[i], new_vars[i])
+		      end
+		   i_sum := i_sum + b.range[i]
+		   end
+		end
+	    if i_sum = 0 then signal bad_soln end
+	    tb_arr$addh(result, term_bind${domain: b.domain, range: t_sum})
+	    end except when bounds: signal bad_soln end
+
+	% We may get some efficiency gain by doing small terms first.
+	quicksort[term_bind](result, 1, tb_arr$size(result), term_bind_less)
+	return(tb_seq$a2s(result))
+	end soln2seq
+
+
+    % Same as "soln2seq", except only assures that the terms in "terms" are
+    % assigned nonzero values.  In addition to returning the term_bind sequence
+    % to be unified, returns a sequence of any terms that were assigned zero
+    % values.  This routine is useful when overlapping instead of unifying,
+    % since assigning zero values corresponds to selecting a particular
+    % occurence in an AC term to unify.
+
+    soln2seq_remainder = proc (ts: ac_term_space, s: term_soln,
+			       terms: term_seq, ocs: int_seq, vg: var_gen)
+			   returns (tb_seq, term_seq) signals (bad_soln)
+
+	result: tb_arr := tb_arr$[]
+	% Assign a new variable to each generator in the solution.
+        so: sort := down(ts).rng
+	new_vars: term_arr := term_arr$[]
+	for i: int in int$from_to(1, term_soln$gen_size(s)) do
+	    t: term := term$make_var(var_gen$next(vg, so))
+	    term_arr$addh(new_vars, t)
+	    end
+
+	leftover: term_arr := term_arr$[]
+	for b: tis_bind in tis_assn$bindings(term_soln$assigns(s)) do
+	    i_sum: int := 0
+	    t_sum: term
+	    for i: int in int_seq$indexes(b.range) do
+		if b.range[i] > 0 then
+		   if i_sum ~= 0 
+		      then t_sum := add(ts, t_sum, multiply(ts, b.range[i],
+							    new_vars[i]))
+		      else t_sum := multiply(ts, b.range[i], new_vars[i])
+		      end
+		   i_sum := i_sum + b.range[i]
+		   end
+		end
+	    if i_sum = 0 then
+	       for j1: int in term_seq$indexes(terms) do
+		   if term$equal(terms[j1], b.domain) then
+		      for j2: int in int$from_to(1, ocs[j1]) do
+			  term_arr$addh(leftover, b.domain)
+			  end
+		      break
+		      end
+		   end
+	       continue
+	       end
+	    tb_arr$addh(result, term_bind${domain: b.domain, range: t_sum})
+	    end except when bounds: signal bad_soln end
+	return(tb_seq$a2s(result), term_seq$a2s(leftover))
+	end soln2seq_remainder
+
+
+    % Provides an ordering for sorting sequences of term_bind's.
+
+    term_bind_less = proc (tb1, tb2: term_bind) returns (bool)
+	return(tb1.domain.size < tb2.domain.size)
+	end term_bind_less
+
+    end ac_term_space
+

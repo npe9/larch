@@ -1,0 +1,47 @@
+\doc{Sample proofs: alternative proofs of theorems about union}
+
+Explicit instantiation is not the only way to prove the three conjectures about
+union in \dflink{set1.lp}{set1.lp}.  Here's another technique:
+\begin{verbatim}
+prove x \union {} = x by contradiction
+  critical-pairs *Hyp with extensionality
+qed
+\end{verbatim}
+The \clink{prove} command directs LP to begin an attempt to prove the
+conjecture by contradiction.  LP does this by adding the negation,
+\f#~(xc \union {} = xc)#, of the conjecture as a hypothesis to its logical 
+system.  It replaces the variable \fq{x} in the conjecture by the constant
+\fq{xc}, because the negation of a conjecture about \def{all} sets \fq{x} is a 
+statement about \def{some} particular set \fq{xc}.  LP also orients this new
+hypothesis into a rewrite rule, \f#xc \union {} = xc -> false#.
+\p
+The \clink{critical-pairs} command directs LP to use the rewrite rule obtained
+from this new hypothesis, whose name \fq{setTheoremsContraHyp.1} matches the
+pattern \fq{*Hyp}, together with that obtained from the fact whose name matches
+\fq{extensionality}, to enlarge its set of rewrite rules.  LP does this by 
+finding a term that can be rewritten in two different ways by the two rewrite
+rules and then asserting that these two terms must be equal.  LP finds such a
+term by \olink{unify}{unifying} the left side of one rewrite rule with a
+subterm of the left side of the other.  Here, LP unifies the left side of the
+hypothesized rewrite rule with a subterm of the extensionality principle (by
+mapping \fq{x} to \fq#xc \union {}# and \fq{y} to \fq{xc}) to obtain the
+formula
+\begin{verbatim}
+\A e (e \in (xc \union {}) <=> e \in xc) => xc \union {} = xc
+\end{verbatim}
+The extensionality axiom rewrites this formula to \fq{true}, whereas the
+hypothesized rewrite rule rewrites it to
+\begin{verbatim}
+\A e (e \in (xc \union {}) <=> e \in xc) => false
+\end{verbatim}
+Hence these two results must be equivalent:
+\begin{verbatim}
+\A e (e \in (xc \union {}) <=> e \in xc) => false <=> true
+\end{verbatim}
+As in our first proof of the conjecture, this formula rewrites to 
+\fq{true => false <=> true}, which rewrites to \fq{false} using LP's hardwired 
+axioms.  This \llink{inconsistency}{inconsistency} finishes the proof by
+contradiction.
+\p
+The file \dflink{set1.lp}{set1.lp} uses this technique to prove the second and
+third theorems about union.

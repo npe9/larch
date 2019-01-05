@@ -1,0 +1,8 @@
+% Procedure to invoke when an assumption fails. The argument "msg" should the
+% form "procedure name: description of trouble".
+
+% ENHANCE: dump call stack.
+
+fail = proc (msg: string) signals (assumption_failed(string))
+    signal failure("\nLP failure in " || msg)
+    end fail

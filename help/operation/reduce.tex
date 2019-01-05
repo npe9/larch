@@ -1,0 +1,15 @@
+\doc{Reduction}
+\ref{reduction}
+\ref{reduce}
+\ref{rewrite}
+
+Terms can be \def{reduced} or \def{rewritten} by the application of a 
+\llink{rewrite-rule}{rewrite rule}, as follows.  First, the left side of the 
+rewrite rule is \dlink{match}{matched} against the term or one of its subterms.
+(Matching is the process of finding a
+\glink{substitution}{substitution} for the variables of a term
+that makes it equivalent to another term.)  If matching is successful, the
+resulting substitution is applied to the right side of the rewrite rule and the
+matched term is replaced with this new term.
+
+ 

@@ -1,0 +1,13 @@
+#extend
+
+% Processes the "unset" command by resetting various LP settings to their
+% defaults.
+
+c_unset = proc (i: interactive) signals (error)
+    begin
+	settings$reset(i)
+	   except when excess_input: check_end_of_line(i.io) end
+	end resignal error
+    end c_unset
+
+

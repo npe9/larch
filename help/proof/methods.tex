@@ -1,0 +1,42 @@
+\doc{Proof methods for formulas}
+\ref{proof-methods}
+\ref{default-proof-methods}
+
+LP provides a variety of methods for proving formulas.  Some represent standard
+proof techniques (proofs by cases, contradiction, induction, and
+normalization).  Two (generalization and specialization) help establish
+conjectures containing quantifiers.  Others assist in proving formulas with
+particular syntactic forms (implications, logical equivalences, conditionals,
+and conjunctions).
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{proof-method}          ::= \s{default-proof-method} | \dflink{by-cases}{cases} \slink{../logic/term}{term}+,
+                               | \dflink{by-contradiction}{contradiction} | \f{default}
+                               | \dflink{by-generalization}{generalizing} \slink{../logic/variable}{variable} \f{from} \slink{../logic/term}{term}
+                               | \dflink{by-induction}{induction} [ [ \f{on} \slink{../logic/variable}{variable} ]
+                                   [ \f{depth} \slink{../symbols/symbols}{number} ] [ [ \f{using} ] \slink{../misc/names}{names} ]
+                               | \dflink{by-specialization}{specializing} ( \slink{../logic/variable}{variable} \f{to} \slink{../logic/term}{term} ) +,
+\sd{default-proof-method}  ::= \dflink{of-conjunction}{/\-method} | \dflink{of-implication}{=>-method} | \dflink{of-biconditional}{<=>-method} | \dflink{of-conditional}{if-method}
+                               | \dflink{explicit}{explicit-commands} | \dflink{by-normalization}{normalization}
+\end{verbatim}
+
+Note: The first word of the \s{proof-method} can be 
+\dlink{../misc/abbreviation}{abbreviated}.
+
+\head{2}{Examples}
+\begin{verbatim}
+=>
+cases x < 0, x = 0, x > 0
+induction on x
+\end{verbatim}
+
+\head{2}{Usage}
+Users can specify a method of proof in the \cflink{prove} command that
+introduces a conjecture, in a subsequent \cflink{resume} command, or in a list
+of default \setlink{proof-methods} that LP uses when no method is
+specified in a \cflink{prove} command or when it creates subgoals.
+\p
+The \fq{default} method specifies the use of the first applicable proof method
+in the value of the \setlink{proof-methods} setting.  See the individual
+descriptions of the other proof methods for information about their use.

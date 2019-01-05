@@ -1,0 +1,189 @@
+% A collection is an immutable set type.
+
+collection = cluster [t: type] is new, singleton, union, empty, exists, 
+				  size, choose, delete, elements, subsets,
+				  c2seq, seq2c, unparse,
+				  equal, similar, copy
+	    where t in equal_type
+
+    rep = t_arr
+    t_arr = array[t]
+    t_seq = sequence[t]
+
+    % A mutable rep is used to make the equal operation very fast.
+    % Rep Invariants:   for c = abstract(r)
+    %	1)  for all i,j, between low(r) and high(r), inclusive, if 
+    %		i ~= j, then r[i] ~= r[j]
+    %	2)  low(r) = 1
+
+    % Creates an empty collection.
+
+    new = proc () returns (cvt)
+	return(rep$new())
+	end new
+
+
+    % Creates a collection containing the single element "elem".
+
+    singleton = proc (elem: t) returns (cvt)
+	return(rep$fill(1, 1, elem))
+	end singleton
+
+
+    % Creates a collection that has all the elements of "c1" and "c2" combined.
+
+    union = proc (c1, c2: cvt) returns (cvt)
+	result: rep := rep$copy1(c1)
+	for elem: t in rep$elements(c2) do
+	    if ~exists(up(result), elem) then rep$addh(result, elem) end
+	    end
+	return(result)
+	end union
+
+
+    % Returns true iff "c" has no elements.
+
+    empty = proc (c: cvt) returns (bool)
+	return(rep$empty(c))
+	end empty
+
+
+    % Returns true iff "elem" is in "c".
+
+    exists = proc (c: cvt, elem: t) returns (bool)
+	for e: t in rep$elements(c) do
+	    if e = elem then return(true) end
+	    end
+	return (false)
+	end exists
+
+
+    % Returns the number of elements in the collection.
+
+    size = proc (c: cvt) returns (int)
+	return(rep$size(c))
+	end size
+
+
+    % Returns a new collection with exactly the same elements as "c", except
+    % that "elem" is not in it.  Signals "not_in" "elem" was not in "c".
+
+    delete = proc (c: cvt, elem: t) returns (cvt) signals (not_in)
+	result: rep := rep$copy1(c)
+	for i: int in rep$indexes(c) do
+	    if c[i] = elem
+	       then result[i] := rep$remh(result)
+		    return(result)
+	       end
+	    end
+	signal not_in
+	end delete
+
+
+    % Returns an arbitrary element of "c".  Signals "empty" if "c" is empty.
+
+    choose = proc (c: cvt) returns (t) signals (empty)
+	return(rep$top(c))
+	   except when bounds: signal empty end
+	end choose
+
+    % Yields each element in "c" exactly once.
+
+    elements = iter (c: cvt) yields (t) signals (empty)
+	for e: t in rep$elements(c) do yield(e) end
+	end elements
+
+
+    % Yields all subcollections (i.e. subsets) of "c", including the empty set
+    % and "c" itself.  There is no constraint on the order in which the
+    % collections are yielded, but each one is yielded exactly once.
+
+    subsets = iter (c: cvt) yields (cvt)
+	c1: collection[t] := up(rep$copy1(c))
+	for c2: rep in mut_subsets(c1) do 
+	    yield(c2)
+	    end
+	end subsets
+
+
+    % (Internal procedure) Used to implement "subsets" so that a copy of the
+    % collection does not have to be made at each recursive call.  The time
+    % savings may not be significant since each answer must be copied, and the
+    % number of answers far exceeds the number of recursive calls (which is the
+    % size of "c").
+
+    mut_subsets = iter (c: cvt) yields (rep)
+	elem: t := rep$remh(c)
+	   except when bounds: yield(c) return end
+	for c1: rep in mut_subsets(up(c)) do
+	    yield(c1)
+	    c2: rep := rep$copy1(c1)
+	    rep$addh(c2, elem)
+	    yield(c2)
+	    end
+	end mut_subsets
+
+
+    % Returns the collection containing all elements in the sequence "ts".
+    % Signals "duplicates" if there are two elements in "ts" that are equal.
+
+    seq2c = proc (ts: t_seq) returns (cvt) signals (duplicates)
+	at: t_arr := t_arr$new()
+	for elem: t in t_seq$elements(ts) do
+	    if ~exists(up(at), elem) 
+		then t_arr$addh(at, elem)
+		else signal duplicates
+		end
+	    end
+	return (at)
+	end seq2c
+
+
+    % Returns the sequence containing all the elements in the collection "c".
+
+    c2seq = proc (c: cvt) returns (t_seq)
+	return(t_seq$a2s(c))
+	end c2seq
+
+
+    % Returns a string representation of the collection.
+
+    unparse = proc (c: cvt) returns (string)
+		where t in unparse_type
+	if empty(up(c)) then return("{ }") end
+	str: string := ""
+	for elem: t in elements(up(c)) do
+	    str := str || t$unparse(elem) || ", "
+	    end
+	str := string$substr(str, 1, string$size(str) - 2)
+	str := "{" || str || "}"
+	return(str)
+	end unparse
+
+
+    % Returns "true" iff "c1" and "c2" have the elements.
+
+    equal = proc (c1, c2: cvt) returns (bool)
+	return(same_elements_arr[t](c1, c2, t$equal))
+	end equal
+
+
+    % Returns "true" iff the elements of "c1" and "c2" are similar.  Note: this
+    % is a very expensive operation (exponential in the size of "c1" and "c2")
+    % with the trade-off that creating a collection is somewhat faster.
+
+    similar = proc (c1, c2: cvt) returns (bool)
+		where t in similar_type
+	return(same_elements_arr[t](c1, c2, t$similar))
+	end similar
+
+
+    % Makes a complete copy of "c".
+
+    copy = proc (c: cvt) returns (cvt)
+		where t in copy_type
+	return (rep$copy(c))
+	end copy
+
+    end collection
+

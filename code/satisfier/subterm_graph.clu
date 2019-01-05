@@ -1,0 +1,177 @@
+#extend
+
+% A subterm graph is a DAG in which 
+% (a) the vertices are labeled by operators, and
+% (b) the edges connecting each vertex to its children are ordered from left to
+%     right, and
+% (c) no two vertices have the same labels and the same children.
+% A recursively defined mapping associates a ground term with each vertex in a
+% subterm graph.
+
+% A subterm graph also supports the definition of a mapping from vertices to
+% vertices.
+
+subterm_graph = cluster is new, add_vertex, make_pair, vertex_pairs, get_term, 
+			   _gcd
+
+    rep = array[vertex_info]
+    
+    % Representation invariants: for 0 < i, j <= size(r)
+    %   r[i].self = i
+    %	r[i].children = r[j].children /\ r[i].label = r[j].label => i = j
+
+    
+    % Returns a new, empty subterm graph.
+    
+    new = proc () returns(cvt)
+	return(rep$[])
+	end new
+    
+    % Requires: op.arity = size(children)
+    %		1 <= i <= op.arity => 0 < children[i] <= n_vertices(g^)
+    %		op.arity = 0 /\ 1 <= j <= n_vertices(g^) => g^[j].label ~= op
+    % Modifies: g
+    % Effects:  g'.vertices = g^.vertices U {v}
+    %		where v.children = children
+    %		      v.label = op
+
+    add_vertex = proc (g: cvt, op: operator, children: vert_seq)
+		   returns (vertex)
+	for p: vertex in vertex_info$parents(g[children[1]]) do
+	    p_info: vertex_info := g[p]
+	    if p_info.children = children cand p_info.label = op then
+	       return(p)
+	       end
+	    end except when bounds: end
+	v_new: vertex := rep$high(g) + 1
+	args: term_arr := term_arr$predict(1, vert_seq$size(children))
+	for child: vertex in vert_seq$elements(children) do
+	    child_info: vertex_info := g[child]
+	    term_arr$addh(args, child_info.term)
+	    vertex_info$add_parent(child_info, v_new)
+	    end
+	t: term := term$make_funct_without_checking(op, term_seq$a2s(args))
+	rep$addh(g, vertex_info${t: t, children: children, self: v_new})
+	return(v_new)
+	end add_vertex
+      
+    
+    % Requires: rhs is a vertex in g
+    %		lhs is no_vertex or a vertex in g
+    %		<rhs, lhs> is not in g
+    % 	        there is no pair <rhs, x> in g
+    % Effects:  adds the pair <lhs, rhs> to g
+    
+    make_pair = proc (g: cvt, lhs, rhs: vertex) signals (impossible, none)
+	begin
+	    if g[rhs].mate ~= rhs then exit bad end
+	    if lhs = no_vertex then signal none end
+	    g[lhs].mate := rhs
+	    end except when bad, bounds: fail("subterm_graph$make_pair") end
+	end make_pair
+     
+    
+    % Yields the pairs of vertices that were added to "g".
+
+    vertex_pairs = iter (g: cvt) yields (vertex, vertex)
+	for vi: vertex_info in rep$elements(g) do
+	    v1: vertex := vi.self
+	    v2: vertex := vi.mate
+	    if v1 ~= v2 then yield(v1, v2) end
+	    end
+	end vertex_pairs
+     
+
+    % Returns the term corresponding to "v" in "g".  Signals "none" if "v" is
+    % not a vertex in "g".
+    
+    get_term = proc (g: cvt, v: vertex) returns (term) signals (none)
+	return(g[v].term) 
+	 except when bounds: signal none end
+	end get_term
+     
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+    end subterm_graph
+     
+
+vertex_info = cluster is create, parents, children, get_self, get_term, 
+                         add_parent, get_mate, set_mate, get_label,
+			 get_children, _gcd
+			 
+    rep = record[children, parents: vert_arr, 
+		 t: term,
+		 mate: vertex,
+		 self: vertex]
+  
+
+    create = proc (a: arg) returns (cvt)
+	arg = struct[t: term, children: vert_seq, self: vertex]
+	return(rep${parents: vert_arr$[], 
+	            children: vert_seq$s2a(a.children), 
+	            t: a.t,
+	            mate: a.self,
+		    self: a.self})
+	end create
+	    
+   
+    parents = iter (v: cvt) yields (vertex)
+	for v1: vertex in vert_arr$elements(v.parents) do yield(v1) end
+	end parents
+  
+    
+    children = iter (v: cvt) yields (vertex)
+	for v1: vertex in vert_arr$elements(v.children) do yield(v1) end
+	end children
+  
+    
+    get_self = proc (v: cvt) returns (vertex)
+	return(v.self)
+	end get_self
+    
+    
+    get_term = proc (v: cvt) returns (term)
+	return(v.t)
+	end get_term
+  
+    
+    % Requires: "parent" is not in "v.parents"
+    
+    add_parent = proc (v: cvt, parent: vertex)
+	vert_arr$addh(v.parents, parent)
+	end add_parent
+
+    
+    get_mate = proc (v: cvt) returns (vertex)
+	return(v.mate)
+	end get_mate
+  
+    
+    set_mate = proc (v: cvt, rt: vertex)
+	v.mate := rt
+	end set_mate
+  
+    
+    get_label = proc (v: cvt) returns (operator)
+	return(v.t.root)
+	end get_label
+  
+    
+    get_children = proc (v: cvt) returns (vert_seq)
+	return(vert_seq$a2s(v.children))
+	end get_children
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+  
+    end vertex_info

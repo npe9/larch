@@ -1,0 +1,13 @@
+#extend
+
+% Processes the "qed" command by checking that all conjectures have been
+% proved.
+
+c_qed = proc (i: interactive) signals (error)
+    check_end_of_line(i.io)
+       resignal error
+    prover$qed(i)
+       resignal error
+    end c_qed
+
+

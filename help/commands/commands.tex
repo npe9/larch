@@ -1,0 +1,146 @@
+\doc{Command summary}
+\ref{commands}
+
+LP is a command-driven system.  Commands can be entered in upper, lower, or
+mixed case.  They, and some of their
+\dlink{../misc/command-arguments}{arguments}, can be
+\dlink{../misc/abbreviation}{abbreviated} by unambiguous prefixes of their
+hyphen-separated components.  LP prompts users for any missing arguments that
+it requires to execute a command.  The \dlink{../symbols/syntax}{syntax} of
+each command is illustrated and described more fully in the description for
+that command.
+
+\head{2}{Commands for creating axioms and facts}
+\begin{description}
+\dt \f{\dlink{assert}{assert}} \s{assertion}+; [ ; ]
+\dd Assert axioms
+\dt \f{\dlink{declare}{declare}} \f{operators} \s{opdec}+[,]
+\dd Declare operators
+\dt \f{\dlink{declare}{declare}} \f{sorts} \s{sort}+,
+\dd Declare sorts
+\dt \f{\dlink{declare}{declare}} \f{variables} \s{vardec}+[,]
+\dd Declare variables
+\dt \f{\dlink{make}{make}} \s{fact-status} ( \s{names} | \f{conjecture} )
+\dd Change the activity or immunity of facts or conjecture
+\end{description}
+
+\head{2}{Forward inference commands}
+\begin{description}
+\dt \f{\dlink{apply}{apply}} \s{names} \f{to} \s{names}
+\dd Apply the named deduction rules to the named facts
+\dt \f{\dlink{complete}{complete}}
+\dd Run the Knuth-Bendix completion procedure
+\dt \f{\dlink{critical-pairs}{critical-pairs}} \s{names} \f{with} \s{names}
+\dd Find critical pair equations between each rewrite rule in the first named
+    set and each in the second
+\dt \f{\dlink{fix}{fix}} \s{variable} \f{as} \s{term} \f{in}
+     \s{names}
+\dd Eliminate one existential quantifier in the named facts, replacing 
+    the quantified variable by a term
+\dt \f{\dlink{instantiate}{instantiate}} ( \s{variable} \f{by} \s{term} )+, 
+     \f{in} \s{names}
+\dd Instantiate variables and/or eliminate universal quantifiers in the named
+    facts, replacing the free and quantified variables by the terms
+\dt \f{\dlink{normalize}{normalize}} \s{names} 
+      [ \f{with} [ \f{reversed} ] \s{names} ]
+\dd Normalize the named facts using the (reversals of the) hardwired and named 
+    rewrite rules
+\dt \f{\dlink{rewrite}{rewrite}} \s{names}
+      [ \f{with} [ \f{reversed} ] \s{names} ]
+\dd Rewrite some subterm of each named
+     fact using a hardwired or (the reversal of) a named rewrite rule
+\end{description}
+
+
+\head{2}{Backward inference commands}
+\begin{description}
+\dt \f{\dlink{apply}{apply}} \s{names} \f{to conjecture}
+\dd Attempt to prove the current conjecture using the named deduction rules
+\dt \f{\dlink{cancel}{cancel}} [ \f{all} | \f{lemma} ]
+\dd Cancel the current conjecture [and others]
+\dt \f{\dlink{normalize}{normalize}} \f{conjecture} [ \f{with} \s{names} ]
+\dd Normalize the current conjecture using all hardwired and named rewrite 
+    rules
+\dt \f{\dlink{prove}{prove}} \s{conjecture} [ \f{by} \s{proof-method} ]
+\dd Attempt to prove the conjecture using \s{proof-method}
+\dt \f{\dlink{qed}{qed}}
+\dd Check that all conjectures have been proved
+\dt \f{\dlink{resume}{resume}} [ \f{by} \s{proof-method} ]
+\dd Resume work on the current conjecture using \s{proof-method}
+\dt \f{\dlink{rewrite}{rewrite}} \f{conjecture}
+     [ \f{with} [ \f{reversed} ] \s{names} ]
+\dd Rewrite some subterm of the current conjecture
+     using some hardwired or named rewrite rule
+\dt \dlink{box}{\f{\lt\gt}}
+\dd Confirm the start of a subgoal in a proof
+\dt \dlink{box}{\f{[]}}
+\dd Confirm the conclusion of a step in proof
+\end{description}
+
+
+\head{2}{Commands for user interaction}
+\begin{description}
+\dt \f{\dlink{clear}{clear}}
+\dd Discard all information except global settings
+\dt \f{\dlink{delete}{delete}} \s{names}
+\dd Delete the named facts
+\dt \f{\dlink{define-class}{define-class}} \f{\$}\s{class} \s{names}
+\dd Define an abbreviation for \s{names}
+\dt \f{\dlink{display}{display}} [ \s{information-type} ] [ \s{names} ]
+\dd Print information about the named facts
+\dt \f{\dlink{execute}{execute}} \s{file}
+\dd Execute commands from \s{file}\f{.lp}
+\dt \f{\dlink{execute}{execute-silently}} \s{file}
+\dd Same as \f{execute}, but suppressing all output
+\dt \f{\dlink{forget}{forget}} [ \f{pairs} ]
+\dd Discard information to save space
+\dt \f{\dlink{freeze_thaw}{freeze}} \s{file}
+\dd Save the state of LP in \s{file}\f{.lpfrz}
+\dt \f{\dlink{help}{help}} \s{topic}
+\dd Print help about the topics
+\dt \f{\dlink{history}{history}} [ \s{number} | \f{all} ]
+\dd Print a history of [the \s{number} most recent] commands
+\dt \f{\dlink{push_pop}{pop-settings}}
+\dd Restore the values of local LP settings
+\dt \f{\dlink{push_pop}{push-settings}}
+\dd Remember the values of local LP settings
+\dt \f{\dlink{quit}{quit}}, \f{q}
+\dd Exit from LP
+\dt \f{\dlink{set}{set}}
+\dd Print the current values of all LP settings
+\dt \f{\dlink{set}{set}} \s{setting-name}
+\dd Print the current value of a setting and prompt for a new value
+\dt \f{\dlink{set}{set}} \s{setting-name} \s{setting-value}
+\dd Change the value of a setting
+\dt \f{\dlink{show}{show}} \f{normal-form} \s{term}
+\dd Display the reduction of a term to normal form
+\dt \f{\dlink{show}{show}} \f{unifiers} \s{term}\f{,} \s{term}
+\dd Display all unifiers of two terms
+\dt \f{\dlink{statistics}{statistics}} [ \s{statistics-option} ]
+\dd Print statistics on runtime, storage, and rule usage
+\dt \f{\dlink{stop}{stop}}
+\dd Stop execution of command files
+\dt \f{\dlink{freeze_thaw}{thaw}} \s{file}
+\dd Restore a frozen state from \s{file}\f{.lpfrz}
+\dt \f{\dlink{unset}{unset}} [ \s{setting} | \f{all} ]
+\dd Reset setting to its default value
+\dt \f{\dlink{version}{version}}
+\dd Display information about the current version of LP
+\dt \f{\dlink{write}{write}} \s{file} [ \s{names} ]
+\dd Write the registry and the named facts to \s{file}\f{.lp}
+\dt \f{%} \s{comment}
+\dd Record a \clink{comment} in the log and/or script file
+\end{description}
+
+\head{2}{Commands to control ordering}
+\begin{description}
+\dt \f{\dlink{order}{order}} [ \s{names} ]
+\dd Orient the named formulas into rewrite rules
+\dt \f{\dlink{register}{register}} \s{ordering-constraints}
+\dd Provide constraints for orienting formulas
+\dt \f{\dlink{unorder}{unorder}} [ \s{names} ]
+\dd Turn the named rewrite rules back into formulas
+\dt \f{\dlink{unregister}{unregister}} \s{ordering-information}
+\dd Cancel the constraints for orienting formulas
+\end{description}
+

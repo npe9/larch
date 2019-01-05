@@ -1,0 +1,126 @@
+#extend
+
+% The unification algorithm is generalized in two ways.  First, the
+% "general_unify" iterator performs those functions that are common to all
+% unification algorithms, such as checking whether one or both of the terms are
+% variables.  It also decides which equational theory the term belongs in (by
+% looking at its top-most operator) and invokes the appropriate unification
+% iterator.
+
+
+% Unifies two terms with arbitrary equational theories associated with its
+% operator.  In the case that "t1" and "t2" are both variables, the unifier
+% will be "t2 <- t1", unless "t1" is an internal variable that begins with the
+% "newvar_prefix", in which case the unifier is "t1 <- t2" (to preserve as many
+% original variable names as possible).  MODIFIES AT MOST: "vg"
+
+general_unify = iter (t1, t2: term, osys: op_system, stab: symtab, vg: var_gen) 
+		  yields (substitution) signals (not_unifiable)
+
+    if t1.sort ~= t2.sort then signal not_unifiable end
+    if term$equal(t1, t2) then
+       yield(substitution$[])
+       return
+       end
+    tagcase t1
+       tag var:
+	   if ~term$is_var(t2) then exit one_is_var(t1.var, t2) end
+	   sigma: substitution := substitution$[]
+	   if variable$is_internal(t1.var)
+	      then sigma[t1.var] := t2
+	      else sigma[t2.var] := t1
+	      end
+	   yield(sigma)
+       tag funct: 
+	   tagcase t2
+	      tag var: exit one_is_var(t2.var, t1)
+	      tag funct:
+		  ot: op_theory := 
+		      op_system$lookup_theory_quickly(osys, t1.root)
+		  for sigma: substitution
+			in ot.unify(t1, t2, osys, stab, vg) do
+		      yield(sigma)
+		      end resignal not_unifiable
+              tag quant: signal not_unifiable
+	      end 
+       tag quant:
+	   tagcase t2
+	      tag var: exit one_is_var(t2.var, t1)
+	      tag funct: signal not_unifiable
+	      tag quant:
+		  for sigma: substitution
+			in quant_unify(t1, t2, osys, stab, vg) do
+		      yield(sigma)
+		      end resignal not_unifiable
+	      end 
+       end except when one_is_var (v: variable, t: term):
+		       if var_set$exists(t.fvars, v) then
+			  % Cannot unify "x" with "f(x)"
+			  signal not_unifiable
+			  end
+		       sigma: substitution := substitution$[]
+		       sigma[v] := t
+		       yield(sigma)
+		  end
+	
+    end general_unify
+
+
+% Displays the unifiers of "t1" and "t2".
+
+print_unifiers = proc (p: printer, t1, t2: term, stab: symtab, osys: op_system)
+    index: int := 0
+    t2r: term := t2
+    if t2.has_quantifiers then 
+	t2r := rename_bound_variables(t2, var_set$[]) 
+	end
+    for sigma: substitution in general_unify(t1, t2r, osys, stab, var_gen$[]) do
+	symtab$begin_changes(stab)
+	sigma := substitution$canonical(sigma, t1.fvars + t2r.fvars, stab)
+	symtab$commit_changes(stab)
+	index := index + 1
+	printer$text(p, "\n~{Unifier " || int$unparse(index) || ":~2I\n")
+        substitution$print(p, sigma, stab)
+	printer$text(p, "~}~{yields the term ")
+	t: term := flatten(substitution$apply(sigma, t1, stab), osys)
+	term$print(p, t, stab)
+	printer$text(p, "~}\n")
+	end
+       except when not_unifiable:
+		   printer$text(p, "\nThe terms cannot be unified.\n")
+	      end
+    end print_unifiers
+
+
+% Returns a term equal to "t" with the variables in "vs" and the bound
+% variables in "t" replaced by their aliases.
+
+rename_bound_variables = proc (t: term, vs: var_set) returns (term)
+    tagcase t
+       tag var:
+	   return(term$make_var_without_checking(t.var.alias))
+       tag funct:
+	   args: term_arr
+	   i: int := 0
+	   changed: bool := false
+	   for arg: term in term_seq$elements(t.args) do
+	       i := i + 1
+	       arg1: term := rename_bound_variables(arg, vs)
+	       if term$same_object(arg, arg1) then continue end
+	       if ~changed then
+		  args := term_seq$s2a(t.args)
+		  changed := true
+		  end
+	       args[i] := arg1
+	       end
+	   if changed
+	      then return(term$change_args(t, term_seq$a2s(args)))
+	      else return(t)
+	      end
+       tag quant:
+	   v: variable := t.quant.var
+	   vs1: var_set := vs + var_set$[v]
+	   return(term$make_quant(quantifier$change_var(t.quant, v.alias),
+				  rename_bound_variables(t.subform, vs1)))
+       end
+    end rename_bound_variables

@@ -1,0 +1,92 @@
+#extend
+
+% A procedure to unify the top level of two quantified terms.
+
+% Yields a complete set of unifiers of "t1" and "t2".  MODIFIES AT MOST: "vg"
+
+quant_unify = iter (t1, t2: term, osys: op_system, stab: symtab, vg: var_gen) 
+		yields (substitution) signals (not_unifiable)
+
+    sort_mset = multiset[sort]
+    if t1.quant.is_universal ~= t2.quant.is_universal then
+       signal not_unifiable
+       end except when wrong_tag: signal not_unifiable end
+    t1qvars: var_set, t1sorts: sort_mset, subterm1: term := 
+	drop_leading_quantifiers(t1, false)
+    t2qvars: var_set, t2sorts: sort_mset, subterm2: term := 
+	drop_leading_quantifiers(t2, false)
+    if var_set$size(t1qvars) ~= var_set$size(t2qvars) 
+	 cor ~sort_mset$similar(t1sorts, t2sorts) then
+       signal not_unifiable
+       end
+    t1fvars: var_set := t1.fvars
+    t2fvars: var_set := t2.fvars
+    tbs: tb_seq := tb_seq$[term_bind${domain: subterm1, range: subterm2}]
+    yielded: bool := false
+    for sigma: substitution in unify_seq(tbs, osys, stab, vg) do
+	if good_sub(sigma, t1fvars, t1qvars, t2fvars, t2qvars) then
+	   yield(sigma)
+	   yielded := true
+	   end
+	end resignal not_unifiable
+    if ~yielded then signal not_unifiable end
+    end quant_unify
+  
+
+
+% Returns "true" if "sigma" maps "t1qvars" and "t2qvars" one-one onto the same
+% set of variables, and, when "v" is in "t1fvars" (or "t2fvars"), "sigma[v]"
+% does not contain a variable in "t2qvars" (or "t1fvars").  Assumes the domain
+% of "sigma" initially equals "t1fvars + t1qvars + t2fvars + t2qvars";
+% restricts the domain of "sigma" to "t1fvars + t2fvars" if the returned value
+% is "true".
+    
+good_sub = proc (sigma: substitution, 
+	         t1fvars, t1qvars, t2fvars, t2qvars: var_set)
+	     returns (bool)
+    n1: int := var_set$size(t1qvars)
+    n2: int := var_set$size(t2qvars)
+    if n1 ~= n2 then return(false) end
+    t1mvars: var_set := var_set$predict(n1)
+    for v1: variable in var_set$elements(t1qvars) do
+	var_set$insert(t1mvars, sigma[v1].var)
+	end except when wrong_tag, exists: return(false) end
+    t2mvars: var_set := var_set$predict(n2)
+    for v2: variable in var_set$elements(t2qvars) do
+	var_set$insert(t2mvars, sigma[v2].var)
+	end except when wrong_tag, exists: return(false) end
+    if ~var_set$similar(t1mvars, t2mvars) then return(false) end
+    for v1: variable in var_set$elements(t1fvars) do
+	if var_set$intersect(sigma[v1].fvars, t2qvars) then return(false) end
+	end
+    for v2: variable in var_set$elements(t2fvars) do
+	if var_set$intersect(sigma[v2].fvars, t1qvars) then return(false) end
+	end
+    for v1: variable in var_set$elements(t1qvars) do
+	substitution$undefine(sigma, v1)
+	end
+    for v2: variable in var_set$elements(t2qvars) do
+	substitution$undefine(sigma, v2)
+	end
+    return(true)
+    end good_sub
+  
+
+%    unmatched_t2vars: var_set := var_set$copy1(t2qvars)
+%    unmatched_vars: var_set := var_set$[]
+%    for v1: variable in var_set$elements(t1qvars) do
+%	v2: variable := sigma[v1].var
+%	if substitution$exists(sigma, v2)
+%	   then var_set$insert(unmatched_vars, v2)
+%	   else var_set$delete(unmatched_t2vars, v2)
+%	   end
+%        substitution$undefine(sigma, v1)
+%	end except when wrong_tag, missing, exists: return(false) end
+%    for v2: variable in var_set$elements(unmatched_t2vars) do
+%	v1: variable := sigma[v2].var
+%	var_set$delete(unmatched_vars, v1)
+%	substitution$undefine(sigma, v2)
+%	end except when wrong_tag, missing: return(false) end
+%    if ~var_set$empty(unmatched_vars) then return(false) end
+
+

@@ -1,0 +1,637 @@
+#extend
+
+% A list is a sortable list of elements.  Associated with every list is a
+% "current" pointer, which points to an element of the list or points just past
+% the end of the list.  Various list operations operate on the element pointed
+% at by "current", or modify the value of "current".  The elements in a list
+% are always numbered starting with one.  Thus, the element at index "2" in a
+% list is the second element in the list.
+
+
+list = cluster [t: type] is
+	new, predict, cons, size, empty, trim, fill, fill_copy,
+	fetch, bottom, top, store, addh, addl, remh, reml, append,
+	elements, each, indexes,
+	point_to_first, point_to_end, first, last, next, current, past_end,
+	find_elem, find_all, count, exists,
+	delete, delete_at, insert, insert_at, delete_first, delete_all,
+	replace, sort, binary_search, l2s, s2l, l2a, a2l,
+	equal, similar, similar1, same_elements, copy1, copy, _gcd, decode,
+	encode
+
+    % The rep consists of an "elems" field, which is an array of the elements
+    % in the list; a "current" field, which is the index of the "current"
+    % element in the "elems" field (the value of "current" might be one greater
+    % than the high index of "elems"); and a "sorted" field that is "true" iff
+    % the contents of "elems" has not changed since the last time it was sorted
+    % (this can improve efficiency by avoiding some needless sorting).  The low
+    % bound of the array in the "elems" field is kept at 1.
+
+    % A cleverer rep could be used to make "delete" and "sort" more efficient.
+    % For example, the rep could consist of (1) an AVL tree, with links from
+    % each child to its parent (and vice-versa); (2) a linked list; (3) the
+    % smallest node; and (4) the largest node.  When "append" is called, the
+    % appended node is appended to the linked list in the rep.  The tree can be
+    % traversed from smallest to largest via the links, and then the linked
+    % list can be traversed to finish traversing the tree.  When "sort" is
+    % called, the nodes in the linked list are merged into the tree.  This new
+    % representation permits constant-time deletion, and sorting time O(m *
+    % log(n - m)), where "n" is the number elements in the list and "m" is the
+    % number of elements that have been appended since the last sort.  The
+    % current representation requires linear-time deletion and O(n * log(n))
+    % sorting.
+
+    rep = record[elems: t_arr,
+		 current: int,
+		 sorted: bool]
+    t_arr = array[t]
+    t_seq = sequence[t]
+    cond_type = proctype (t, t) returns (bool)
+
+    % The low bound of the rep is kept at 1.
+    low_bound = 1
+
+
+    % Creates and returns a new, empty list.  Once the returned list becomes
+    % non-empty, "current" will point at the first element until changed by
+    % another operation.
+
+    new = proc () returns (cvt)
+	return(rep${elems: t_arr$[], current: low_bound, sorted: true})
+	end new
+
+
+    % Creates and returns a new, empty list, where it is predicted that at
+    % least "num" elements will be inserted.  This may allow operations that
+    % add elements to the returned list to execute somewhat faster.  Signals
+    % "negative_size" if "num" is < 0.
+
+    predict = proc (num: int) returns (cvt) signals (negative_size)
+	if num < 0 then signal negative_size end
+	return(rep${elems: t_arr$predict(low_bound, num), current: low_bound,
+		    sorted: true})
+	end predict
+
+
+    % Returns a new list consisting of the elements in "es", where the elements
+    % are appended in the same order as they appear in "es".  The "current"
+    % element is the first one in the list.  This operation is provided so that
+    % a sequence-like constructor can be used to build a list.  This facility
+    % is provided by the "#extend" mode of the CLU compiler.
+
+    cons = proc (es: t_seq) returns (cvt)
+	return(rep${elems: t_arr$cons(es), current: low_bound, sorted: false})
+	end cons
+
+
+    % Returns the number of elements in "l".
+
+    size = proc (l: cvt) returns (int)
+	return(t_arr$size(l.elems))
+	end size
+
+
+    % Returns "true" iff "l" contains no elements.
+
+    empty = proc (l: cvt) returns (bool)
+	return(t_arr$empty(l.elems))
+	end empty
+
+
+    % Removes all elements from "l" whose index is less than "low", or greater
+    % than or equal to "low" + "num".  If "low" + "num" is greater than the
+    % number of elements in "l", no elements above index "low" are removed.
+    % Sets "current" to point at the first element of the resulting contents of
+    % "l".  Signals "bounds" if "low" does not satisfy:  1 <= "low" <=
+    % ("l$size(l)" + 1).  Signals "negative_size" if "num" < 0.  If either
+    % exception is signalled, "l" is not changed.
+
+    trim = proc (l: cvt, low, num: int) signals (bounds, negative_size)
+	t_arr$trim(l.elems, low, num)
+	   resignal bounds, negative_size
+	l.elems.low := low_bound
+	l.current := low_bound
+	end trim
+
+
+    % Returns a new list with "num" elements in it, all of which are the object
+    % "elem".  Sets "current" in the returned list to point at the first
+    % element.  Signals "negative_size" if "num" < 0.
+
+    fill = proc (num: int, elem: t) returns (cvt) signals (negative_size)
+	return(rep${elems: t_arr$fill(low_bound, num, elem),
+		    current: low_bound, sorted: false})
+	   resignal negative_size
+	end fill
+
+
+    % Returns a new list with "num" elements in it, all of which are copies of
+    % "elem", obtained by calling "t$copy".  Sets "current" in the returned
+    % list to point at the first element.  Signals "negative_size" if "num" <
+    % 0.
+
+    fill_copy = proc (num: int, elem: t) returns (cvt) signals (negative_size)
+		where t in copy_type
+	return(rep${elems: t_arr$fill_copy(low_bound, num, elem),
+		    current: low_bound, sorted: false})
+	   resignal negative_size
+	end fill_copy
+
+
+    % Returns the element at index "i" in "l".  This does not affect the value
+    % of "current" in "l".  Signals "bounds" if there is no element in "l" at
+    % index "i".
+
+    fetch = proc (l: cvt, i: int) returns (t) signals (bounds)
+	return(l.elems[i])
+	   resignal bounds
+	end fetch
+
+
+    % Returns the first element of "l".  This does not affect the value of
+    % "current" in "l".  Signals "empty" if "l" contains no elements.
+
+    bottom = proc (l: cvt) returns (t) signals (empty)
+	return(t_arr$bottom(l.elems))
+	   except when bounds: signal empty end
+	end bottom
+
+
+    % Returns the last element of "l".  This does not affect the value of
+    % "current" in "l".  Signals "empty" if "l" contains no elements.
+
+    top = proc (l: cvt) returns (t) signals (empty)
+	return(t_arr$top(l.elems))
+	   except when bounds: signal empty end
+	end top
+
+
+    % Replaces, by "elem", the element at index "i" in "l".  This does not
+    % affect the value of "current" in "l".  Signals "bounds" if "i" is not a
+    % valid index in "l".
+
+    store = proc (l: cvt, i: int, elem: t) signals (bounds)
+	l.elems[i] := elem
+	   resignal bounds
+	l.sorted := false
+	end store
+
+
+    % Appends "elem" to the end of "l".  The value of "current" is not
+    % affected.
+
+    addh = proc (l: cvt, elem: t)
+	t_arr$addh(l.elems, elem)
+	l.sorted := false
+	end addh
+
+
+    % Inserts "elem" at the beginning of "l".  The value of "current" gets set
+    % so that it still points at the same element.
+
+    addl = proc (l: cvt, elem: t)
+	t_arr$addl(l.elems, elem)
+	l.elems.low := low_bound
+	l.sorted := false
+	l.current := l.current + 1
+	end addl
+
+
+    % Deletes and returns the last element of "l".  If "current" is pointing at
+    % this last element, it gets set to point past the end of "l"; otherwise,
+    % "current" is unchanged.  Signals "empty" if "l" is empty.
+
+    remh = proc (l: cvt) returns (t) signals (empty)
+	return(t_arr$remh(l.elems))
+	   except when bounds: signal empty end
+	end remh
+
+
+    % Deletes and returns the first element of "l".  If "current" is pointing
+    % at this first element, it gets set to point at the new first element.
+    % Otherwise, "current" is set so that it still points at the same element.
+
+    reml = proc (l: cvt) returns (t) signals (empty)
+	elem: t := t_arr$reml(l.elems)
+	   except when bounds: signal empty end
+	l.elems.low := low_bound
+	if l.current > low_bound then l.current := l.current - 1 end
+	return(elem)
+	end reml
+
+
+    % Appends the elements in "l2" to those in "l1".
+
+    append = proc (l1, l2: list[t])
+	for e: t in list[t]$each(l2) do
+	    list[t]$addh(l1, e)
+	    end
+	end append
+
+
+    % Yields each of the elements in "l", from first to last.  Before each
+    % element is yielded, "current" is set to point at the yielded element.
+    % NOTE: It is not safe to use this iterator when deleting elements from a
+    % list (the iterator will skip over the element following the one being
+    % deleted).
+
+    elements = iter (l: cvt) yields (t)
+	l.current := low_bound
+	while true do
+	    yield(l.elems[l.current])
+	    l.current := l.current + 1
+	    end except when bounds: end
+	end elements
+
+
+    % Yields each of the elements in "l", from first to last.  The value of
+    % "current" is unchanged.  Elements are yielded in the same order each time
+    % this operation is invoked on a given list, provided the list does not
+    % change between invocations.
+
+    each = iter (l: cvt) yields (t)
+	for i: int in t_arr$indexes(l.elems) do
+	    yield(l.elems[i])
+	    end
+	end each
+
+
+    % Yields the index of each element in "l", from first to last.  Before each
+    % index is yielded, "current" is set to point at the element at that index
+    % in "l".
+
+    indexes = iter (l: cvt) yields (int)
+	for i: int in t_arr$indexes(l.elems) do
+	    l.current := i
+	    yield(i)
+	    end
+	l.current := l.current + 1
+	end indexes
+
+
+    % Sets "current" to point at the first element of "l".
+
+    point_to_first = proc (l: cvt)
+	l.current := low_bound
+	end point_to_first
+
+    
+    % Sets "current" to point to the end of "l".
+    
+    point_to_end = proc (l: cvt)
+	l.current := t_arr$high(l.elems) + 1
+	end point_to_end
+    
+
+    % Sets "current" to point to the last element of "l".
+    
+    point_to_last = proc (l: cvt)
+	l.current := t_arr$high(l.elems)
+	end point_to_last
+    
+
+    % Sets "current" to point at the first element of "l", and returns the
+    % first element.  Signals "empty" if "l" contains no elements.
+
+    first = proc (l: cvt) returns (t) signals (empty)
+	l.current := low_bound
+	return(t_arr$bottom(l.elems))
+	   except when bounds: signal empty end
+	end first
+
+
+    % Sets "current" to point at the last element of "l", and returns the last
+    % element.  Signals "empty" if "l" contains no elements.
+
+    last = proc (l: cvt) returns (t) signals (empty)
+	l.current := t_arr$high(l.elems)
+	return(t_arr$top(l.elems))
+	   except when bounds: signal empty end
+	end last
+
+
+    % Advances "current" to point at the next element in "l", and returns that
+    % element.  Signals "end_of_list" if this causes "current" to point past
+    % the end of "l", or if "current" is already pointing past the end of "l".
+
+    next = proc (l: cvt) returns (t) signals (end_of_list)
+	if l.current > t_arr$high(l.elems) then signal end_of_list end
+	l.current := l.current + 1
+	return(l.elems[l.current])
+	   except when bounds: signal end_of_list end
+	end next
+
+
+    % Returns the element currently pointed to by "current" in "l".  Signals
+    % "end_of_list" if "current" points past the end of "l".
+
+    current = proc (l: cvt) returns (t) signals (end_of_list)
+	return(l.elems[l.current])
+	   except when bounds: signal end_of_list end
+	end current
+
+
+    % Returns "true" iff "current" in "l" points past the end of "l".
+
+    past_end = proc (l: cvt) returns (bool)
+	return(l.current > t_arr$high(l.elems))
+	end past_end
+
+
+    % Returns the first element "e" in "l" such that "cond(elem, e)" returns
+    % "true".  The value of "current" is not affected.  Signals "missing" if
+    % there is no such "e".
+
+    find_elem = proc (l: cvt, elem: t, cond: cond_type) returns (t)
+		  signals (missing)
+	for e: t in t_arr$elements(l.elems) do
+	    if cond(elem, e) then return(e) end
+	    end
+	signal missing
+	end find_elem
+
+
+    % Returns a sequence containing all elements "e" in "l" such that
+    % "cond(elem, e)" returns "true".  The value of "current" is not affected.
+
+    find_all = proc (l: cvt, elem: t, cond: cond_type) returns (t_seq)
+	a: t_arr := t_arr$[]
+	for e: t in t_arr$elements(l.elems) do
+	    if cond(elem, e) then t_arr$addh(a, e) end
+	    end
+	return(t_seq$a2s(a))
+	end find_all
+
+
+    % Returns the number of elements "e" in "l" such that "cond(elem, e)"
+    % returns "true".  The value of "current" is not affected.
+
+    count = proc (l: cvt, elem: t, cond: cond_type) returns (int)
+	i: int := 0
+	for e: t in t_arr$elements(l.elems) do
+	    if cond(elem, e) then i := i + 1 end
+	    end
+	return(i)
+	end count
+
+
+    % Returns "true" iff there is at least one element "e" in "l" such that
+    % "cond(elem, e)" returns "true".  The value of "current" is not affected.
+
+    exists = proc (l: cvt, elem: t, cond: cond_type) returns (bool)
+	for e: t in t_arr$elements(l.elems) do
+	    if cond(elem, e) then return(true) end
+	    end
+	return(false)
+	end exists
+
+
+    % Deletes and returns the "current" element in "l".  After deletion,
+    % "current" points to the element that followed the deleted element; or, if
+    % the element that was deleted was the last element of "l", "current" is
+    % set to point past the end of "l".  Signals "end_of_list" if "current"
+    % points past the end of "l" before this operation is called.
+
+    delete = proc (l: cvt) returns (t) signals (end_of_list)
+	return(delete_at(up(l), l.current))
+	   except when bounds: signal end_of_list end
+	end delete
+
+
+    % Deletes and returns the element at index "i" in "l".  After deletion,
+    % "current" points to the element that followed the deleted element; or, if
+    % the element that was deleted was the last element of "l", "current" is
+    % set to point past the end of "l".  Signals "bounds" if there is no
+    % element in "l" at index "i".
+
+    delete_at = proc (l: cvt, i: int) returns (t) signals (bounds)
+	elem: t := l.elems[i]
+	   resignal bounds
+	for idx: int in int$from_to(i, t_arr$high(l.elems) - 1) do
+	    l.elems[idx] := l.elems[idx + 1]
+	    end
+	t_arr$remh(l.elems)
+	l.current := i
+	return(elem)
+	end delete_at
+
+
+    % Inserts "elem" into "l" before "l's" current element.  If the "current"
+    % pointer is set past the end of "l", "elem" becomes the last element in
+    % "l".  "Elem" becomes the new current element of "l".  Note that "insert"
+    % and "delete" are inverses; executing "insert(l, delete(l))" leaves "l" in
+    % the same state as it started.
+
+    insert = proc (l: cvt, elem: t)
+	insert_at(up(l), l.current, elem)
+	end insert
+
+
+    % Inserts "elem" into "l" at index "i".  Signals bounds if "i" is not in
+    % the range 1 <= i <= size(l)+1.  Otherwise, "elem" is inserted, and all
+    % the elements with indices greater than or equal to "i" are moved up one
+    % index.  "Current" is set to point at the inserted element.  Note that
+    % "insert_at" and "delete_at" are inverses; "insert_at(l, i, delete_at(l,
+    % i))" preserves the state of "l".
+
+    insert_at = proc (l: cvt, i: int, elem: t) signals (bounds)
+	if ~(1 <= i cand i <= t_arr$high(l.elems) + 1) then signal bounds end
+	t_arr$addh(l.elems, elem)
+	for idx: int in int$from_to_by(t_arr$high(l.elems)-1, i, -1) do
+	    l.elems[idx + 1] := l.elems[idx]
+	    end
+	l.elems[i] := elem
+	l.current := i
+	end insert_at
+
+
+    % Deletes and returns the first element "e" in "l" such that "cond(elem,
+    % e)" returns "true".  After deletion, "current" points to the element that
+    % followed the deleted element; or, if the element that was deleted was the
+    % last element of "l", "current" is set to point past the end of "l".
+    % Signals "missing" if there is no such element "e".
+
+    delete_first = proc (l: cvt, elem: t, cond: cond_type) returns (t)
+		     signals (missing)
+	for i: int in t_arr$indexes(l.elems) do
+	    if cond(elem, l.elems[i]) then return(delete_at(up(l), i)) end
+	    end
+	signal missing
+	end delete_first
+
+
+    % Deletes all elements "e" in "l" such that "cond(elem, e)".  Returns a
+    % sequence containing those deleted elements.  Sets "current" to point at
+    % the first element of the resulting contents of "l".
+
+    delete_all = proc (l: cvt, elem: t, cond: cond_type) returns (t_seq)
+	a: t_arr := t_arr$[]
+	keep: int := low_bound - 1
+	for i: int in t_arr$indexes(l.elems) do
+	    e: t := l.elems[i]
+	    if cond(elem, e)
+	       then t_arr$addh(a, e)
+	       else keep := keep + 1
+		    l.elems[keep] := e
+	       end
+	    end
+	t_arr$trim(l.elems, 1, keep)
+	l.current := low_bound
+	return(t_seq$a2s(a))
+	end delete_all
+
+
+    % Replaces, with "elem", the element in "l" pointed at by "current".  The
+    % value of "current" is not affected.  Signals "end_of_list" if "current"
+    % points past the end of "l".
+
+    replace = proc (l: cvt, elem: t) signals (end_of_list)
+	l.elems[l.current] := elem
+	   except when bounds: signal end_of_list end
+	end replace
+
+
+    % Sorts the elements of "l" in increasing order, where "less(e1, e2)"
+    % returns "true" iff "e1" < "e2".  If the contents of "l" have not changed
+    % since the last call to the "sort" operation, this call has no effect.
+
+    sort = proc (l: cvt, less: cond_type)
+	if l.sorted then return end
+	quicksort[t](l.elems, low_bound, t_arr$size(l.elems), less)
+	l.sorted := true
+	end sort
+
+
+    % Returns an index "i" such that "e = l[i]" if such an "i" exists.  
+    % Otherwise returns the largest "i" such that "l[i] < x".  Signals
+    % "unsorted" if "l" is not sorted.
+    
+    binary_search = proc (l: cvt, e: t) returns (int) signals (unsorted)
+	where t has lt, equal: proctype (t, t) returns (bool)
+	if ~l.sorted then signal unsorted end
+	lo: int := 1
+	hi: int := t_arr$size(l.elems)
+	while lo <= hi do 
+	    % Invariants: l.elems[i] < e when i < lo 
+	    %             e < l.elems[i] when hi < i
+	    %		  lo <= hi + 1
+	    mid: int := (lo + hi)/2
+	    if e = l.elems[mid] then return(mid)
+	     elseif e < l.elems[mid] then hi := mid - 1
+	     else lo := mid + 1
+	     end
+	    end
+	return(hi)
+	end binary_search
+    
+
+    % Returns a sequence consisting of the elements in "l", in the same order
+    % that they appear in "l".
+
+    l2s = proc (l: cvt) returns (t_seq)
+	return(t_seq$a2s(l.elems))
+	end l2s
+
+
+    % The same as the "cons" operation.  Provided as a dual to the "l2s"
+    % operation.
+
+    s2l = proc (ts: t_seq) returns (cvt)
+	return(down(cons(ts)))
+	end s2l
+
+
+    % Returns an array consisting of the elements in "l", in the same order
+    % that they appear in "l".  The caller should not modify the returned
+    % array, since this EXPOSES THE REP in return for efficiency.
+
+    l2a = proc (l: cvt) returns (t_arr)
+	return(l.elems)
+	end l2a
+
+
+    % Creates a list whose elements are the elements of "ta".
+
+    a2l = proc (ta: t_arr) returns (cvt)
+	ta_copy: t_arr := t_arr$copy1(ta)
+	ta_copy.low := low_bound
+	return(rep${elems: ta_copy, current: low_bound, sorted: true})
+	end a2l
+
+
+    % Returns "true" iff "l1" and "l2" are the same object.
+
+    equal = proc (l1, l2: cvt) returns (bool)
+	return(l1 = l2)
+	end equal
+
+
+    % Returns "true" iff "l1" and "l2" have similar elements, and those
+    % elements appear in the same order in "l1" and "l2".
+
+    similar = proc (l1, l2: cvt) returns (bool)
+		where t in similar_type
+	return(t_arr$similar(l1.elems, l2.elems))
+	end similar
+
+
+    % Returns "true" iff "l1" and "l2" have similar elements, and those
+    % elements appear in the same order in "l1" and "l2".
+
+    similar1 = proc (l1, l2: cvt) returns (bool)
+		where t in equal_type
+	return(t_arr$similar1(l1.elems, l2.elems))
+	end similar1
+
+
+    % Returns "true" iff "l1" and "l2" are the same size, and the elements of
+    % "l1" can be paired with the elements of "l2" so that for every such pair
+    % <"e1", "e2">, "equiv(e1, e2)" returns "true".
+
+    same_elements = proc (l1, l2: cvt, equiv: equiv_proc) returns (bool)
+	equiv_proc = proctype (t, t) returns (bool)
+	return(same_elements_arr[t](l1.elems, l2.elems, equiv))
+	end same_elements
+
+
+    % Returns a new list containing the same element objects as "l", in the
+    % same order, and with the same value for "current".
+
+    copy1 = proc (l: cvt) returns (cvt)
+	return(rep${elems: t_arr$copy1(l.elems), current: l.current,
+		    sorted: l.sorted})
+	end copy1
+
+
+    % Returns a new list containing a copy of each of the elements of "l", in
+    % the same order, and with the same value for "current".
+
+    copy = proc (l: cvt) returns (cvt)
+		where t in copy_type
+	return(rep$copy(l))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+		where t in gcd_type
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    % The following do not preserve sharing
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	where t has decode: proctype(istream) returns (t)
+    		            signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	where t has encode: proctype(t, istream) signals(not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+    end list

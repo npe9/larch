@@ -1,0 +1,54 @@
+#extend
+
+% Processes the "define-class" command.
+
+c_class = proc (i: interactive) signals (error)
+    scan: scanner := scanner$from_string("", i.p)
+    cn: class_name, ce: class_expression := define_class_args(scan, i.symtab)
+       resignal error
+       except when name_only (cn1: class_name):
+		   ce := class_table$look_up(i.symtab.classes, cn1)
+		      except when missing:
+				  aborted(i.p, "Undefined class name")
+				     resignal error
+			     end
+		   printer$newline(i.p)
+		   class_expression$print(i.p, ce, i.symtab)
+		   printer$newline(i.p)
+		   return
+	      when none: return
+	      end
+    ce := class_expression$partial_eval(ce, i.sys, i.symtab.classes)
+       except when undefined (cn1: class_name):
+		   aborted(i.p, "Undefined class name: " || cn1)
+	      end resignal error
+    if ~class_expression$definable(ce, cn, i.symtab.classes) then
+       aborted(i.p, "Circular class definition.")
+       end resignal error
+    symtab$define_class(i.symtab, cn, ce)
+    end c_class
+
+
+% Reads and returns a class name and a class expression using the multiline
+% input convention.
+    
+define_class_args = proc (scan: scanner, stab: symtab)
+		      returns (class_name, class_expression)
+		      signals (error, none, name_only(class_name))
+    query$get_more(scan, "class definition", class_syntax)
+       resignal none
+    cn: class_name :=
+	scanner$expecting(scan, token$is_classSym, "class name").text
+       resignal error
+    cn := cn || scanner$expecting(scan, token$is_simpleId,
+				  "rest of class name").text
+       resignal error
+    ce: class_expression := class_expression$read(scan, stab)
+       resignal error
+       except when empty: signal name_only(cn) end
+    check_end_of_scan(scan)
+       resignal error
+    return(cn, ce)
+    end define_class_args
+    
+

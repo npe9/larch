@@ -1,0 +1,9 @@
+% Announces that a command has been aborted.
+    
+aborted = proc (p: printer, reason: string) signals (error)
+    printer$error(p)
+    printer$text(p, "\nCommand aborted: ")
+    printer$text(p, reason)
+    printer$text(p, ".\n")
+    signal error
+    end aborted

@@ -1,0 +1,35 @@
+\doc{Syntax descriptions}
+\ref{grammar}
+\ref{syntax}
+
+The syntax of LP is described using equations of the form
+\begin{verbatim}
+\s{term} ::= \s{simpleId} | \s{simpleId} \qf{(} \s{term}+, \qf{)}
+\end{verbatim}
+that are interpreted according to the following conventions to mean that a
+\s{term} is either a simple identifier or a simple identifier followed by
+a parenthesized list of terms separated by commas.
+
+\begin{description}
+\dt \f{chars} or \qf{chars}
+\dd A terminal \dlink{symbols}{symbol}
+\dt \s{chars}
+\dd A construct defined by a syntax equation
+\dt \v{e} \v{f}               
+\dd An \v{e} followed by (whitespace and) an \v{f}
+\dt \v{e} | \v{f}
+\dd An \v{e} or an \v{f}
+\dt \v{e} ~ \v{f}
+\dd An \v{e} that is not an \v{f}
+\dt (\v{e})
+\dd An \v{e} as a syntactic unit, as in (\v{e} | \v{f}) \v{e}.  Without
+parentheses, \v{e} | \v{f} \v{e} is interpreted as \v{e} | (\v{f} \v{e}).
+\dt [\v{e}]
+\dd An optional \v{e}
+\dt \v{e}* or \v{e}*, or \v{e}*[,]
+\dd Zero or more \v{e}'s, separated respectively by nothing, commas, or
+optional commas.
+\dt \v{e}+ or \v{e}+, or \v{e}+[,]
+\dd One or more \v{e}'s,  separated respectively by nothing, commas, or
+optional commas.
+\end{description}

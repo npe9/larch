@@ -1,0 +1,341 @@
+#extend
+
+% The "statistics" cluster records performance information about LP.
+
+statistics = cluster is 
+	reset,
+	start_deduction, success_deductions, fail_deduction,
+	start_unify, success_unify, fail_unify,
+	start_rewrite, success_rewrite, fail_rewrite, 
+	start_order, success_order, fail_order, 
+	start_prover, stop_prover, start_satisfier, stop_satisfier,
+	display
+
+    rep = null
+    
+    
+    % LP keeps the following statistics for each of several categories.
+
+    stats_arr 	= array[stats]
+    stats 	= record[name: int,		% index into array "names"
+			 failures: int,		% number of unsuccessful events
+			 successes: int,	% number of successful events
+			 success_time: time,	% elapsed time for successes
+			 failure_time: time]	% elapsed time for failures
+    
+
+    % LP keeps a stack of stopwatches for events that are being clocked.  Each
+    % stopwatch on the stack contains an identifier for the statistical
+    % category, the time accumulated by the stopwatch before another stopwatch
+    % was last pushed on top of it on the stack, and the time the stopwatch was
+    % started (or restarted, after the stopwatch on top of it has been popped
+    % off the stack).
+			 
+    watch_arr	= array[watch]
+    watch 	= record[name: int,
+			 previous: time,
+			 started: time]		
+    
+
+    % Success and failure are relevant for the following statistics.
+
+    order_stats 	= 1
+    rewrite_stats 	= 2
+    deduction_stats 	= 3
+    unify_stats 	= 4
+    detailed_stats	= 4		% Index of last category of this kind
+    
+    
+    % Only total time is relevant for the following statistics.
+    
+    prover_stats 	= 5
+    satisfier_stats 	= 6
+
+    
+    % The display of statistics is formatted using the following fields and
+    % labels.
+	      
+    fields = "nnnnnnnnnnngggccccctttttttttgggggccccctttttttttTTTTTTTTTTTT"
+    head1a = "Recent            Success            Failure          Total"
+    head2a = "------        Count     Time     Count     Time        Time"
+    head1b = "Cumulative        Success            Failure          Total"
+    head2b = "----------    Count     Time     Count     Time        Time"
+
+    name_width  = 11
+    gap1	=  3
+    count_width =  5
+    time_width  =  9
+    gap2	=  5
+    total_width = 12
+    full_width  = 48 % gap1 + gap2 + 2(count_width + time_width) + total_width
+    
+    
+    % Names for the categories of statistics.
+
+    own names: string_arr := string_arr$["Ordering", "Rewriting", "Deductions",
+ 					 "Unification", "Prover", "Satisfier"]
+    
+
+    % Current and cumulative statistics.
+
+    own current:          stats_arr := stats_arr_init()
+    own past: 	          stats_arr := stats_arr_init()
+    own zero_time:        time      := time$create(0, 0, 0, 0, 0, 0)
+    own initial_time:     time      := time$create(0, 0, 0, 0, 0, 0)
+    own last_time:        time      := time$create(0, 0, 0, 0, 0, 0)
+    own initial_gc_count: int       := 0
+    own last_gc_count:    int       := 0
+    
+
+    % Stack of stopwatches.
+    
+    own running: watch_arr := watch_arr$[]
+
+    
+    % (Internal procedure)  Creates a fresh array of statistics.
+
+    stats_arr_init = proc () returns (stats_arr)
+	t: time := time$create(0, 0, 0, 0, 0, 0)
+	sa: stats_arr := stats_arr$predict(1, string_arr$size(names))
+	for i: int in string_arr$indexes(names) do
+	    s: stats := stats${name: i, failures: 0, successes: 0,
+			       success_time: t, failure_time: t}
+	    stats_arr$addh(sa, s)
+	    end
+	return(sa)
+	end stats_arr_init
+
+
+    % Resets all statistics.
+
+    reset = proc ()
+	_gc$gc()
+	current          := stats_arr_init()
+	past             := stats_arr_init()
+	initial_time     := run_time()
+	last_time        := initial_time
+	initial_gc_count := _gc$count()
+	last_gc_count    := initial_gc_count
+	end reset
+
+
+    % (Internal procedure) Starts a stopwatch for "which" statistics.
+    
+    start_watch = proc (which: int)
+	if tracer$get_stat_level() = 0 then return end
+	t: time := run_time()
+	begin
+	    w: watch  := watch_arr$top(running)
+	    w.previous := w.previous + t - w.started
+	    end except when bounds, negative_time: end
+	watch_arr$addh(running,
+		       watch${name: which, previous: zero_time, started: t})
+	end start_watch
+    
+    
+    % (Internal procedure) Stops the stopwatch for "which" statistics and
+    % records "n" successes (if "success" is true) or "n" failures (if
+    % "success" is false).
+    
+    stop_watch = proc (which: int, n: int, success: bool)
+	s: stats := current[which]
+	if success
+	   then n := s.successes + n
+	        s.successes := n
+	   else n := s.failures + n
+	        s.failures := n
+	   end
+	if tracer$get_stat_level() = 0 then return end
+	w: watch := watch_arr$remh(running)
+	   except when bounds: fail("statistics stopping " || names[which]) end
+	if w.name ~= which then
+	   fail("statistics stopping " || names[which] ||", not " || 
+	        names[w.name])
+	   end
+	t: time := run_time()
+	t1: time
+	if success
+	   then t1 := s.success_time + w.previous + t - w.started
+		s.success_time := t1	      
+	   else t1 := s.failure_time + w.previous + t - w.started
+	        s.failure_time := t1
+	   end except when negative_time: t1 := zero_time end
+        watch_arr$top(running).started := t
+	   except when bounds: end
+        if ~front_end$get_stat_mode() then return end
+	result: char
+	if success
+	   then result := 'S'
+	   else result := 'F'
+	   end
+	days, hours, mins, secs, millis, micros: int := time$get_all(t1)
+	front_end$report_stats(names[s.name][1], result, n,
+			       mins + 60*(hours + 24*days), secs, millis)
+	end stop_watch
+    
+
+    % Handlers for deduction statistics.
+
+    start_deduction = proc ()
+	start_watch(deduction_stats)
+	end start_deduction
+
+    success_deductions = proc (n: int)
+	stop_watch(deduction_stats, n, true)
+	end success_deductions
+
+    fail_deduction = proc ()
+	stop_watch(deduction_stats, 1, false)
+	end fail_deduction
+
+
+    % Handlers for unification statistics
+
+    start_unify = proc ()
+	start_watch(unify_stats)
+	end start_unify
+
+    success_unify = proc (n: int)
+	stop_watch(unify_stats, n, true)
+	end success_unify
+
+    fail_unify = proc ()
+	stop_watch(unify_stats, 1, false)
+	end fail_unify
+
+
+    % Handlers for rewriting statistics.
+
+    start_rewrite = proc ()
+	start_watch(rewrite_stats)
+	end start_rewrite
+
+    success_rewrite = proc ()
+	stop_watch(rewrite_stats, 1, true)
+	end success_rewrite
+
+    fail_rewrite = proc ()
+	stop_watch(rewrite_stats, 1, false)
+	end fail_rewrite
+
+
+    % Handlers for ordering statistics.
+
+    start_order = proc ()
+	start_watch(order_stats)
+	end start_order
+
+    success_order = proc ()
+	stop_watch(order_stats, 1, true)
+	end success_order
+
+    fail_order = proc ()
+	stop_watch(order_stats, 1, false)
+	end fail_order
+
+
+    % Handlers for prover statistics.
+
+    start_prover = proc ()
+	start_watch(prover_stats)
+	end start_prover
+
+    stop_prover = proc ()
+	stop_watch(prover_stats, 0, true)
+	end stop_prover
+
+
+    % Handlers for satisfier statistics.
+
+    start_satisfier = proc ()
+	start_watch(satisfier_stats)
+	end start_satisfier
+
+    stop_satisfier = proc ()
+	stop_watch(satisfier_stats, 0, true)
+	end stop_satisfier
+
+
+    % Displays the statistics.
+
+    display = proc (io: iodev)	
+	puts = iodev$puts
+	putl = iodev$putl
+	% Update cumulative statistics
+	cumulative: bool := last_time ~= initial_time
+	for i: int in int$from_to(1, stats_arr$size(current)) do
+	    p: stats := past[i]
+	    c: stats := current[i]
+	    p.successes := p.successes + c.successes
+	    p.failures := p.failures + c.failures
+	    p.success_time := p.success_time + c.success_time
+	    p.failure_time := p.failure_time + c.failure_time
+	    end
+	_gc$gc()
+	recent_gc_count: int := _gc$count() - last_gc_count
+	last_gc_count := last_gc_count + recent_gc_count
+	current_time: time := run_time()
+	elapsed_time: time := current_time - last_time
+	   except when negative_time: elapsed_time := zero_time end
+	last_time := current_time
+
+	iodev$printl(io, "\nStatistics as of " || date$unparse(now()) || ".\n")
+	putl(io, head1a)
+        putl(io, head2a)
+	for i: int in int$from_to(1, string_arr$size(names)) do
+	    put_stats(io, current[i], i <= detailed_stats)
+	    end
+	puts(io, padr("GC's", name_width))
+	putl(io, int_format(recent_gc_count, count_width + gap1))
+	puts(io, padr("Total time", name_width))
+	putl(io, padl(time$format(elapsed_time, 2), full_width))
+
+        if cumulative then
+	   putl(io, "")
+	   putl(io, head1b)
+	   putl(io, head2b)
+	   for i: int in int$from_to(1, string_arr$size(names)) do
+	       put_stats(io, past[i], i <= detailed_stats)
+	       end
+	   puts(io, padr("GC's", name_width))
+	   putl(io, int_format(last_gc_count - initial_gc_count, 
+			       count_width + gap1))
+	   puts(io, padr("Total time", name_width))
+	   putl(io, padl(time$format(last_time - initial_time, 2), full_width))
+	   end
+
+	putl(io, "\n")
+	putl(io, "Heap size  = " || int_format(_heap_size(), 11)  || " words")
+	putl(io, "Free space = " || int_format(_free_space(), 11) || " words")
+	putl(io, "")
+
+	for s: stats in stats_arr$elements(current) do
+	    s.successes := 0
+	    s.failures := 0
+	    s.success_time := zero_time
+	    s.failure_time := zero_time
+	    end
+
+	end display
+
+
+    put_stats = proc (io: iodev, s: stats, detailed: bool)
+	puts = iodev$puts
+	putl = iodev$putl
+	if ~interactive$get_experimental() cand names[s.name] = "Satisfier"
+	   then return
+	   end
+	puts(io, padr(names[s.name], 11))
+	t: time := s.success_time + s.failure_time
+	if detailed 
+	   then puts(io, padl(int$unparse(s.successes), count_width + gap1))
+		puts(io, padl(time$format(s.success_time, 2), time_width))
+		puts(io, padl(int$unparse(s.failures), count_width + gap2))
+		puts(io, padl(time$format(s.failure_time, 2), time_width))
+		putl(io, padl(time$format(t, 2), total_width))
+	   else putl(io, padl(time$format(t, 2), full_width))
+	   end
+	end put_stats
+
+
+    end statistics

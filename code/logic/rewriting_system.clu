@@ -1,0 +1,1391 @@
+#extend
+
+% A rewriting system is a set of annotated rewrite rules, which are used to
+% reduce terms to normal forms.  The annotations govern whether the rewrite
+% rules are active and/or immune.
+
+% The rewrite rules in a rewriting system are divided into four lists, the
+% "new", "normalized", "unused", and "used" rewrite rules.  Unless otherwise
+% stated, to be in "normal form" with respect to a rewriting system means to be
+% in normal form with respect to its active "unused" and "used" rewrite rules.
+
+% "new": newly added rewrite rules, which may or may not be in normal form with
+% respect to the rewriting system
+
+% "normalized": rewrite rules that are either immune or in normal form with
+% respect to the rewriting system, but that have not yet been used to normalize
+% other rewrite rules in the rewriting system
+
+% "unused": active rewrite rules that are either immune or in normal form with
+% respect to the rewriting system, but that have not yet been used to normalize
+% equations and deduction rules elsewhere in the system
+
+% "used": rewrite rules that are either immune or in normal form with respect
+% to the rewriting system and that have been used to normalize equations and
+% deduction rules elsewhere in the system
+
+
+rewriting_system = cluster is
+	new, add, add_normalized, add_active, change_activity, change_immunity,
+	change_rr, check_termination, delete, delete_op, delete_subset, 
+	display, elements, extension, extension_empty, extension_ac, 
+	fetch, get_hardwired_usage, get_new, 
+	get_normalized, get_ops, get_ordering, get_overlaps, 
+	get_reduction_mode, get_rewriting_limit, get_terminates, get_unused, 
+	get_used, is_empty, lists, move_to_bottom, move_to_top, named_subset,
+	named_subsystem, no_termination, normal_form, one_rule, put_aside,
+	put_back, recheck_inconsistencies, recheck_termination, reductions, 
+	reduce,	reduce_whole_term, reduce_empty, reduce_quant, reduce_ac, 
+        reduce_c, set_hardwired_usage, set_ordering, set_rewriting_limit, 
+	set_reduction_mode, size, subsystem_ops, subsystem_vars, 
+	unused_subsystem, write, copy, _gcd, decode, encode
+
+	
+    % The rep for a rewriting system contains the following information in
+    % addition to the lists of "new", "normalized", "unused", and "used"
+    % rewrite rules.
+    
+    % "hardwired_usage": Bit-coded control over which hardwired rewrite rules
+    % are in use when "use_hardwired" is "true".
+
+    % "ord": the ordering on terms used to prove termination of the
+    % rewriting_system.  ("ord" is kept in this cluster rather than the
+    % "system" cluster so that it can be used to decide whether or not the
+    % rewriting system is guaranteed to terminate.)
+    
+    % "outside_in": "true" if the current "reduction_mode" is 
+    % "outside_in_mode".
+
+    % "overlaps": list of pairs of "unused" and "used" rewrite rules that have
+    % not yet been examined for critical pair equations.
+
+    % "proof_invalidated": "true" if "terminates" is "true", but the addition
+    % of another rewrite rule to the rewriting system will invalidate the
+    % termination proof (e.g., because the ordering was changed).
+    
+    % "rewriting_limit": the maximum number of times a term will be reduced
+    % during normalization if the rewriting system is not known to terminate.
+		 
+    % "table": maps each operator to the set of active "unused" and "used"
+    % rewrite rules whose left-hand sides have that operator at their root.
+    % Used to limit the number of rules that have to be considered in
+    % rewriting.
+
+    % "terminates": "true" if the rewriting system is known to terminate, i.e.,
+    % if all rewrite rules are guaranteed to terminate by the ordering used to
+    % order those rules, there has been no call to "no_termination", and no
+    % rewrite rule was added when "proof_invalidated" was true.
+
+    % "use_hardwired": true if the hardwired rewrite-rules for equality and
+    % conditionals should be treated as part of the rewriting system.
+    		 
+    rep = record[hardwired_usage: int,
+    	         new: rr_prop_list,
+		 normalized: rr_prop_list,
+		 ord: ordering, 
+		 outside_in: bool,
+		 overlaps: overlaps, 
+		 proof_invalidated: bool, 
+		 rewriting_limit: int,
+		 table: rrp_table, 
+		 terminates: bool, 
+		 unused: rr_prop_list,
+		 use_hardwired: bool, 
+		 used: rr_prop_list]
+
+    axioms = axiom_system[rewrite_rule, rewriting_system]
+    
+    
+    % The following settings are shared by all rewriting systems.
+
+
+    % "condition_nesting": the current depth of conditional rewriting for
+    % "condition_term"
+    
+    own condition_nesting: int := 0
+    own condition_term: term := term_true()
+    
+    
+    % Returns a new rewriting system that contains the hardwired rewrite rules
+    % and that uses the default ordering.  The "terminates" attribute is "true"
+    % because the hardwired rewrite rules always terminates.  The "#extend"
+    % mode of the CLU compiler allows sugared invocations of the form
+    % "rewriting_system$[]".
+
+    % ENHANCE: Should "outside_in" be the default setting?
+    
+    new = proc () returns (cvt)
+	return(rep${hardwired_usage: initial_hardwired_usage,
+	    	    new: rr_prop_list$[],
+		    normalized: rr_prop_list$[],
+		    ord: ordering$default(), 
+		    outside_in: initial_reduction_mode = outside_in_mode,
+		    overlaps: overlaps$[], 
+		    proof_invalidated: false,
+		    rewriting_limit: initial_rewriting_limit,
+		    table: rrp_table$[], 
+		    terminates: true,
+		    unused: rr_prop_list$[],
+		    use_hardwired: true,
+		    used: rr_prop_list$[]})
+	end new
+
+    
+    % Adds "rr" as a new rewrite rule to "rsys" with the activity and immunity
+    % given by "ai".  Puts "rr" the end of the list of new rewrite rules if
+    % "last" is true; otherwise inserts "rr" at the beginning of the list.
+    % ASSUMES: Either "rr" has been ordered by "rsys.ord" or "no_termination"
+    % has been invoked.  Signals "not_rule" if "rr" is not a rewrite rule.
+    
+    add = proc (rsys: rewriting_system, rr: rewrite_rule, osys: op_system, 
+	        reg: registry, ai: ai_settings, last: bool) signals (not_rule)
+	if ~rr.is_rr then signal not_rule end
+	check_termination(rsys, rr, osys, reg)
+	axioms$add(rsys, rr, ai, last)
+	end add
+
+    
+    % Adds "rrp" to "rsys.normalized".  ASSUMES: (1) Either "rrp.prop" is
+    % immune or it is in normal form with respect to "rsys".  (2) Either
+    % "rrp.prop" has been ordered by "rsys.ord" or "no_termination" has been
+    % invoked.  Signals "not_rule" if "rrp.prop" is not a rewrite rule.
+    
+    add_normalized = proc (rsys: cvt, rrp: rr_prop, osys: op_system, 
+	                   reg: registry) signals (not_rule)
+	if ~rrp.prop.is_rr then signal not_rule end
+        check_termination(up(rsys), rrp.prop, osys, reg)
+	rr_prop_list$addh(rsys.normalized, rrp)
+	end add_normalized
+    
+    
+    % Adds "rr" to "rsys.unused" as an active, immune, and possibly
+    % nonterminating rewrite rule.  Does not maintain invariants about
+    % internormalization.
+
+    add_active = proc (rsys: cvt, rr: rewrite_rule, osys: op_system)
+	own ai: ai_settings := ai_settings${active: true, immune: immunity_on}
+	if ~rr.is_rr then fail("rewriting_system$add_unused") end
+	rrp: rr_prop := rr_prop$create(rr, ai)
+	rr_prop_list$addh(rsys.unused, rrp)
+	rrp_table$insert(rsys.table, rrp)
+	no_termination(up(rsys))
+	end add_active
+
+
+    % Sets the activity of all rewrite rules in "rsys" named by "ns" to
+    % "active".  Moves activated rewrite rules in "rsys.used" to
+    % "rsys.normalized".  Moves deactivated rewrite rules in "rsys.unused" to
+    % "rsys.used".  Removes deactivated rewrite rules in "rsys.used" from
+    % "rsys.table".  Updates "rsys.overlaps".
+    
+    change_activity = proc (rsys: cvt, ns: name_set, active: bool)
+        if ~ns.has_rrs then return end
+	for rlist: rr_prop_list in lists(up(rsys)) do
+	    for rrp: rr_prop in rr_prop_list$elements(rlist) do
+		if rrp.active ~= active 
+		     cand name_set$contains_eq(ns, rrp.prop) then
+		   rrp.active := active
+		   if active then
+		      if rlist = rsys.used then
+			 move_to_top(up(rsys), rlist, rsys.normalized)
+			 end
+		    elseif rlist = rsys.unused then
+		      move_to_top(up(rsys), rlist, rsys.used)
+		    elseif rlist = rsys.used then
+		      rrp_table$delete(rsys.table, rrp)
+		    end except when missing: end
+		   end
+		end
+	    end
+
+	end change_activity
+
+
+    % Sets the immunity of all rewrite rules in "rsys" named by "ns" to
+    % "immune".  Moves deimmunized rewrite rules to "rsys.new".
+
+    change_immunity = proc (rsys: cvt, ns: name_set, immune: immunity)
+        if ns.has_rrs then axioms$change_immunity(up(rsys), ns, immune) end
+	for rrp: rr_prop in rr_prop_list$elements(rsys.new) do
+	    delete_work(rsys, rrp)
+	    end
+	end change_immunity
+
+
+    % Changes the rewrite rule in "rrp" to "rr".  Assumes: "rrp" is in "rsys".
+    
+    change_rr = proc (rsys: cvt, rrp: rr_prop, rr: rewrite_rule)
+	reinsert: bool := false
+	if ~term$same_object(rrp.prop.left, rr.left) then
+	   rrp_table$delete(rsys.table, rrp)
+	   reinsert := true
+	   end except when missing: end
+	rrp.prop := rr
+	if reinsert then rrp_table$insert(rsys.table, rrp) end
+	end change_rr
+
+    
+    % Checks whether the addition of "rr" to "rsys" invalidates the proof of
+    % termination for "rsys".
+    % ASSUMES: Either "rr" has been ordered by "rsys.ord" or "no_termination"
+    % has been invoked.
+    
+    check_termination = proc (rsys: cvt, rr: rewrite_rule, osys: op_system,
+	    	              reg: registry)
+	if ~rsys.terminates then return end
+        if rsys.proof_invalidated then 
+	   no_termination(up(rsys))
+	   return
+	   end
+        if ~ordering$warrants(rsys.ord, rr, osys, reg) then 
+	    rsys.terminates := false 
+	    end
+	end check_termination
+
+	
+    % Deletes the rewrite rule named "n" from "rsys".  Signals "missing" if
+    % there is no such rewrite rule.
+
+    delete = proc (rsys: cvt, n: name) returns (rr_prop) signals (missing)
+	rrp: rr_prop := axioms$delete(up(rsys), n)
+	   resignal missing
+	delete_work(rsys, rrp)
+	return(rrp)
+	end delete
+
+
+    % (Internal procedure) Deletes "rrp" from "rsys.table".  Deletes all pairs
+    % containing "rrp" from "rsys.overlaps".  NOTE: This procedure only needs
+    % to be invoked when deleting "unused" and "used" rewrite rules.  Since
+    % there are rarely many rewrite rules in the other categories, it does not
+    % hurt to invoke it when deleting them also.
+    
+    delete_work = proc (rsys: rep, rrp: rr_prop)
+	rrp_table$delete(rsys.table, rrp)
+	   except when missing: end
+	overlaps$delete_all(rsys.overlaps, rrp)
+	end delete_work
+
+    
+    % Deletes all rewrite rules in "rsys" that contain "op".  Signals "missing"
+    % if there is no such rewrite rule.
+
+    delete_op = proc (rsys: cvt, op: operator) signals (missing)
+	deleted: rr_prop_list := axioms$delete_op(up(rsys), op)
+	if rr_prop_list$empty(deleted) then signal missing end
+	for rrp: rr_prop in rr_prop_list$elements(deleted) do
+	    delete_work(rsys, rrp)
+	    end
+	end delete_op
+
+
+    % Deletes all rewrite rules in "rsys" named by "ns".  Signals "missing" if
+    % there are no such rewrite rules.  Otherwise returns a list of the
+    % deleted rewrite rules.
+
+    delete_subset = proc (rsys: cvt, ns: name_set) returns (rr_prop_list)
+		      signals (missing)
+        if ~ns.has_rrs then return(rr_prop_list$[]) end
+	deleted: rr_prop_list := axioms$delete_subset(up(rsys), ns)
+	if rr_prop_list$empty(deleted) then signal missing end
+	for rrp: rr_prop in rr_prop_list$elements(deleted) do
+	    delete_work(rsys, rrp)
+	    end
+	return(deleted)
+	end delete_subset
+
+
+    % Displays all rewrite rules in "rsys" named by "ns".
+    
+    display = proc (p: printer, rsys: cvt, ns: name_set, stab: symtab)
+		signals (interrupt)
+	if ~ns.has_rrs then return end
+	axioms$display(p, up(rsys), "Rewrite rules", ns, stab)
+	   resignal interrupt
+	end display
+    
+    
+    % Yields the annotated rewrite rules in "rsys".
+
+    elements = iter (rsys: rewriting_system) yields (rr_prop)
+	for rrp: rr_prop in axioms$elements(rsys) do yield(rrp) end
+	end elements
+
+
+    % Returns the extension of "rr" with respect to "rsys" and "osys".  This
+    % extension is used in the computation of critical pairs (see
+    % critical.clu).
+
+    extension = proc (rsys: rewriting_system, rr: rewrite_rule, 
+	              osys: op_system, stab: symtab) 
+		  returns (rewrite_rule) signals (none)
+	ot: op_theory := op_system$lookup_theory_quickly(osys, rr.left.root)
+	   except when wrong_tag: signal none end
+	% ENHANCE: Fix if and when we try to unify formulas.
+	return(ot.extension(rsys, rr, osys, stab))
+	   resignal none
+	end extension
+
+
+    % Always signals "none", since the empty theory requires no extensions.
+
+    extension_empty = proc (rsys: rewriting_system, rr: rewrite_rule, 
+	    	            osys: op_system, stab: symtab)
+			returns (rewrite_rule) signals (none)
+	signal none
+	end extension_empty
+
+
+    % Returns the " AC extension" of "rr".  Assumes "rr" is a (conditional)
+    % rule of the form "c :: s -> t", where "s" has the form "f(...)" for some
+    % AC operator "f".  The extension of "rr" is found by forming and
+    % flattening the rule "c :: f(s, x_new) -> f(t, x_new)", where "x_new" is a
+    % variable that occurs in neither "s" nor "t", and then normalizing the
+    % right side with respect to "rsys".  Signals "none" if the extension is an
+    % instance of some rule in "rsys"; otherwise, returns the extension.
+    
+    % QUERY: Should ancestor-immunity affect the existence of extensions?  If
+    % we replace "orphan" by "rr.name" and "ancestor_immunity" is on, we get an
+    % extension to "0*x -> 0", which slows down completing the axioms for
+    % arithmetic.
+
+    extension_ac = proc (rsys: cvt, rr: rewrite_rule, osys: op_system, 
+	                 stab: symtab) returns (rewrite_rule) signals (none)
+	own orphan: name := name$orphan()
+	op: operator := rr.left.root
+	   except when wrong_tag: signal none end
+	% ENHANCE: Fix if and when we try to unify formulas.
+	symtab$begin_changes(stab)
+	new_var_term: term := 
+	    term$make_var(variable$different(op.rng, rr.vars, stab))
+	symtab$commit_changes(stab)
+	left_args: term_seq := term_seq$addh(rr.left.args, new_var_term)
+	new_left: term := flatten(term$make_funct(op, left_args), osys)
+	right_args: term_seq
+	if ~term$is_funct(rr.right) cor rr.right.root ~= op 
+	   then right_args := term_seq$[rr.right, new_var_term]
+	   else right_args := term_seq$addh(rr.right.args, new_var_term)
+	   end
+	new_right: term := flatten(term$make_funct(op, right_args), osys)
+	new_right := normal_form(new_right, up(rsys), osys, stab, orphan)
+	   except when already_normal_form:
+	          when might_loop (t: term): new_right := t
+		  end
+	% See if the extension is an instance of a previously existing rule.
+	uncond: bool := ~rr.is_conditional
+	for rrx: rewrite_rule in rrp_table$all_images(rsys.table, op) do
+	    if uncond cand rrx.is_conditional then continue end
+	    for sigma: substitution in match(new_left, rrx.left, osys, stab) do
+		t1: term := substitution$apply(sigma, rrx.right, stab)
+		if new_right = flatten(t1, osys)
+		   then if ~uncond cand rrx.is_conditional then
+		           % Check that "rrx" has weaker conditions
+			   t1 := substitution$apply(sigma, rrx.conditions, stab)
+			   xc: term := flatten(t1, osys)
+			   xc := term2(op_implies(), rr.conditions, xc)
+			   xc := normal_form(xc, up(rsys), osys, stab, orphan)
+			      except when already_normal_form: continue
+				     when might_loop (t: term): xc := t
+				     end
+			   if ~is_term_true(xc) then continue end
+			   end
+		        signal none
+		   end
+		end except when no_match: end
+	    end
+	t: term := term2(op_equals(new_left.sort, stab), new_left, new_right)
+	if uncond
+	   then return(formula$create(t))
+	   else t := term2(op_implies(), rr.conditions, t)
+	        return(formula$e2cr(formula$create(t)))
+	   end
+	% ENHANCE: Other attributes? name? orientation?
+	end extension_ac
+
+
+    % Returns the annotated rewrite rule named "n" from "rsys".  Signals
+    % "missing" if there is no such rewrite rule.
+
+    fetch = proc (rsys: cvt, n: name) returns (rr_prop) signals (missing)
+	return(axioms$fetch(up(rsys), n))
+	   resignal missing
+	end fetch
+
+
+
+    % Returns "rsys.hardwired_usage".
+    
+    get_hardwired_usage = proc (rsys: cvt) returns (int)
+	return(rsys.hardwired_usage)
+	end get_hardwired_usage
+    
+
+    % Returns the list of new rewrite rules in "rsys".
+
+    get_new = proc (rsys: cvt) returns (rr_prop_list)
+	return(rsys.new)
+	end get_new
+
+
+    % Returns the list of normalize rewrite rules in "rsys".
+
+    get_normalized = proc (rsys: cvt) returns (rr_prop_list)
+	return(rsys.normalized)
+	end get_normalized
+
+
+    % Returns the set of operators in "rsys".
+
+    get_ops = proc (rsys: rewriting_system) returns (op_set)
+	return(axioms$get_ops(rsys))
+	end get_ops
+
+
+    % Returns the ordering that "rsys" assumes is being used to order equations
+    % into new rewrite rules.
+
+    get_ordering = proc (rsys: cvt) returns (ordering)
+	return(rsys.ord)
+	end get_ordering
+
+
+    % Returns "rsys.overlaps".
+    
+    get_overlaps = proc (rsys: cvt) returns (overlaps)
+	return(rsys.overlaps)
+	end get_overlaps
+    
+
+    % Returns the current "reduction_mode" for "rsys".
+    
+    get_reduction_mode = proc (rsys: cvt) returns (reduction_mode)
+	if rsys.outside_in
+	   then return(outside_in_mode)
+	   else return(inside_out_mode)
+	   end
+	end get_reduction_mode
+    
+
+    % Returns "rsys.rewriting_limit".
+    
+    get_rewriting_limit = proc (rsys: cvt) returns (int)
+	return(rsys.rewriting_limit)
+	end get_rewriting_limit
+    
+
+    % Returns true iff "rsys" is known to terminate.
+
+    get_terminates = proc (rsys: cvt) returns (bool)
+	return(rsys.terminates)
+	end get_terminates
+
+
+    % Returns the list of unused rewrite rules in "rsys".
+
+    get_unused = proc (rsys: cvt) returns (rr_prop_list)
+	return(rsys.unused)
+	end get_unused
+
+
+    % Returns the list of used rewrite rules in "rsys".
+
+    get_used = proc (rsys: cvt) returns (rr_prop_list)
+	return(rsys.used)
+	end get_used
+
+
+    % Returns "true" iff "rsys" contains no rewrite rules.
+
+    is_empty = proc (rsys: rewriting_system) returns (bool)
+	return(size(rsys) = 0)
+	end is_empty
+
+
+    % Yields the lists of the "new", "normalized", "unused", and "used" rewrite
+    % rules of "rsys", in that order.
+
+    lists = iter (rsys: cvt) yields (rr_prop_list)
+	yield(rsys.new)
+	yield(rsys.normalized)
+	yield(rsys.unused)
+	yield(rsys.used)
+	end lists
+
+
+    % Moves the current element from "rlist1" in "rsys" to the end of "rlist2".
+    % Signals "end_of_list" if there is no current element.
+    
+    % FIX: Check this carefully w.r.t. "rsys.table" and "rsys.overlaps".
+    % Called by system$%internormalize_rewriting_system
+    
+    move_to_bottom = proc (rsys: cvt, rlist1, rlist2: rr_prop_list) 
+		       signals (end_of_list)
+	rrp: rr_prop := rr_prop_list$current(rlist1)
+	   resignal end_of_list
+	rr_prop_list$point_to_end(rlist2)
+	rr_prop_list$move_current_to_current(rlist1, rlist2)
+	if (rlist1 = rsys.unused cor rlist1 = rsys.used)
+	     cand ~(rlist2 = rsys.unused cor rlist2 = rsys.used) then
+	   delete_work(rsys, rrp)
+	 elseif rrp.active cand (rlist2 = rsys.unused cor rlist2 = rsys.used)
+		  cand ~(rlist1 = rsys.unused cor rlist1 = rsys.used) then
+	   rrp_table$insert(rsys.table, rrp)
+	 end
+	end move_to_bottom
+    
+
+    % Moves the current element from "rlist1" in "rsys" to the end of "rlist2".
+    % Signals "end_of_list" if there is no current element.
+    
+    % FIX: Ditto.  Called by change_activity, system$%process_new_rewrite_rules
+    % and system$%internormalize_rewriting_system.
+    
+    move_to_top = proc (rsys: cvt, rlist1, rlist2: rr_prop_list) 
+		    signals (end_of_list)
+        rrp: rr_prop := rr_prop_list$current(rlist1)
+	rr_prop_list$move_current_to_end(rlist1, rlist2)
+	   resignal end_of_list
+	if (rlist1 = rsys.unused cor rlist1 = rsys.used)
+	     cand ~(rlist2 = rsys.unused cor rlist2 = rsys.used) then
+	   delete_work(rsys, rrp)
+	 elseif rrp.active cand (rlist2 = rsys.unused cor rlist2 = rsys.used)
+		  cand ~(rlist1 = rsys.unused cor rlist1 = rsys.used) then
+	   rrp_table$insert(rsys.table, rrp)
+	 end
+	end move_to_top
+    
+
+    % Returns a sequence containing all rewrite rules in "rsys" with names in
+    % "ns".
+    
+    named_subset = proc (rsys: cvt, ns: name_set) returns (rr_seq)
+        if ~ns.has_rrs then return(rr_seq$[]) end
+	return(axioms$named_subset(up(rsys), ns))
+	end named_subset
+
+
+    % Returns a subsystem of "rsys" containing the rewrite rules with names in
+    % "ns".
+    
+    % ENHANCE: Use something like "dummy_rsys" here.
+    
+    named_subsystem = proc (rsys: cvt, ns: name_set) returns (cvt)
+	rrt: rrp_table := rrp_table$[]
+	rules: rr_prop_list := rr_prop_list$[]
+	if ns.has_rrs then
+	   for rrp: rr_prop in elements(up(rsys)) do
+	       if ~name_set$contains_name(ns, rrp.prop.name) then continue end
+	       rrp1: rr_prop
+	       if rrp.active
+		  then rrp1 := rrp
+		  else rrp1 := rr_prop$copy(rrp)
+		       rrp1.active := true
+		  end
+	       rr_prop_list$addh(rules, rrp1)
+	       rrp_table$insert(rrt, rrp1)
+	       end
+	   end
+	return(rep${hardwired_usage: rsys.hardwired_usage,
+	            new: rr_prop_list$[],
+		    normalized: rr_prop_list$[],
+		    ord: ordering$l2r(), 
+		    outside_in: rsys.outside_in,
+		    overlaps: overlaps$[], 
+		    proof_invalidated: false, 
+		    rewriting_limit: rsys.rewriting_limit,
+		    table: rrt, 
+		    terminates: rsys.terminates,
+		    unused: rules,
+		    use_hardwired: true,
+		    used: rr_prop_list$[]})
+	end named_subsystem
+
+
+    % Sets the termination attribute of "rsys" to false.  Useful when a
+    % hand-ordered rule has been added to "rsys".
+
+    no_termination = proc (rsys: cvt)
+	rsys.terminates := false
+	rsys.proof_invalidated := false
+	end no_termination
+
+
+    % Computes and returns a normal form of "t" relative to "rsys".  If
+    % "ancestor_immunity" is "true", does not use any rewrite rule that is
+    % an ancestor of the equation/rule named "skip".  Signals
+    % "already_normal_form" if "t" cannot be reduced using "rsys".  Signals
+    % "might_loop(t1)" if "t" has been reduced to "t1", but normalization might
+    % result in an infinite rewriting loop; invokes the tracer if this happens.
+
+    normal_form = proc (t: term, rsys: cvt, osys: op_system, stab: symtab,
+                        skip: name) 
+	    	    returns (term)
+		    signals (already_normal_form, might_loop(term))
+	own checked_subterm: path := path$[]
+	own next_subterm: path := path$[]
+        statistics$start_rewrite()
+	tracer$start_normalizing(t)
+	path$trim(checked_subterm, 1, 0)
+	old_t: term := t
+	t := t.renamed
+	count: int := 0
+	while true do
+	    condition_nesting := 0
+	    condition_term := t
+	    path$trim(next_subterm, 1, 0)
+	    t := general_reduce(t, up(rsys), osys, next_subterm, 
+		                checked_subterm, stab, skip)
+	    count := count + 1
+	    statistics$success_rewrite()
+	    tracer$matched_term(t, next_subterm)
+	    if ~rsys.terminates cand count > rsys.rewriting_limit then
+	       t := t.unrenamed
+	       tracer$might_loop(old_t, t)
+	       tracer$stop_normalizing()
+	       signal might_loop(t)
+	       end
+	    statistics$start_rewrite()
+	    end
+	   except when already_normal_form: statistics$fail_rewrite() end
+	tracer$stop_normalizing()
+	if count = 0 then signal already_normal_form end
+	return(t.unrenamed)
+	end normal_form
+    
+
+    % Returns a rewriting system containing the single rewrite rule "rr" and
+    % the same "reduction_mode" as "rsys".
+    
+    % ASSUMES: No concurrent uses, no modification of returned system.
+    
+    one_rule = proc (rr: rewrite_rule, rsys: cvt) returns (cvt)
+	own rrp: rr_prop := 
+		rr_prop$create(formula$create(term_true()),
+			       ai_settings${active: true, immune: immunity_on})
+ 	own rsys1: rep := dummy_rsys(rrp)
+	rr_prop_list$first(rsys1.used).prop := rr
+	rrp.prop := rr
+	rsys1.table := rrp_table$[]
+	rrp_table$insert(rsys1.table, rrp)
+	rsys1.outside_in := rsys.outside_in
+	rsys1.rewriting_limit := rsys.rewriting_limit
+	return(rsys1)
+	end one_rule
+    
+    
+    % (Internal procedure) Allocates a dummy rewriting system for use by
+    % "one_rule".
+    
+    dummy_rsys = proc (rrp: rr_prop) returns (rep)
+	return(rep${hardwired_usage: 0,			% not applicable
+	            new: rr_prop_list$[],
+		    normalized: rr_prop_list$[],
+		    ord: ordering$l2r(), 
+		    outside_in: true, 			% changed by "one_rule"
+		    overlaps: overlaps$[], 
+		    proof_invalidated: false,
+		    rewriting_limit: 0, 		% changed by "one_rule"
+		    table: rrp_table$[], 		% changed by "one_rule"
+		    terminates: false,
+		    unused: rr_prop_list$[],
+		    use_hardwired: false,
+		    used: rr_prop_list$[rrp]}) 		% changed by "one_rule"
+	end dummy_rsys
+
+
+    % If "rrp" is in "rsys.table", removes it and returns "true".  Otherwise,
+    % returns "false".  This procedure should be invoked prior to using "rsys"
+    % to reduce "rrp.prop", lest "rrp.prop" reduce itself to an identity.
+    
+    put_aside = proc (rsys: cvt, rrp: rr_prop) returns (bool)
+	rrp_table$delete(rsys.table, rrp)
+	   except when missing: return(false) end
+	return(true)
+	end put_aside
+    
+    
+    % Inserts "rrp" in "rsys.table".  This procedure should be invoked in
+    % conjunction with "put_aside".
+
+    put_back = proc (rsys: cvt, rrp: rr_prop)
+	rrp_table$insert(rsys.table, rrp)
+	end put_back
+    
+
+    % Moves all rewrite rules in "rsys.unused" and "rsys.used" that have an
+    % operator in "ops" at the root of their lhs or rhs to "rsys.normalized".
+    
+    recheck_inconsistencies = proc (rsys: cvt, ops: op_set)
+	recheck_work(rsys.unused, rsys.normalized, ops)
+	recheck_work(rsys.used, rsys.normalized, ops)
+	end recheck_inconsistencies
+
+    recheck_work = proc (source, dest: rr_prop_list, ops: op_set)
+	for rrp: rr_prop in rr_prop_list$elements(source) do
+	    if op_set$exists(ops, rrp.prop.left.root)
+		 cor op_set$exists(ops, rrp.prop.right.root) then
+	       eq_prop_list$move_current_to_end(source, dest)
+	       end except when wrong_tag: end
+	    end
+	end recheck_work
+
+    
+    % Returns "true" if "rsys" is known to terminate using "ord" and "reg".
+    
+    recheck_termination = proc (rsys: cvt, osys: op_system, ord: ordering, 
+	                        reg: registry) returns (bool)
+	for rrp: rr_prop in elements(up(rsys)) do
+	    if ~ordering$warrants(ord, rrp.prop, osys, reg) then 
+		return(false)
+		end
+	    % FIX: implement ordering procedures to confirm ordering
+	    new_rr: rewrite_rule := 
+		ord.quiet(reg, equation$r2e(rrp.prop))
+	    if ~rewrite_rule$similar1(new_rr, rrp.prop) then return(false) end
+	    end except when cannot_orient: return(false) end
+	return(true)
+	end recheck_termination
+    
+
+    % Same as the "normal_form" operation, except that it yields the
+    % intermediate reduced forms of "t".
+
+    reductions = iter (t: term, rsys: cvt, osys: op_system, stab: symtab, 
+                       skip: name)
+	           yields (term) signals (might_loop)
+	own checked_subterm: path := path$[]
+	own next_subterm: path := path$[]
+        statistics$start_rewrite()
+	tracer$start_normalizing(t)
+	path$trim(checked_subterm, 1, 0)
+	t := t.renamed
+	count: int := 0
+	while true do
+	    condition_nesting := 0
+	    condition_term := t
+	    path$trim(next_subterm, 1, 0)
+	    t := general_reduce(t, up(rsys), osys, next_subterm, 
+				checked_subterm, stab, skip)
+	    count := count + 1
+	    statistics$success_rewrite()
+	    tracer$matched_term(t, next_subterm)
+	    yield(t.unrenamed)
+	    if ~rsys.terminates cand count > rsys.rewriting_limit then
+	       tracer$stop_normalizing()
+	       signal might_loop
+	       end
+	    statistics$start_rewrite()
+	    end
+	   except when already_normal_form: statistics$fail_rewrite() end
+	tracer$stop_normalizing()
+	end reductions
+
+
+    % Returns a reduction of "t" using "rsys".  Does not use any rewrite rule
+    % that is an ancestor of the equation/rule named "skip" if
+    % "ancestor_immunity" is "true".  Signals "already_normal_form" if "t"
+    % cannot be reduced using "rsys".
+
+    reduce = proc (t: term, rsys: cvt, osys: op_system, stab: symtab, 
+                   skip: name) 
+	       returns (term) signals (already_normal_form)
+        statistics$start_rewrite()
+	tracer$start_reducing(t)
+	p1: path := path$[]
+	p2: path := path$[]
+	condition_nesting := 0
+	condition_term := t.renamed
+	t := general_reduce(condition_term, up(rsys), osys, p1, p2, stab, skip)
+	   except when already_normal_form:
+	      	       tracer$stop_reducing()
+		       statistics$fail_rewrite()
+		       signal already_normal_form
+		  end
+	tracer$matched_term(t, p1)
+	statistics$success_rewrite()
+	return(t.unrenamed)
+	end reduce
+
+
+    % Returns a reduction of "t" using "rsys" applied to the top level of "t",
+    % i.e., to "t" itself, but not to any of its subterms.  Does not use any
+    % rewrite rule that is an ancestor of the equation/rule named "skip" if
+    % "ancestor_immunity" is "true".  Signals "not_reduced" if the top level of
+    % "t" cannot be reduced using "rsys".
+
+    reduce_whole_term = proc (t: term, rsys: cvt, osys: op_system, 
+			      stab: symtab, skip: name)
+			  returns (term) signals (not_reduced)
+        own p: path := path$[]
+	op: operator := t.root_or_quant
+	if operator$is_renamed_variable(op) then signal not_reduced end
+        statistics$start_rewrite()
+	tracer$start_reducing(t)
+	t := t.renamed
+	condition_nesting := 0
+	condition_term := t
+	reduced: bool := false
+	tracer$matching(p)
+        if rsys.use_hardwired cand ~t.hardwired_applied then 
+	   t := hardwired_reduction(rsys, t, stab, osys)
+	   reduced := true
+	   end except when not_reduced: end
+        if ~reduced then
+	   ot: op_theory := op_system$lookup_theory_quickly(osys, op)
+	   t := flatten(ot.reduce(t, up(rsys), osys, stab, skip), osys)
+	   % ENHANCE: shallower flattening
+	   reduced := true
+	   end except when not_reduced: end
+	if reduced
+	   then tracer$matched_term(t, p)
+		statistics$success_rewrite()
+		return(t.unrenamed)
+	   else tracer$stop_reducing()
+		statistics$fail_rewrite()
+		signal not_reduced
+	   end
+	end reduce_whole_term
+
+
+    % (Internal procedure) Returns a reduction of "t".  Assumes that "t" is
+    % variable-free.  Signals "already_normal_form" if "t" is irreducible.  The
+    % parameters "this_subterm" and "checked_subterm" are used during
+    % normalization for tracing and to avoid superfluous work, as follows.
+
+    % ASSUMES: "this_subterm" is the "path" to "t" from the term "t0" passed to
+    % the outermost invocation of "general_reduce"; i.e., "t" is argument
+    % "path$top(this_subterm)" in its parent term, which is ... argument
+    % "path$bottom(this_subterm)" in "t0"
+
+    % ASSUMES: Terms to the left of the path "checked_subterm" are irreducible;
+    % i.e., if "t" is "f(t1,...,tn)" and "path$addh(this_subterm, k)" is a
+    % subpath of "checked_subterm", then "t1", ..., "t[k-1]" are irreducible.
+    % Generally, "checked_subterm" is the path to the last subterm of "t0" that
+    % was reduced during a current normalization; the only exceptions occur
+    % when "t0" is reflattened after a reduction, in which case
+    % "checked_subterm" may be somewhat to the left of the path to the last
+    % reduce subterm (in order to ensure that the assumption is valid).
+
+    % MODIFIES: Nothing if reduction is unsuccessful.  Otherwise modifies
+    % "this_subterm" to be the path from "t0" to the subterm of "t" that was
+    % actually reduced and "checked_subterm" to be this path after
+    % reflattening.
+
+    % ENHANCE: Eliminate "checked_subterm".  Keep this information instead as a
+    % benevolent side-effect in the rep of a term.  Specifically, this cluster
+    % should maintain an "own" version number for the rewriting system.  This
+    % number gets incremented every time the rewriting system is changed or the
+    % reduction strategy is changed.  It must also be saved by "freeze" and
+    % restored by "thaw".  The rep for a term should contain the version number
+    % of the rewriting system last used in an attempt to reduce the term.  It
+    % should also contain a "oneof" that tells whether the term is known to be
+    % irreducible, whether it is known to reduce to "t1", or which of its
+    % subterms was last reduced.
+
+    % ENHANCE: Add an argument to tell how many reductions to apply.  Signal
+    % "normalized(t)" if the term normalizes to "t" in fewer than that many
+    % reductions.  Signal "already_normal_form" if the term is already
+    % normalized.  Simply return otherwise.  Invoke from "reduce" with this
+    % argument set to 1.  Invoke from "normalize" with it set to infinity or
+    % to "rsys.rewriting_limit".
+
+
+    general_reduce = proc (t: term, rsys: cvt, osys: op_system, 
+			   this_subterm, checked_subterm: path, 
+			   stab: symtab, skip: name)
+		       returns (term) signals (already_normal_form)
+        % ENHANCE: Check timestamp.
+	op: operator := t.root_or_quant
+	if operator$is_renamed_variable(op) then
+	   signal already_normal_form
+	   end
+        if rsys.use_hardwired cand ~t.hardwired_applied then 
+	   tracer$matching(this_subterm)
+	   t1: term := hardwired_reduction(rsys, t, stab, osys)
+	   make_same_array[int](checked_subterm, this_subterm)
+	   return(t1)
+	   end except when not_reduced: end
+	ot: op_theory := op_system$lookup_theory_quickly(osys, op)
+        if rsys.outside_in
+           then return(reduce_term(t, rsys, osys, this_subterm,
+                                   checked_subterm, stab, skip, ot))
+                   except when not_reduced: end
+                return(reduce_subterm(t, rsys, osys, this_subterm,
+                                      checked_subterm, stab, skip, ot))
+           else return(reduce_subterm(t, rsys, osys, this_subterm,
+                                      checked_subterm, stab, skip, ot))
+                   except when not_reduced: end
+                % ENHANCE: use the fact that the subterms are irreducible.
+                return(reduce_term(t, rsys, osys, this_subterm,
+                                   checked_subterm, stab, skip, ot))
+           end except when not_reduced: end
+        signal already_normal_form
+	end general_reduce
+    
+    
+    % (Internal procedure)  Returns a reduction of "t" using the hardwired
+    % rewrite rules.  Signals "not_reduced" if "t" is not reduced.  Assumes:
+    % "t" is not a variable.
+    
+    hardwired_reduction = proc (rsys: rep, t: term, stab: symtab, 
+	                        osys: op_system)
+			    returns (term) signals (not_reduced)
+	own hardwired_name: name := name$create("lp_hardwired")
+	tracer$trying_rr(hardwired_name)
+	t1: term
+	if term$is_funct(t)
+	   then % Check hardwired rules for logical operators
+	   	op: operator := t.root
+		if op = op_and() cor op = op_or()
+		     cor op = op_iff() cor op = op_bool_equals() then
+		   t1 := reduce_ac_bool_op(t, rsys.hardwired_usage)
+		 elseif is_op_equals(op) then t1 := reduce_equals(t)
+		 elseif op = op_not() then t1 := reduce_not(t, stab)
+		 elseif op = op_implies() then
+		   t1 := reduce_implies(t, rsys.hardwired_usage)
+		 elseif is_op_if(op) then
+		   t1 := reduce_if(t, osys, stab, rsys.hardwired_usage)
+		 elseif is_op_neq(op) then
+		   t1 := reduce_neq(t, stab)
+		 else exit not_reduced
+		 end 
+	   else % Check hardwired rules for quantifiers
+		% ENHANCE: cache renamed fvars?
+		if ~var_set$exists(t.subform.unrenamed.fvars, t.quant.var) then
+		   t1 := t.subform
+		 elseif t.quant.is_universal then t1 := reduce_forall(t, stab)
+		 else t1 := reduce_exists(t, stab)
+		 end
+	   end except when not_reduced: t.hardwired_applied := true
+	   			        signal not_reduced
+		      end
+	tracer$applied_rr(hardwired_name)
+	return(flatten(t1, osys))      % ENHANCE: shallower flattening
+	end hardwired_reduction
+
+
+    % (Internal procedure) Attempts to reduce all of "t" by dispatching on the
+    % top operator of "t".
+
+    reduce_term = proc (t: term, rsys: rep, osys: op_system,
+			this_subterm, checked_subterm: path,
+			stab: symtab, skip: name, ot: op_theory)
+		    returns (term) signals (not_reduced)
+        tracer$matching(this_subterm)
+        t1: term := ot.reduce(t, up(rsys), osys, stab, skip)
+           resignal not_reduced
+        make_same_array[int](checked_subterm, this_subterm)
+        return(flatten(t1, osys))      % ENHANCE: shallower flattening
+        end reduce_term
+
+
+    % (Internal procedure)  Attempts to reduce a subterm of "t".
+
+    reduce_subterm = proc (t: term, rsys: rep, osys: op_system,
+                           this_subterm, checked_subterm: path,
+                           stab: symtab, skip: name, ot: op_theory)
+                       returns (term) signals (not_reduced)
+        % ENHANCE: Compute "start" from timestamp in term
+        subterm_depth: int := path$size(this_subterm)
+        start: int := 1
+        if is_initial_subarray[int](this_subterm, checked_subterm, int$equal) 
+           then start := int$abs(checked_subterm[subterm_depth+1])
+           end except when bounds: end
+        args: term_seq := t.subterms  % NOTE: "t" could be quantified term
+	flipped: bool := t.flipped
+        for i: int in int$from_to(start, term_seq$size(args)) do
+            if flipped cand i <= 2
+	       then path$addh(this_subterm, -i)
+	       else path$addh(this_subterm, i)
+	       end
+            t1: term := general_reduce(args[i], up(rsys), osys, this_subterm,
+                                       checked_subterm, stab, skip)
+               except when already_normal_form:
+                           path$remh(this_subterm)
+                           continue
+                      end
+            t2: term 
+	    if term$is_funct(t) 
+	       then t2 := term$replace_arg(t, i, t1)
+	       else t2 := term$make_quant(t.quant, t1)
+	       end
+	    tagcase ot
+	       tag empty, free:
+		   % t2 is already flattened
+	       tag commutative:
+		   t2 := flatten_c(t2)
+		   if t2.flipped
+		      then checked_subterm[subterm_depth + 1] := -1
+		      else checked_subterm[subterm_depth + 1] := 1
+		      end
+	       tag ac:
+		   i1: int
+		   i1, t2 := flatten1_ac(t2, i)
+		   if t2.flipped cand i1 <= 2
+		      then checked_subterm[subterm_depth + 1] := -i1
+		      else checked_subterm[subterm_depth + 1] := i1
+		      end
+	       end except when already_flattened: end
+            return(t2)
+            end
+        signal not_reduced
+        end reduce_subterm
+
+    
+    % Assumes that "t" is a variable-free term whose top operator is free or
+    % has the empty theory.  Attempts to rewrite all of "t" using a rewrite
+    % rule in "rsys".  Does not use any rewrite rule that is an ancestor of the
+    % fact named "skip".  Signals "not_reduced" if "t" cannot be reduced in
+    % this way.
+
+    reduce_empty = proc (t: term, rsys: cvt, osys: op_system, 
+                         stab: symtab, skip: name) 
+		     returns (term) signals (not_reduced)
+        % CONSIDER: rrp_table$images(rsys.table, t.root_or_quant, t.ops)
+	test: int := i_not(t.footprint)
+	for rr: rewrite_rule in rrp_table$all_images(rsys.table, t.root) do
+            if name$is_ancestor(rr.name, skip) then continue end
+	    if rr.left.size > t.size then continue end
+	    if i_and(rr.left.footprint, test) ~= 0 then continue end
+	    tracer$trying_rr(rr.name)
+	    for sigma: substitution in match_empty(t, rr.left, osys, stab) do
+		if ~rr.is_conditional 
+		     cor conditions(rr, sigma, rsys, stab, osys) then
+		   tracer$applied_rr(rr.name)
+		   return(substitution$apply_renamed(sigma, rr.right, stab))
+		   end 
+		end except when no_match: end
+	    end
+	signal not_reduced
+	end reduce_empty
+
+
+    % Assumes that "t" is a quantified variable-free term.  Attempts to rewrite
+    % all of "t" using a rewrite rule in "rsys".  Does not use any rewrite rule
+    % that is an ancestor of the fact named "skip".  Signals "not_reduced" if
+    % "t" cannot be reduced in this way.
+
+    reduce_quant = proc (t: term, rsys: cvt, osys: op_system, 
+                         stab: symtab, skip: name) 
+		     returns (term) signals (not_reduced)
+        % CONSIDER: rrp_table$images(rsys.table, t.root_or_quant, t.ops)
+	test: int := i_not(t.footprint)
+	for rr: rewrite_rule in rrp_table$all_images(rsys.table, 
+						     t.root_or_quant) do
+            if name$is_ancestor(rr.name, skip) then continue end
+	    if rr.left.size > t.size then continue end
+	    if i_and(rr.left.footprint, test) ~= 0 then continue end
+	    tracer$trying_rr(rr.name)
+	    for sigma: substitution in match_quant(t, rr.left, osys, stab) do
+		if ~rr.is_conditional 
+		     cor conditions(rr, sigma, rsys, stab, osys) then
+		   tracer$applied_rr(rr.name)
+		   return(substitution$apply_renamed(sigma, rr.right, stab))
+		   end 
+		end except when no_match: end
+	    end
+	signal not_reduced
+	end reduce_quant
+
+
+    % Assumes that "t" is a variable-free term with a commutative top operator.
+    % Attempts to rewrite "t" using a rewrite rule in "rsys" applied to all of
+    % "t".  Does not use any rewrite rule that is an ancestor of fact named
+    % "skip".  Signals "not_reduced" if "t" cannot be reduced in this way.
+
+    reduce_c = proc (t: term, rsys: cvt, osys: op_system, stab: symtab,
+                     skip: name)
+		 returns (term) signals (not_reduced)
+        % CONSIDER: rrp_table$images
+	test: int := i_not(t.footprint)
+	for rr: rewrite_rule in rrp_table$all_images(rsys.table, t.root) do
+            if name$is_ancestor(rr.name, skip) then continue end
+	    if rr.left.size > t.size then continue end
+	    if i_and(rr.left.footprint, test) ~= 0 then continue end
+	    tracer$trying_rr(rr.name)
+	    for sigma: substitution in match_c(t, rr.left, osys, stab) do
+		if ~rr.is_conditional 
+		     cor conditions(rr, sigma, rsys, stab, osys) then
+		   tracer$applied_rr(rr.name)
+		   return(substitution$apply_renamed(sigma, rr.right, stab))
+		   end
+		end except when no_match: end
+	    end
+	signal not_reduced
+	end reduce_c
+
+
+    % Assumes that "t" is a flattened variable-free term with an AC top
+    % operator.  Attempts to rewrite "t" (or some occurrence set of "t") using
+    % a rewrite rule in "rsys".  Does not use any rewrite rule that is an
+    % ancestor of the fact named "skip".  Signals "not_reduced" if "t" cannot
+    % be reduced using "rsys".
+
+    reduce_ac = proc (t: term, rsys: cvt, osys: op_system, stab: symtab,
+                      skip: name) 
+		  returns (term) signals (not_reduced)
+
+	% CONSIDER: rrp_table$images
+	test: int := i_not(t.footprint)
+	for rr: rewrite_rule in rrp_table$all_images(rsys.table, t.root) do
+            if name$is_ancestor(rr.name, skip) then continue end
+	    if rr.left.size > t.size then continue end
+	    if i_and(rr.left.footprint, test) ~= 0 then continue end
+	    tracer$trying_rr(rr.name)
+	    rr_args: term_seq := rr.left.args
+
+	    % Match the nonvariable part.
+	    for sigma: substitution, t_left, l_left: term_seq
+		  in match_ac_to_vars(t.args, rr_args, t.root, osys, stab) do
+
+		% Now match the variables -- note that we use the "false"
+		% parameter, indicating that we don't require a match for all
+		% of "t_left", since a match to a partial set corresponds to a
+		% choice of an occurrence set.
+		for sigma2: substitution, t_left2: term_seq
+		      in match_ac_vars[false](t_left, l_left, t.root) do
+		    sigma1: substitution := sigma + sigma2
+		    if ~rr.is_conditional 
+			 cor conditions(rr, sigma1, rsys, stab, osys) then
+		       tracer$applied_rr(rr.name)
+		       t1: term := 
+		           substitution$apply_renamed(sigma1, rr.right, stab)
+		       if ~term_seq$empty(t_left2) then
+			  args: term_seq := term_seq$addh(t_left2, t1)
+			  t1 := term$make_funct(t.root, args)
+			  end
+		       return(flatten(t1, osys))
+		       end
+		    end except when no_match: continue end
+
+		end except when no_match: continue end
+
+	    end
+	signal not_reduced
+	end reduce_ac
+    
+
+    % (Internal procedure) Returns "true" if each condition in "rr", when
+    % instantiated by "sigma", normalizes to an identity.
+
+    conditions = proc (rr: rewrite_rule, sigma: substitution, rsys: rep, 
+	               stab: symtab, osys: op_system) returns (bool)
+	if condition_nesting > rsys.rewriting_limit then 
+	   tracer$conditions_might_loop(condition_term)
+	   return(false)
+	   end
+	tracer$checking_conditions(rr)
+        condition_nesting := condition_nesting + 1
+	ok: bool := true
+	for c: term in rewrite_rule$conditions(rr) do
+	    c := substitution$apply(sigma, c, stab)
+	    if c.has_quantifiers then c := c.renamed end
+	    if ~is_term_true(normalize_term(c, rsys, osys, stab)) then
+	       ok := false
+	       break
+	       end
+	    end 
+        condition_nesting := condition_nesting - 1
+	return(ok)
+        end conditions
+
+    
+    % (Internal procedure) Returns a normal form of "t".  This procedure is
+    % substantially the same as "rewriting_system$normal_form", but it avoids
+    % interfering with the "checked_subterm" optimization in that procedure.
+    % ENHANCE: by restructuring code to eliminate duplication.
+    
+    % ASSUMES: "t" contains no variables (because "sigma" has removed them)
+
+    normalize_term = proc (t: term, rsys: rep, osys: op_system, stab: symtab) 
+                       returns (term)
+	own skip: name := name$orphan()
+	tracer$start_normalizing(t)
+	next_subterm: path := path$[]
+	checked_subterm: path := path$[]
+	old_t: term := t
+	count: int := 0
+	while true do
+	    path$trim(next_subterm, 1, 0)
+	    t := general_reduce(t, up(rsys), osys, next_subterm,
+				checked_subterm, stab, skip)
+	    count := count + 1
+	    tracer$matched_term(t, next_subterm)
+	    if ~rsys.terminates cand count > rsys.rewriting_limit then
+	       tracer$might_loop(old_t, t)
+	       break
+	       end
+	    end except when already_normal_form: end
+	tracer$stop_normalizing()
+	return(t)
+	end normalize_term
+
+
+    % Sets "rsys.hardwired_usage" to "n".
+    
+    set_hardwired_usage = proc (rsys: cvt, n: int)
+	rsys.hardwired_usage := n
+	end set_hardwired_usage
+    
+
+    % Resets the ordering in "rsys" to be "ord".  If "rsys" terminates, but the
+    % new ordering does not provide a proof of termination, signals
+    % "termination_may_be_lost"; in this case, "rsys.terminates" will become
+    % false when the next rule is added.
+    % ENHANCE: Change ordering timestamps on rules.
+
+    set_ordering = proc (rsys: cvt, osys: op_system, ord: ordering,
+			 reg: registry)
+		     signals (termination_may_be_lost)
+	if rsys.ord = ord then return end
+	rsys.ord := ord
+	if ~rsys.terminates then return end
+	rsys.proof_invalidated := false
+	if recheck_termination(up(rsys), osys, ord, reg) then return end
+	rsys.proof_invalidated := true
+	signal termination_may_be_lost
+	end set_ordering
+
+
+    % Sets the current "reduction_mode" for "rsys" to "m".
+    
+    set_reduction_mode = proc (rsys: cvt, m: reduction_mode)
+	rsys.outside_in := m = outside_in_mode
+	end set_reduction_mode
+    
+
+    % Sets "rsys.rewriting_limit" to "n".
+    
+    set_rewriting_limit = proc (rsys: cvt, n: int)
+	rsys.rewriting_limit := n
+	end set_rewriting_limit
+    
+
+    % Returns the number of equations in "rsys".
+
+    size = proc (rsys: rewriting_system) returns (int)
+	return(axioms$size(rsys))
+	end size
+
+
+    % Returns the set of operators occurring in rewrite rules in "rsys" with
+    % names in "ns" (irrespective of the value of "ns.has_rrs").
+    
+    subsystem_ops = proc (rsys: cvt, ns: name_set) returns (op_set)
+	return(axioms$subsystem_ops(up(rsys), ns))
+	end subsystem_ops
+    
+    
+    % Returns the set of variables occurring in rewrite rules in "rsys" named
+    % by "ns" (irrespective of the value of "ns.has_rrs").
+    
+    subsystem_vars = proc (rsys: cvt, ns: name_set) returns (var_set)
+	return(axioms$subsystem_vars(up(rsys), ns))
+	end subsystem_vars
+    
+    
+    % Returns the subsystem of "rsys" containing only "rsys.unused".
+    
+    % ENHANCE: Use something like "dummy_rsys" here.
+    
+    unused_subsystem = proc (rsys: cvt) returns (cvt)
+	rrt: rrp_table := rrp_table$[]
+	for rrp: rr_prop in rr_prop_list$elements(rsys.unused) do
+	    rrp_table$insert(rrt, rrp)
+	    end
+	return(rep${hardwired_usage: rsys.hardwired_usage,
+	            new: rr_prop_list$[],
+		    normalized: rr_prop_list$[],
+		    ord: ordering$l2r(),
+		    outside_in: rsys.outside_in,
+		    overlaps: overlaps$[],
+		    proof_invalidated: false,
+		    rewriting_limit: rsys.rewriting_limit,
+		    table: rrt,
+		    terminates: rsys.terminates,
+		    unused: rsys.unused,
+		    use_hardwired: false,
+		    used: rr_prop_list$[]})
+	end unused_subsystem
+
+
+    % Writes commands to re-read all rewrite rules in "rsys" named by "ns".
+    
+    write = proc (p: printer, rsys: cvt, ns: name_set, stab: symtab,
+		  ai: ai_settings)
+	if ~ns.has_rrs then return end
+	esys: equation_system := equation_system$new()
+	for rrp: rr_prop in elements(up(rsys)) do
+	    equation_system$add(esys, rewrite_rule$r2e(rrp.prop), 
+		                ai_settings${active: rrp.active, 
+				             immune: rrp.immune},
+				true)
+	    end
+	axiom_system[equation, equation_system]$write
+	    (p, esys, "Rewrite rules", ns, stab, ai)
+	end write
+    
+    
+    % Returns a copy of "rsys".  Preserves the sharing of "rr_prop"s by the
+    % elements of "rsys", "rsys.overlaps", and "rsys.table".
+
+    copy = proc (rsys: cvt) returns (cvt)
+	rr_prop$save_copies(true)
+	rsys1: rep := rep${hardwired_usage: rsys.hardwired_usage,
+			   new: rr_prop_list$copy(rsys.new),
+			   normalized: rr_prop_list$copy(rsys.normalized),
+			   ord: rsys.ord,
+			   outside_in: rsys.outside_in,
+			   overlaps: rsys.overlaps,
+			   proof_invalidated: rsys.proof_invalidated,
+			   rewriting_limit: rsys.rewriting_limit,
+			   table: rsys.table,
+			   terminates: rsys.terminates,
+			   unused: rr_prop_list$copy(rsys.unused),
+			   use_hardwired: rsys.use_hardwired,
+			   used: rr_prop_list$copy(rsys.used)}
+	rr_prop$use_copies(true)
+	rsys1.overlaps := overlaps$copy(rsys.overlaps)
+	rsys1.table := rrp_table$copy(rsys.table)
+	rr_prop$save_copies(false)
+	rr_prop$use_copies(false)
+	for rrp: rr_prop in elements(up(rsys)) do
+	    rr_prop$remove_copy(rrp)
+	    end
+	return(rsys1)
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	rr_prop$begin_coding()
+	ans: rep := rep$decode(s)
+	  except when end_of_file: 
+		      rr_prop$end_coding()
+		      signal end_of_file
+		 when not_possible(w: string):
+		      rr_prop$end_coding()
+		      signal not_possible(w)
+		 end
+	rr_prop$end_coding()
+	return(ans)
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rr_prop$begin_coding()
+	rep$encode(c, s) except when not_possible(w: string):
+				     rr_prop$end_coding()
+				     signal not_possible(w)
+				end
+	rr_prop$end_coding()
+	end encode
+
+
+    end rewriting_system

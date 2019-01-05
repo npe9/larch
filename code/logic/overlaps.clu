@@ -1,0 +1,234 @@
+#extend
+
+% The "overlaps" cluster keeps track of potential overlaps between rewrite
+% rules that may yield critical pair equations.
+
+overlaps = cluster is
+	new, add, add_pairs, delete, delete_all, display, exists, keep, next,
+	reset, copy, _gcd, decode, encode
+    
+    % "keep": "true" if "pairs" is in use.
+    
+    rep = record[keep: bool, pairs: opair_list]
+    opair_list = list[overlap_pair]
+    overlap_pair = record[lsize, rsize: int, rrp1, rrp2: rr_prop]
+		 
+		 
+    % Returns an empty list of overlaps.
+    
+    new = proc () returns (cvt)
+	return(rep${keep: true, pairs: opair_list$[]})
+	end new
+    
+
+    % Adds the pair "<rrp1, rrp2>" to "ov.pairs".  Invoked when a critical pair
+    % computation is interrupted.
+
+    add = proc (ov: cvt, rrp1, rrp2: rr_prop)
+	if ~ov.keep then return end
+	opair_list$addh(ov.pairs, overlap_pair_create(rrp1, rrp2))
+	end add
+
+    
+    % Adds the pairs "<rrp, rrp1>" to "ov.pairs" for all "rrp1" in
+    % "rsys.unused + rsys.used".
+
+    add_pairs = proc (ov: cvt, rrp: rr_prop, rsys: rewriting_system)
+	if ~ov.keep then return end
+	for rrp1: rr_prop in rr_prop_list$elements(rsys.unused) do
+	    opair_list$addh(ov.pairs, overlap_pair_create(rrp, rrp1))
+	    end
+	for rrp1: rr_prop in rr_prop_list$elements(rsys.used) do
+	    opair_list$addh(ov.pairs, overlap_pair_create(rrp, rrp1))
+	    end
+	end add_pairs
+
+
+    % Deletes the pair "<rrp1, rrp2>" from "ov.pairs".
+
+    delete = proc (ov: cvt, rrp1, rrp2: rr_prop) signals (missing)
+	if ~ov.keep then return end
+	opair_list$delete_first(ov.pairs, overlap_pair_create(rrp1, rrp2),
+				overlap_pair_similar)
+	   resignal missing
+	end delete
+
+
+    % Deletes all pairs containing "rrp" from "ov.pairs".
+
+    delete_all = proc (ov: cvt, rrp: rr_prop) signals (missing)
+	if ~ov.keep then return end
+	opair_list$delete_all(ov.pairs, overlap_pair_create(rrp, rrp),
+			      overlap_pair_one_is_equal)
+	   resignal missing
+	end delete_all
+
+
+    % Returns true if the pair "<rrp1, rrp2>" is in "ov.pairs" or if "ov.keep"
+    % is true (in which case critical pairs must be computed between "rrp1" and
+    % "rrp2").
+
+    exists = proc (ov: cvt, rrp1, rrp2: rr_prop) returns (bool)
+	if ~ov.keep then return(true) end
+	return(opair_list$exists(ov.pairs, 
+				 overlap_pair_create(rrp1, rrp2),
+				 overlap_pair_similar))
+	end exists
+
+
+    % Sets the state of "ov" to keep or ignore pairs.  Creates the list of
+    % pairs if they are to be kept and the list is empty.
+
+    keep = proc (ov: cvt, k: bool, rsys: rewriting_system)
+	if k = ov.keep then
+	   return
+	 elseif k then
+	   if opair_list$empty(ov.pairs) then reset(up(ov), rsys) end
+	 else
+	      ov.pairs := opair_list$[]
+	 end
+	ov.keep := k
+	end keep
+
+
+    % Returns the smallest pair of rewrite rules in "ov.pairs" (in terms of
+    % combined size of left-hand-sides).  Signals "none" if there are none.
+    % Invoked by the critical pair computation to get a pair of rewrite rules.
+
+    next = proc (ov: cvt) returns (rr_prop, rr_prop) signals (none)
+	opair_list$sort(ov.pairs, overlap_pair_lt)
+	op: overlap_pair := opair_list$reml(ov.pairs)
+	   except when empty: signal none end
+	return(op.rrp1, op.rrp2)
+	end next
+
+
+    % Resets "ov" so that it will be just as if the "next_pair" operation had
+    % never been called on "ov".  I.e., the first call to "next_pair", after
+    % calling this operation, will return the smallest pair of rules in "ov".
+
+    reset = proc (ov: cvt, rsys: rewriting_system)
+	ov.keep := true
+	ov.pairs := opair_list$[]
+	for rrp1: rr_prop in rewriting_system$elements(rsys) do
+	    for rrp2: rr_prop in rewriting_system$elements(rsys) do
+		opair_list$addh(ov.pairs, overlap_pair_create(rrp1, rrp2))
+		end
+	    end
+	end reset
+
+
+    % Displays, on "pp", the pairs of rewrite rules with names in "ns" yet
+    % to be returned by the "next_pair" operator.
+
+    display = proc (ov: cvt, stab: symtab, ns: name_set, p: printer)
+	if ~ns.has_rrs then return end
+	if ~ov.keep then
+	   printer$text(p, "\nCritical pair equations will be computed ")
+	   printer$text(p, "between all pairs of rewrite rules.\n")
+	   return
+	   end
+        printer$start_block(p)
+	printed: bool := false
+	prev_rrp1: rr_prop
+	for ovp: overlap_pair in opair_list$elements(ov.pairs) do
+	    if ~name_set$contains_rr(ns, ovp.rrp1.prop) then continue end
+	    if ~name_set$contains_rr(ns, ovp.rrp2.prop) then continue end
+	    if printed cand ovp.rrp1 = prev_rrp1 
+	       then printer$text(p, ", ")
+	       else if printed then printer$text(p, ".\n") end
+		    printer$text(p, "\nCritical pair equations will be ")
+		    printer$text(p, "computed between rewrite rule ")
+		    name$print(p, ovp.rrp1.prop.name)
+		    printer$text(p, " and the following rewrite rules: ")
+		    prev_rrp1 := ovp.rrp1
+		    printed := true
+	       end
+	    name$print(p, ovp.rrp2.prop.name)
+	    end
+	if printed 
+	   then printer$text(p, ".\n")
+	   else printer$text(p, "\nNo further critical pair equations will ")
+		if opair_list$empty(ov.pairs)
+		   then printer$text(p, "be computed.")
+		   else printer$text(p, "be computed between the named ")
+			printer$text(p, "rewrite rules.\n")
+		   end
+	   end
+        printer$finish_block(p)
+	end display 
+
+
+
+
+    % Overlap pair routines.
+
+    % Creates an overlap pair for "rrp1" and "rrp2".  Uses the sum of the sizes
+    % of the left-hand-sides as the "size" metric.
+
+    overlap_pair_create = proc (rrp1: rr_prop, rrp2: rr_prop)
+			    returns (overlap_pair)
+	return(overlap_pair${lsize: rrp1.prop.left.size + rrp2.prop.left.size,
+			     rsize: rrp1.prop.right.size + rrp2.prop.right.size,
+			     rrp1: rrp1, rrp2: rrp2})
+	end overlap_pair_create
+
+
+    % Returns "true" iff the "size" of "opair1" is less than the "size" of
+    % "opair2".
+
+    overlap_pair_lt = proc (opair1, opair2: overlap_pair) returns (bool)
+	return(opair1.lsize < opair2.lsize cor 
+               (opair1.lsize = opair2.lsize cand opair1.rsize < opair2.rsize))
+	end overlap_pair_lt
+
+
+    % Returns "true" iff "opair1" and "opair2" represent the same pair of
+    % rewrite rules.
+
+    overlap_pair_similar = proc (opair1, opair2: overlap_pair) returns (bool)
+	rr11: rewrite_rule := opair1.rrp1.prop
+	rr12: rewrite_rule := opair1.rrp2.prop
+	rr21: rewrite_rule := opair2.rrp1.prop
+	rr22: rewrite_rule := opair2.rrp2.prop
+	return((rewrite_rule$same_object(rr11, rr21) cand
+		rewrite_rule$same_object(rr12, rr22)) cor
+	       (rewrite_rule$same_object(rr12, rr21) cand
+		rewrite_rule$same_object(rr11, rr22)))
+	end overlap_pair_similar
+
+
+    % Returns "true" iff the first rule of "opair1" is equal to one of the
+    % rewrite rules in "opair2".
+
+    overlap_pair_one_is_equal = proc (opair1, opair2: overlap_pair) 
+				  returns (bool)
+	return(opair1.rrp1 = opair2.rrp1 cor opair1.rrp1 = opair2.rrp2)
+	end overlap_pair_one_is_equal
+
+
+    % Returns a copy of "ov".
+
+    copy = proc (ov: cvt) returns (cvt)
+	return(rep$copy(ov))
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end overlaps

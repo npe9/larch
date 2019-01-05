@@ -1,0 +1,32 @@
+#extend
+
+% Processes the "statistics" command by printing information about time, space,
+% and fact utilization.
+
+% ENHANCE: Reimplement options.  Move engine from "tracer" to "statistics"
+% cluster.  Assign keys to names to make use_map more efficient.  Display usage
+% separately for rewrite rules, deduction rules.  Keep track of which equations
+% had deduction rules applied to them.
+
+c_statistics = proc (i: interactive) signals (error)
+    own keys: keyword_table := keyword_table$["time", "usage"]
+    names_exist: bool := true
+    kind: string, ns: name_set :=
+	query$one_name_set(i, "names of facts", keys, true)
+       except when none: return
+	      when no_names (kind1: string): names_exist := false
+					     kind := kind1
+					     ns := name_set$universal()
+	      when error: aborted(i.p, "error in names")
+	      end resignal error
+    if kind = "time" cor kind = "" then
+       if names_exist then
+	  aborted(i.p, "not expecting names")
+	  end resignal error
+       statistics$display(i.io)
+     elseif kind = "usage" then tracer$display_usage(i.io, ns)
+     end
+    end c_statistics
+
+
+

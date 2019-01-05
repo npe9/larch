@@ -1,0 +1,44 @@
+\doc{Hints on formalizing axioms and conjectures}
+\ref{hints-formalization}
+\ref{formalizing}
+
+Be careful not to confuse \llink{variable}{variables} and
+\llink{constant}{constants}.  If \fq{x} is a variable and \fq{c} is a
+constant, then \fq{e(x)} is a stronger assertion than \fq{e(c)}.  The first
+means \fq{\A x e(x)}.  In the absence of other assertions involving
+\fq{c}, the second only implies \fq{\E x e(x)}.  If you don't know whether an
+identifier is a variable or a constant, type
+\dflink{../commands/display}{display symbols} to find out.
+\p
+Be careful about the use of free variables in formulas.  The formula
+\fq#x = {} => subset(x, y)# correctly (albeit awkwardly) expresses the fact
+that the empty set is a subset of any set.  However, its converse, 
+\fq#subset(x, y) => x = {}#, does not express the fact that any set that is a
+subset of all sets must be the empty set.  That fact is expressed by the
+equivalent formulas \fq#\A x (\A y subset(x, y) => x = {})# and
+\fq#\A x \E y (subset(x, y) => x = {})#.
+\p
+An axiom or conjecture of the form \fq{when A yield B} has the same logical
+content as one of the form \fq{A => B}, but different operational content.
+Given the axiomization
+\begin{verbatim}
+declare variable x: Bool
+declare operators
+  a: -> Bool
+  f, g, h: Bool -> Bool
+  ..
+assert 
+  when f(x) yield g(x);
+  g(x) => h(x);
+  f(a)
+  ..
+\end{verbatim}
+LP will automatically derive the fact \fq{g(a)} from \fq{f(a)} by applying the
+\llink{deduction-rule}{deduction rule}, but it will not derive \fq{h(a)} from 
+\fq{g(a)} unless it is instructed to compute \clink{critical-pairs}.
+\p
+A multiple-hypothesis deduction rule of the form \fq{when A, B yield C} has the
+same logical content as a single-hypothesis rule of the form 
+\fq{when A /\ B yield C}.  They differ operationally in that, if the user
+asserts or proves two formulas that are matched by \fq{A} and \fq{B}, LP
+will apply the multiple-hypothesis rule but not the single-hypothesis rule.

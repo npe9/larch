@@ -1,0 +1,57 @@
+\doc{Sample proofs: how to guide a proof}
+Here are some things to try when LP and/or you get stuck trying to prove a
+conjecture.  
+
+\begin{itemize}
+\item
+Try a proof method based on the form of the conjecture.  For example, try
+\fq{resume by <=>} if the conjecture is a logical equivalence.  Sometimes such
+proof methods are useful ``no-brainers''.
+\p
+\item
+Think about why you believe the conjecture.  
+\p
+\item
+If you've forgotten where you are in a proof, type
+\begin{verbatim}
+\clink{display} proof    to see the current subgoal
+display *Hyp     to see the current hypotheses
+display          to see all facts
+\clink{history}          to see how you got where you are
+\end{verbatim}
+\p
+\item
+Be skeptical: maybe the conjecture isn't a theorem.
+\p
+\item
+Try a proof by cases, either to simplify the current subgoal or to make some
+hypothesis more useful.
+\p
+\item
+Look for a useful lemma to prove.
+\p
+\item
+Try using the \clink{critical-pairs} command to derive consequences from the
+hypotheses, for example, by typing \fq{critical-pairs *Hyp with *}.
+\p
+\item
+Try alternative proof strategies.
+\begin{itemize}
+\item
+The \clink{cancel} command lets you back up.
+\item
+The \clink{freeze} and thaw commands let you save LP's state in a file and get
+it back again.
+\end{itemize}
+\p
+\item
+Think again about why you still believe the conjecture.
+\p
+\item
+Try explaining why LP must be broken to a colleague.  (The colleague does not
+need to understand anything about LP.  He or she simply needs to appear to be
+listening attentively.)
+\p
+\item
+If you still believe that LP is broken, send e-mail to \fq{larch@lcs.mit.edu}.
+\end{itemize}

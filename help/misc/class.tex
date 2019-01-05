@@ -1,0 +1,60 @@
+\doc{Name classes}
+\ref{class}
+\ref{class-name}
+\ref{class-constant}
+\ref{class-function}
+
+A \def{class} is an expression that, when evaluated, produces a list of
+\slink{name}{name}s of facts.
+
+\head{2}{\dlink{../symbols/syntax}{Syntax}}
+\begin{verbatim}
+\sd{class}          ::= \s{class-name} | \s{class-constant}
+                        | \s{class-function} \qf{(} \slink{names}{names} \qf{)}
+                        | \f{contains-operator} \qf{(} \slink{../logic/operator}{operator} \qf{)}
+                        | \f{contains-variable} \qf{(} \slink{../logic/variable}{variable} \qf{)}
+                        | \f{copy} \qf{(} \s{class-name} \qf{)}
+\sd{class-name}     ::= \f{$} \slink{../symbols/symbols}{simpleId}
+\sd{class-constant} ::= \f{deduction-rules} | \f{formulas} | \f{induction-rules}   
+                       | \f{operator-theories} | \f{rewrite-rules} | \f{active} | \f{passive} 
+                       | \f{immune} | \f{nonimmune} | \f{ancestor-immune}
+\sd{class-function} ::= \f{ancestors} | \f{proper-ancestors} | \f{descendants}
+                       | \f{proper-descendants} | \f{eval}
+\end{verbatim}
+
+
+\head{2}{Examples}
+\begin{verbatim}
+$facts
+contains-operator(+)
+eval(* ~ $old)
+\end{verbatim}
+
+\head{2}{Usage}
+The \cflink{define-class} command defines a \s{class-name} as an abbreviation
+for some \slink{../misc/names}{names}.  Each \s{class}, other than ones
+beginning with \fq{copy} or \fq{eval}, also serves as an abbreviation for the
+names of facts matching a certain criterion.  For example,
+\f{contains-operator(+)} describes the collection of all facts containing the
+operator \f{+}.
+\p
+A \s{class-name} (or \s{class}) appearing in an argument to a command other
+than \clink{define-class} is replaced by its definition (or evaluated) when the
+command is executed.  Evaluation in the \cflink{define-class} command can be
+forced using one of the following operators:
+\begin{description}
+\dt \f{copy($class)}
+\dd 
+Replaces the \s{class-name} \f{$class} by its current definition
+\p
+\dt \f{eval(exp)}              
+\dd 
+Replaces the \s{names} \fq{exp} by an explicit list of the names of all facts
+in LP's logical system that match \fq{exp}
+\end{description}
+
+\head{2}{See also}
+\begin{itemize}
+\item Assigning a \slink{../misc/name}{name} to a fact
+\item Using \slink{../misc/names}{names} in commands
+\end{itemize}

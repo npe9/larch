@@ -1,0 +1,277 @@
+#extend
+
+
+% A "comparison" is the result of comparing two values.  The result can be
+% "less than", "greater than", "equal to", or "undefined".
+
+comparison = cluster is
+	make_lt, make_gt, make_eq, make_undefined, is_lt, is_gt, is_eq,
+	is_undefined, reverse, equal, similar, copy, _gcd
+
+    rep = oneof[lt, gt, eq, undefined: null]
+
+
+    % Returns a "less than" comparison.
+
+    make_lt = proc () returns (cvt)
+	return(rep$make_lt(nil))
+	end make_lt
+
+
+    % Returns a "greater than" comparison.
+
+    make_gt = proc () returns (cvt)
+	return(rep$make_gt(nil))
+	end make_gt
+
+
+    % Returns an "equal to" comparison.
+
+    make_eq = proc () returns (cvt)
+	return(rep$make_eq(nil))
+	end make_eq
+
+
+    % Returns an "undefined" comparison.
+
+    make_undefined = proc () returns (cvt)
+	return(rep$make_undefined(nil))
+	end make_undefined
+
+
+    % Returns "true" iff "c" is a "less than" comparison.
+
+    is_lt = proc (c: cvt) returns (bool)
+	return(rep$is_lt(c))
+	end is_lt
+
+
+    % Returns "true" iff "c" is a "greater than" comparison.
+
+    is_gt = proc (c: cvt) returns (bool)
+	return(rep$is_gt(c))
+	end is_gt
+
+
+    % Returns "true" iff "c" is an "equal to" comparison.
+
+    is_eq = proc (c: cvt) returns (bool)
+	return(rep$is_eq(c))
+	end is_eq
+
+
+    % Returns "true" iff "c" is an "undefined" comparison.
+
+    is_undefined = proc (c: cvt) returns (bool)
+	return(rep$is_undefined(c))
+	end is_undefined
+
+
+    % Returns the reverse of the comparison "c"; i.e., if "c" is a "less than"
+    % comparison, returns a "greater than"; if "c" is a "greater than"
+    % comparison, returns "less than"; otherwise, returns "c".
+
+    reverse = proc (c: cvt) returns (cvt)
+	tagcase c
+	   tag lt: return(rep$make_gt(nil))
+	   tag gt: return(rep$make_lt(nil))
+	   tag eq, undefined: return(c)
+	   end
+	end reverse
+
+
+    % Returns "true" iff "c1" and "c2" have the same value.
+
+    equal = proc (c1, c2: cvt) returns (bool)
+	return(c1 = c2)
+	end equal
+
+
+    % Returns "true" iff "c1" and "c2" have the same value.
+
+    similar = proc (c1, c2: cvt) returns (bool)
+	return(c1 = c2)
+	end similar
+
+
+    % Returns "c".
+
+    copy = proc (c: cvt) returns (cvt)
+	return(c)
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    end comparison
+
+
+% An "xcomparison" is the result of comparing two values, with the addition
+% that partial results are captured.  In addition to the results allowed by
+% "comparison", the partial results "gt_eq" and "lt_eq" are provided.
+
+xcomparison = cluster is
+	make_lt, make_lt_eq, make_gt, make_gt_eq, make_eq, make_undefined,
+	is_lt, is_lt_eq, is_gt, is_gt_eq, is_eq, is_undefined,
+	comp2xcomp, xcomp2comp, reverse, equal, similar, copy, _gcd
+
+    rep = oneof[lt, lt_eq, gt, gt_eq, eq, undefined: null]
+
+
+    % Returns a "less than" comparison.
+
+    make_lt = proc () returns (cvt)
+	return(rep$make_lt(nil))
+	end make_lt
+
+
+    % Returns a "less than or equal to" comparison.
+
+    make_lt_eq = proc () returns (cvt)
+	return(rep$make_lt_eq(nil))
+	end make_lt_eq
+
+
+    % Returns a "greater than" comparison.
+
+    make_gt = proc () returns (cvt)
+	return(rep$make_gt(nil))
+	end make_gt
+
+
+    % Returns a "greater than or equal to" comparison.
+
+    make_gt_eq = proc () returns (cvt)
+	return(rep$make_gt_eq(nil))
+	end make_gt_eq
+
+
+    % Returns an "equal to" comparison.
+
+    make_eq = proc () returns (cvt)
+	return(rep$make_eq(nil))
+	end make_eq
+
+
+    % Returns an "undefined" comparison.
+
+    make_undefined = proc () returns (cvt)
+	return(rep$make_undefined(nil))
+	end make_undefined
+
+
+    % Returns "true" iff "c" is a "less than" comparison.
+
+    is_lt = proc (c: cvt) returns (bool)
+	return(rep$is_lt(c))
+	end is_lt
+
+
+    % Returns "true" iff "c" is a "less than or equal to" comparison.
+
+    is_lt_eq = proc (c: cvt) returns (bool)
+	return(rep$is_lt_eq(c))
+	end is_lt_eq
+
+
+    % Returns "true" iff "c" is a "greater than" comparison.
+
+    is_gt = proc (c: cvt) returns (bool)
+	return(rep$is_gt(c))
+	end is_gt
+
+
+    % Returns "true" iff "c" is a "greater than or equal to" comparison.
+
+    is_gt_eq = proc (c: cvt) returns (bool)
+	return(rep$is_gt_eq(c))
+	end is_gt_eq
+
+
+    % Returns "true" iff "c" is an "equal to" comparison.
+
+    is_eq = proc (c: cvt) returns (bool)
+	return(rep$is_eq(c))
+	end is_eq
+
+
+    % Returns "true" iff "c" is an "undefined" comparison.
+
+    is_undefined = proc (c: cvt) returns (bool)
+	return(rep$is_undefined(c))
+	end is_undefined
+
+
+    % Returns the "xcomparison" value corresponding to the value of "c".
+
+    comp2xcomp = proc (c: comparison) returns (cvt)
+	tagcase c
+	   tag gt: return(rep$make_gt(nil))
+	   tag lt: return(rep$make_lt(nil))
+	   tag eq: return(rep$make_eq(nil))
+	   tag undefined: return(rep$make_undefined(nil))
+	   end
+	end comp2xcomp
+
+
+    % Returns the "comparison" value corresponding to the value of "xc".
+    % "Gt_eq" or "lt_eq" xcomparisons are turned into "eq" comparisons.
+
+    xcomp2comp = proc (xc: cvt) returns (comparison)
+	tagcase xc
+	   tag gt: return(comparison$make_gt())
+	   tag lt: return(comparison$make_lt())
+	   tag gt_eq, lt_eq, eq: return(comparison$make_eq())
+	   tag undefined: return(comparison$make_undefined())
+	   end
+	end xcomp2comp
+
+
+    % Returns the "reverse" of the xcomparison:  gt/lt and gt_eq/lt_eq are
+    % exchanged, while eq and undefined are unchanged.
+
+    reverse = proc (c: cvt) returns (cvt)
+	tagcase c
+	   tag gt: return(rep$make_lt(nil))
+	   tag lt: return(rep$make_gt(nil))
+	   tag gt_eq: return(rep$make_lt_eq(nil))
+	   tag lt_eq: return(rep$make_gt_eq(nil))
+	   others: return(c)
+	   end
+	end reverse
+
+
+    % Returns "true" iff "c1" and "c2" have the same value.
+
+    equal = proc (c1, c2: cvt) returns (bool)
+	return(c1 = c2)
+	end equal
+
+
+    % Returns "true" iff "c1" and "c2" have the same value.
+
+    similar = proc (c1, c2: cvt) returns (bool)
+	return(c1 = c2)
+	end similar
+
+
+    % Returns "c".
+
+    copy = proc (c: cvt) returns (cvt)
+	return(c)
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    end xcomparison

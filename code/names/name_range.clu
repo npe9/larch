@@ -1,0 +1,180 @@
+#extend
+
+% A "name-range" is either a "name-pattern" or a range of sibling names.  It 
+% may or may not be closed, i.e., contain all offspring of its members.  
+% Syntax:
+%   name-range  ::= pattern [ "." ]
+% 		    | pattern ("." number)+ [ ":" (number | "last") ] [ "!" ]
+%   pattern     ::= (letter | digit | "_" | "'" | "*")+
+%   number      ::= digit+			% must be nonzero
+
+
+name_range = cluster is create, contains_name, get_closed, 
+    		        get_start, get_stop, parse, print, read, unparse, 
+			copy, _gcd, decode, encode
+
+
+    rep = struct[start, stop: name, closed, unbounded: bool]
+    
+    % Rep invariant:
+    % Either "start" = "stop" or there is a name "n" and numbers "n1" < "n2"
+    % such that "start" is "n.n1" and "stop" is "n.n2".
+
+
+    % Returns the name range represented by "a".  Signals "error" if "a" does
+    % not represent a legal name range.  The "#extend" mode of the CLU compiler
+    % provides sugared invocations of the form
+    %     name_range${n1: name, n2: name, closed: bool, unbounded: bool}
+
+    create = proc (a: args) returns (cvt) signals (error)
+	args = struct[n1, n2: name, closed, unbounded: bool]
+	if a.n1 ~= a.n2 cand (a.n1.parent ~= a.n2.parent 
+				cor a.n1.last_ext > a.n2.last_ext) then
+	   signal error 
+	   end except when none: signal error end
+	return(rep${start: a.n1, stop: a.n2, closed: a.closed, 
+		    unbounded: a.unbounded})
+	end create
+    
+    
+    % Returns "true" if "n" is a member of "nr".
+    
+    contains_name = proc (nr: cvt, n: name) returns (bool)
+	if n.depth < nr.start.depth then return(false) end
+	if nr.closed then n := name$prefix(n, nr.start.depth)
+	 elseif n.depth ~= nr.start.depth then return(false)
+	 end
+	if ~name$similar(nr.start.parent, n.parent) then return(false) end
+	   except when none: return(name$similar(nr.start, n)) end
+	ext: int := n.last_ext
+	return(nr.start.last_ext <= ext cand
+	       (nr.unbounded cor ext <= nr.stop.last_ext))
+	end contains_name
+
+    
+    % Returns "nr.closed".
+    
+    get_closed = proc (nr: cvt) returns (bool)
+	return(nr.closed)
+	end get_closed
+    
+    
+    % Returns "nr.start".
+    
+    get_start = proc (nr: cvt) returns (name)
+	return(nr.start)
+	end get_start
+    
+    
+    % Returns "nr.stop" unless "nr" is unbounded.  Signals "unbounded" in that
+    % case.
+    
+    get_stop = proc (nr: cvt) returns (name) signals (unbounded)
+	if nr.unbounded then signal unbounded end
+	return(nr.stop)
+	end get_stop
+
+
+    % Returns the name range represented by "s".  Writes a error message to "p"
+    % and signals "error" if "s" does not represent a legal name range.
+
+    parse = proc (s: string, error: printer) returns (name_range)
+	      signals (error)
+	return(parse_item[name_range]("name-range", s, error))
+	   resignal error
+	end parse
+
+
+    % Prettyprints "nr".
+    
+    print = proc (p: printer, nr: name_range)
+	printer$start_block(p)
+	name$print(p, nr.start)
+	if down(nr).unbounded then 
+	   printer$text(p, "~2I~F:last")
+	 elseif nr.start ~= nr.stop then
+	   printer$text(p, "~2I~F:" || int$unparse(nr.stop.last_ext))
+	 end
+	if ~nr.closed then printer$puts(p, "!") end
+	printer$finish_block(p)
+	end print
+    
+    
+    % Reads and returns a name range from the head of "scan".  Writes a message
+    % to "scan", and signals "error", if the head of "scan" does not contain a
+    % legal name range.
+
+    read = proc (scan: scanner) returns (cvt) signals (error)
+	start: name := name$read(scan)
+	   resignal error
+	stop: name := start
+	unbounded: bool := false
+	closed: bool := true
+	if token$is_colon(scan.nextToken) then
+	   if name$is_root(start) then exit bad("number before `:'") end
+	   scanner$get(scan)
+	   begin % Find end of range
+	       if ~token$is_simpleId(scan.nextToken) then exit error end
+	       limit: string := scan.nextToken.text
+	       if slower(limit) = "last"
+		  then unbounded := true
+		  else n: int := int$parse(limit)
+		       m: int := start.last_ext
+		       if n < m then
+			  exit bad("number >= " || int$unparse(m))
+			  end
+		       stop := name$extend(start.parent, n)
+		  end
+	       end except when error, overflow: exit bad("number or `last'")
+			  end
+	   scanner$get(scan)
+	   end except when bad (what: string): 
+			   scanner$error(scan, "expecting" || what)
+			   signal error
+		      end
+	if scan.nextToken.text = "!" then
+	   % ENHANCE: Liberalize this?
+	   if name$is_root(start) then
+	      scanner$error(scan, "expecting number before `!'")
+	      signal error
+	      end
+	   scanner$get(scan)
+	   closed := false
+	   end
+        return(rep${start: start, stop: stop, closed: closed, 
+	    	    unbounded: unbounded})
+	end read
+
+
+    % Returns a string representation of the name range "nr".
+
+    unparse = proc (nr: name_range) returns (string)
+	return(unparse_item[name_range](nr))
+	end unparse
+    
+    
+    % Returns "nr", which is immutable.
+
+    copy = proc (nr: cvt) returns (cvt)
+	return(nr)
+	end copy
+
+
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+	return(rep$_gcd(x, tab))
+	end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+    		signals (end_of_file, not_possible(string))
+	return(rep$decode(s)) resignal end_of_file, not_possible
+	end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+	rep$encode(c, s) resignal not_possible
+	end encode
+
+
+    end name_range

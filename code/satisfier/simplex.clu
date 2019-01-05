@@ -1,0 +1,306 @@
+simplex = cluster is get_max_sign_in_row, get_min_sign_in_row, get_max_sign,
+		     get_min_sign
+	  
+    %This cluster is just a bunch of optimization procedures, based on Simplex
+    %Method. NOTE: Read the "tableau" cluster first for terminology
+    %Here are several facts, we'll be using:
+    %Let O be linear objective function, P be the set, such that
+    %the closure of P (CL(P)) is a convex polygon, then
+    %  1) O achieves extremum on CL(P) at one of its extreme points (vertexes)
+    %  2) if Max (Min) of O on CL(P) is ~= 0 then the sign of Max (Min) 
+    %     of O on P has the same sign as that on CL(P)
+    %Now consider feasible tableau T, and row variable v, that is manifestly
+    %maximized (minimized) at 0. Then,
+    %  3) max (min) of row_objective(v, T) on S(T) is negative (positive)
+    %     iff T has positively restricted column vars, that have ~=0 
+    %     coefficients in row, owned by v
+ 
+    %Requires: T.pre is feasible, row_num is legal row number	  
+    %Modifies: T
+    %Effects: row_constraints(T.pre) <=> row_constraints(T.post)
+    %         Maximizes row_objective(T.pre, row_num).
+    %   Returns negative if max is < 0, positive if max > 0, eq_zero if max = 0
+    %owner(T.pre, row_num) = owner(T.post, row_num)
+    %If Sample(T.pre, row_num) < 0 then there exist k, such that 
+    %pivot(row_num, k) will give the feasible tableu
+    %NOTE: if positive is returned it's not nesessary the case, that
+    %      sample value of owner(row_num) is > 0. So, it may be unfeasible
+    %      to restrict the variable
+    
+    rep      = null
+    negative = sign$make_negative(nil)
+    positive = sign$make_positive(nil)
+    eq_zero  = sign$make_zero(nil)
+    
+    own zero: rat := rat$zero()
+    
+    get_max_sign_in_row = proc (T: tableau, row_num: int) returns (sign)
+        max_sign: sign := max_sign_closed_in_row(T, row_num)
+	if max_sign ~= eq_zero then return(max_sign) end %(fact (2))
+	%now, owner of row_num is manifestly maximized at 0, 
+	%so we can use fact(3):
+	if tableau$possible_non_zero(T, row_num) then return(negative) end
+	return(eq_zero)
+	end get_max_sign_in_row
+	  
+    %Requires: T.pre is feasible, row_num is legal row number	  
+    %Modifies: T
+    %Effects: row_constraints(T.pre) <=> row_constraints(T.post)
+    %         Minimizes row_objective(T.pre, row_num).
+    %   Returns negative if min is < 0, positive if min > 0, eq_zero if min = 0
+    %owner(T.pre, row_num) = owner(T.post, row_num)
+    %If Sample(T.pre, row_num) > 0 then there exist k, such that 
+    %pivot(row_num, k) will give the feasible tableau
+    %NOTE: if positive is retirned it'n not nesessary the case, that
+    %      sample value of owner(row_num) is > 0. So, it may be unfeasible
+    %      to restrict the variable
+ 
+    get_min_sign_in_row = proc (T: tableau, row_num: int) returns (sign)
+	min_sign: sign := min_sign_closed_in_row(T, row_num)
+	if min_sign ~= eq_zero then return(min_sign) end % fact(2)
+	%now, owner of row_num is manifestly minimized at 0, 
+	%so we can use fact(3):
+	if tableau$possible_non_zero(T, row_num) then return(positive) end
+	return(eq_zero)
+	end get_min_sign_in_row
+
+    %Requires: T.pre is feasible, row_num is legal row number	  
+    %Modifies: T
+    %Effects: row_constraints(T.pre) <=> row_constraints(T.post)
+    %         Maximizes row_objective(T.pre, row_num).
+    %   Returns negative if max is < 0, positive if max > 0, eq_zero if max = 0
+    %   if positive is returned then Sample(T.post, owner(T.pre, row_num)) >= 0.
+    %NOTE: owner(T.pre, row_num) = owner(T.post, row_num) is NOT guaranteed
+ 
+    get_max_sign = proc (T: tableau, row_num: int) returns (sign)
+		     signals (overflow)
+	max_sign: sign := max_sign_closed(T, row_num) resignal overflow
+	if max_sign ~= eq_zero then return(max_sign) end %fact (2)
+	%now, owner of row_num is manifestly maximized at 0, 
+	%so we can use fact(3):
+	if tableau$possible_non_zero(T, row_num) then return(negative) end
+	return(eq_zero)
+	end get_max_sign
+ 
+    %Requires: T.pre is feasible, row_num is legal row number	  
+    %Modifies: T
+    %Effects: row_constraints(T.pre) <=> row_constraints(T.post)
+    %         Maximizes row_objective(T.pre, row_num).
+    %   Returns negative if min is < 0, positive if min > 0, eq_zero if min = 0
+    %   Sample(T.post, row_num) >= 0.
+    %   If owns(u, T.post, row_num) then
+    %    if eq_zero is returned then Sample(T.post, row_num) = 0.
+    %    if negative is returned then Sample(T.post, row_num) < 0
+    %NOTE: owner(T.pre, row_num) = owner(T.post, row_num) is NOT guaranteed
+ 
+    get_min_sign = proc (T: tableau, row_num: int) returns (sign)
+		     signals(overflow)
+	min_sign: sign := min_sign_closed(T, row_num) resignal overflow
+	if min_sign ~= eq_zero then return(min_sign) end %fact (2)
+	%now, owner of row_num is manifestly minimized at 0, 
+	%so we can use fact(3):
+	if tableau$possible_non_zero(T, row_num) then return(positive) end
+	return(eq_zero)
+	end get_min_sign
+    
+    %internal
+    %REquires: T.pre is feasible, row_num is legal row number.
+    %Modifies T.
+    %Effects: constraints(T.post) <=> constraints(T.pre)
+    %         owner(T.pre, row_num) = owner(T.post, row_num)
+    %Returns: sign of maximum of objective(T, row_num) on CL(S(T)).
+    %If eq_zero is returned, than T is feasible, and owner(T.pre, row_num)
+    %is manifestly maximized.
+    %The only row that can violate feasibility is row row_num.
+
+    max_sign_closed_in_row = proc (T: tableau, row_num: int) returns (sign)
+			       signals (overflow)
+	m: rat := maximize_in_row(T, row_num) 
+	   except when unbounded: return(positive) end
+	   resignal overflow
+        if m > zero then return(positive) end
+	if m < zero then return(negative) end
+	if m = zero then return(eq_zero) end
+	end max_sign_closed_in_row
+	                              
+    %internal
+    %REquires: T.pre is feasible, row_num is legal row number.
+    %Modifies T.
+    %Effects: constraints(T.post) <=> constraints(T.pre)
+    %         owner(T.pre, row_num) = owner(T.post, row_num)
+    %Returns: sign of minimum of objective(T, row_num) on S(T).
+    %If eq_zero is returned, than T is feasible, and owner(T.pre, row_num)
+    %is manifestly minimized.
+    %The only row that can violate feasibility is row row_num.
+
+    min_sign_closed_in_row = proc (T: tableau, row_num: int) returns(sign)
+			       signals (overflow)
+	m: rat := minimize_in_row(T, row_num) 
+	   except when unbounded: return(negative) end
+	   resignal overflow
+        if m > zero then return(positive) end
+	if m < zero then return(negative) end
+	if m = zero then return(eq_zero) end
+	end min_sign_closed_in_row
+    
+    %internal
+    %REquires: T.pre is feasible, row_num is legal row number.
+    %Modifies T.
+    %Effects: constraints(T.post) <=> constraints(T.pre)
+    %         Feasible(T.post)
+    %Returns: sign of maximum of objective(T, row_num) on S(T).
+    %If eq_zero is returned, then
+    %    owner(T.pre, row_num) = owner(T.post, row_num) ;
+    %	owner(T.pre, row_num) is manifestly maximized at 0.
+    %Note: owner(T.pre, row_num) = owner(T.post, row_num) is NOT guaranteed
+
+    max_sign_closed = proc (T: tableau, row_num: int) returns(sign)
+			signals (overflow)
+	m: rat := maximize(T, row_num) 
+	   except when unbounded: return(positive) end
+	   resignal overflow
+        if m > zero then return(positive) end
+	if m < zero then return(negative) end
+	if m = zero then return(eq_zero) end
+	end max_sign_closed
+    
+    %internal
+    %REquires: T.pre is feasible, row_num is legal row number.
+    %Modifies T.
+    %Effects: constraints(T.post) <=> constraints(T.pre)
+    %         Feasible(T.post)
+    %Returns: sign of minimum of objective(T, row_num) on S(T).
+    %If eq_zero is returned, then
+    %    owner(T.pre, row_num) = owner(T.post, row_num) ;
+    %	owner(T.pre, row_num) is manifestly minimized at 0.
+    %Note: owner(T.pre, row_num) = owner(T.post, row_num) is NOT guaranteed
+
+    min_sign_closed = proc (T: tableau, row_num: int) returns(sign)
+			signals (overflow)
+	m: rat := minimize(T, row_num) 
+	   except when unbounded: return(negative) end
+	   resignal overflow
+        if m > zero then return(positive) end
+	if m < zero then return(negative) end
+	if m = zero then return(eq_zero) end
+	end min_sign_closed
+    
+    %internal
+    %REquires T.pre is feasible, row_num specifies a row
+    %Modifies T
+    %Effects: constraints(T.pre) = constraints(T.post)
+    %Returns the maximum of objective(T, row_num) on S(T)
+    %If maximum is finite then owner(T.post, row_num) = owner(T.pre, row_num),
+    %           owner(T.post, row_num) is "manifestly maximized",
+    %           T.post is feasible
+    %Signals unbounded if value of objective can be made infinitly large
+    %       in this case in  T.post feasibility can be violated in row_num.
+    %Signals overflow, if arithmetic overflow occurs. 
+    
+    maximize_in_row = proc (T: tableau, row_num: int) returns (rat)
+			signals (unbounded, overflow)
+ 	i, j: int
+	while true do
+	    i, j := tableau$find_pivot(T, row_num) resignal overflow
+	    if j = row_num then signal unbounded end
+	    tableau$pivot(T, i, j) resignal overflow
+	    end except when none: end
+	return(tableau$sample(T, row_num))
+	end maximize_in_row
+
+    
+    %internal
+    %REquires T.pre is feasible, row_num specifies a row
+    %Modifies T
+    %Effects: constraints(T.pre) <=> constraints(T.post)
+    %         T.post is feasible.
+    %Returns the maximum of objective(T, row_num) on S(T)
+    %If maximum is finite then owner(T.post, row_num) = owner(T.pre, row_num),
+    %           owner(T.post, row_num) is "manifestly maximized",
+    %           T.post is feasible
+    %Signals unbounded if value of objective can be made infinitly large
+    %       in this case owner(T.post, row_num) = owner(T.pre, row_num)
+    %       may NOT be true.
+    %Signals overflow, if arithmetic overflow occurs. 
+    
+    maximize = proc (T: tableau, row_num: int) returns (rat)
+		 signals (unbounded, overflow)
+	i, j: int
+	while true do
+	    i, j := tableau$find_pivot(T, row_num) resignal overflow
+	    if ~(j = row_num cand tableau$sample(T, row_num) > zero) then
+	       tableau$pivot(T, i, j) resignal overflow
+	       end resignal overflow
+	    if j = row_num then signal unbounded end
+	    end resignal unbounded 
+	   except when none: end
+	return(tableau$sample(T, row_num))
+	end maximize
+    
+    
+    %internal
+    %REquires T.pre is feasible, row_num specifies a row
+    %Modifies T
+    %Effects: constraints(T.pre) <=> constraints(T.post)
+    %         T.post is feasible.
+    %Returns the minimum of objective(T, row_num) on S(T)
+    %If minimum is finite then owner(T.post, row_num) = owner(T.pre, row_num),
+    %           owner(T.post, row_num) is "manifestly minimized",
+    %           T.post is feasible
+    %Signals unbounded if value of objective can be made infinitly large
+    %       in this case owner(T.post, row_num) = owner(T.pre, row_num)
+    %       may NOT be true.
+    %Signals overflow, if arithmetic overflow occurs. 
+        
+    minimize = proc (T: tableau, row_num: int) returns (rat)
+		 signals (unbounded, overflow)
+        %let v be the owner of row_num	
+	v: unknown := tableau$get_row_var(T, row_num)
+	tableau$negate_row(T, row_num) %change v to -v
+	%min of v = - max(-v)
+	min: rat := -maximize(T, row_num) 
+	   except when unbounded: 
+		       begin
+			   col_num: int := tableau$owns_col(T, v)
+			   %v owns column, change -v back to v
+			   tableau$negate_col(T, col_num)
+			   signal unbounded
+			   end except when none: end
+		       %v owns row_num, and problem is unbounded
+		       %change -v back to v
+		       tableau$negate_row(T, row_num)
+		       signal unbounded
+		  end
+        tableau$negate_row(T, row_num)%change -v back to v
+        return(min)
+	end minimize
+
+    
+    %internal
+    %REquires T.pre is feasible, row_num specifies a row
+    %Modifies T
+    %Effects: constraints(T.pre) = constraints(T.post)
+    %Returns the minimum of objective(T, row_num) on S(T)
+    %If minimum is finite then owner(T.post, row_num) = owner(T.pre, row_num),
+    %           owner(T.post, row_num) is "manifestly minimized",
+    %           T.post is feasible
+    %Signals unbounded if value of objective can be made infinitly large
+    %       in this case in  T.post feasibility can be violated in row_num.
+    %Signals overflow, if arithmetic overflow occurs. 
+    
+    minimize_in_row = proc (T: tableau, row_num: int) returns (rat)
+			signals (unbounded, bounds, overflow)
+        %let v be the owner of row_num
+	tableau$negate_row(T, row_num) %change v to -v
+	%min of v = - max(-v)
+	begin
+	    min: rat := -maximize_in_row(T, row_num)
+	    tableau$negate_row(T, row_num)
+	    return (min)
+	    end except when unbounded:
+			    tableau$negate_row(T, row_num)
+			    signal unbounded
+		       end
+	end minimize_in_row
+
+    end simplex

@@ -1,0 +1,988 @@
+#extend
+
+% Formulas, equations, and rewrite rules are subsumed by a single abstraction,
+% so as to optimize conversions from one to another, both within this cluster
+% and within the system cluster.  Formulas are boolean-valued terms.  The
+% formula "t = false" is treated as equivalent to "~t".
+
+% An equation is a formula of the form "t1 = t2" or "t1 <=> t2".  
+
+% A (conditional) rewrite rule is a formula used for rewriting.  It consists of
+% a set "{c1, ..., cn}" of boolean-valued terms (its conditions) and a pair
+% "<t1, t2>" of terms, where "t1" is not a variable and all free variables in
+% "c1, ..., cn, t2" also occur free in "t1".  A conditional rewrite rule is
+% logically equivalent to the formula "c1 /\ ... /\ cn => t1 = t2".  It is
+% displayed as "c1, ..., cn :: t1 -> t2", or as "t1 -> t2" if "n = 0", to
+% indicate that a term matching "t1" can be rewritten to a term matching "t2"
+% when the conditions are satisfied (see the rewriting cluster).  LP also 
+% ensures that "t1" is not a logical constant ("true" or "false"), and that 
+% "t1 -> t2" never has the form "~t3 -> true" (instead, it will have the form
+% "t3 -> false").
+
+% Formulas are essentially immutable.  In particular, the acts of normalizing a
+% formula or of ordering it into a rewrite rule create new objects.  Formulas,
+% however, can be given a name if they do not already possess one.
+
+formula = cluster is
+        create, get_bvars, get_conditions, get_eqOp, get_fvars, get_formula,
+        get_has_quantifiers, get_is_conditional, get_is_rr, get_left, get_name,
+        set_name, get_named, get_ops, get_right, get_vars, can_be_cr, 
+        can_be_cr_reversed, conditions, e2cr, e2cr_reversed, e2r, e2r_reversed,
+        instantiate, is_identity, is_orderable, is_reversible, make_cp, 
+        normal_form, normalize_rr, parse, print, r2e, read, reduce, reflat, 
+        rename_variables, reverse, size, smaller_left, unname, unparse, equal, 
+        same_object, similar, similar1, copy, _gcd, decode, encode
+
+    % Abstract invariant:
+    %    |= f.formula <=> (f.conditions => f.left = f.right)
+    %    f.is_conditional <=> f.conditions ~= term_true 
+    %    is_term_true(f.right) => f.left.root ~= op_not
+    %    f.is_rr => (f.right.fvars \subseteq f.left.fvars 
+    %                /\ f.conditions.fvars \subseteq f.left.fvars
+    %                /\ ~term$is_var(f.left)
+    %                /\ ~is_logical_constant(f.left))
+
+    rep = record[conditions: term,
+                 formula: term,
+                 is_conditional: bool,
+                 is_rr: bool,
+                 left: term,            
+                 name: name_type,
+                 op: operator,      % equality operator between f.left, f.right
+                 right: term]
+                 
+    name_type = oneof[exists: name, none: null]
+    
+    
+    % Returns the formula corresponding to the boolean-valued term "t".
+    % Assumes "t" is boolean-valued.
+
+    create = proc (t: term) returns (cvt) signals (error)
+        if debugging cand t.sort ~= bool_sort() then 
+           fail("formula$create: sort error")
+           end
+        left: term, op: operator, right: term := decompose(t, false)
+        return(rep${conditions: term_true(),
+                    formula: t,
+                    is_conditional: false,
+                    is_rr: false,
+                    left: left,
+                    op: op,
+                    name: name_type$make_none(nil),
+                    right: right})
+        end create
+
+    
+    % (Internal procedure) Returns "left", either "=" or "<=>", and "right" so
+    % that (1) |= t <=> left = right
+    %      (2) is_term_true(right) => left.root ~= op_not
+    %      (3) if "t" has the form "t1 = t2", then
+    %             ~rev => left = t1 /\ right = t2
+    %              rev => left = t2 /\ right = t1
+    
+    decompose = proc (t: term, rev: bool) returns (term, operator, term)
+        own tt: term := term_true()
+        own iff: operator := op_iff()
+        left: term   := t
+        right: term  := tt
+        op: operator := iff
+        begin
+            op1: operator := left.root
+            if ~(is_op_equals(op1) cor op1 = iff) then exit ok end
+            op := op1
+            if term_seq$size(t.args) = 2 
+               then left := t.args[1]
+               else left := term$make_funct(op, term_seq$remh(t.args))
+               end
+            right := term_seq$top(t.args)
+            if t.flipped ~= rev then left, right := right, left end     % (3)
+            if is_term_false(right) then t := term1(op_not(), left) end % (1)
+            end except when wrong_tag, ok: end
+        if is_term_true(right) cand left.root = op_not() then       % (2)
+           left := left.args[1]
+           right := term_false()
+           end except when wrong_tag: end
+        return(left, op, right)
+        end decompose
+    
+
+    % Returns the variables that are bound in "f".  Assumes: previous callers
+    % have not modified the returned set.
+
+    get_bvars = proc (f: cvt) returns (var_set)
+        return(f.formula.bvars)
+        end get_bvars
+
+
+    % Returns the conditions of "f".  Signals "none" if there are none.
+    
+    get_conditions = proc (f: cvt) returns (term) signals (none)
+        if f.is_conditional then return(f.conditions) end
+        signal none
+        end get_conditions
+    
+    
+    % Returns the equality operator for "f".
+    
+    get_eqOp = proc (f: cvt) returns (operator)
+        return(f.op)
+        end get_eqOp
+    
+    
+    % Returns the boolean-valued term that constitutes the formula "f".
+    
+    % CONSIDER:  This procedure used to reverse "f.left" and "f.right" in the
+    % returned term to ensure that "f.left" is the smaller.  The aim was to
+    % have matches of hypotheses fail as quickly as possible.  We find out
+    % faster whether "true" and "false" match than whether "/\" and "\/" do.
+    % It might be better, however, to make "f.right" be the smaller term, have
+    % "deduction_rule$apply" attempt to match it first, and to treat hypotheses
+    % with "true" and "false" on the right as symmetric.
+
+    get_formula = proc (f: cvt) returns (term) 
+        return(f.formula)
+        end get_formula
+    
+    
+    % Returns the variables that occur free in "f".  ASSUMES: previous callers
+    % have not modified the returned set.
+
+    get_fvars = proc (f: cvt) returns (var_set)
+        return(f.formula.fvars)
+        end get_fvars
+    
+    
+    % Returns "true" if "f" contains quantifiers.
+    
+    get_has_quantifiers = proc (f: cvt) returns (bool)
+        return(f.formula.has_quantifiers)
+        end get_has_quantifiers
+    
+
+    % Returns "true" if "f" has conditions.
+    
+    get_is_conditional = proc (f: cvt) returns (bool)
+        return(f.is_conditional)
+        end get_is_conditional
+    
+
+    % Returns "true" if "f" has been ordered into a rewrite rule.
+
+    get_is_rr = proc (f: cvt) returns (bool)
+        return(f.is_rr)
+        end get_is_rr
+
+    
+    % Returns the left side of "f".
+
+    get_left = proc (f: cvt) returns (term)
+        return(f.left)
+        end get_left
+
+
+    % Returns the name of "f".  Signals "none" if "f" is not named.
+
+    get_name = proc (f: cvt) returns (name) signals (none)
+        return(name_type$value_exists(f.name))
+           except when wrong_tag: signal none end
+        end get_name
+
+
+    % Sets the name of "f" to "n".  Signals "impossible" if "f" is already
+    % named.
+
+    set_name = proc (f: cvt, n: name) signals (impossible)
+        if name_type$is_exists(f.name) then signal impossible end
+        f.name := name_type$make_exists(n)
+        end set_name
+
+
+    % Returns "true" if "f" is named.
+
+    get_named = proc (f: cvt) returns (bool)
+        return(name_type$is_exists(f.name))
+        end get_named
+
+
+    % Returns the operators of "f".  ASSUMES: previous callers have not
+    % modified the returned set.
+
+    get_ops = proc (f: cvt) returns (op_set)
+        return(f.formula.ops)
+        end get_ops
+
+
+    % Returns the right side of "f".
+
+    get_right = proc (f: cvt) returns (term)
+        return(f.right)
+        end get_right
+
+
+    % Returns the variables in "f".  ASSUMES: previous callers have not
+    % modified the returned set.
+
+    get_vars = proc (f: cvt) returns (var_set)
+        return(f.formula.vars)
+        end get_vars
+
+    
+    % Returns "true" if "f" has the form "conditions => t", where "t" is not a
+    % variable, all free variables in "conditions" also occur in "t", and, if
+    % "t" has the form "left = right" or "left <=> right", then "left" is not a
+    % variable or a logical constant and all free variables in "right" also
+    % occur in "left".  Assumes "~f.is_rr".
+
+    can_be_cr = proc (f: cvt) returns (bool) 
+        if ~interactive$get_conditional() then return(false) end
+        return(can_be_cr_work(f, false))
+        end can_be_cr
+
+
+    % Returns "true" if "f" has the form "conditions => t", where "t" is not a
+    % variable, all free variables in "conditions" also occur in "t", and, if
+    % "t" has the form "left = right" or "left <=> right", then "right" is not
+    % a variable or a logical constant and all free variables in "left" also
+    % occur in "right".  Assumes "~f.is_rr".
+
+    can_be_cr_reversed = proc (f: cvt) returns (bool) 
+        if ~interactive$get_conditional() then return(false) end
+        return(can_be_cr_work(f, true))
+        end can_be_cr_reversed
+    
+    
+    % (Internal procedure) Subsidiary to "can_be_cr" and "can_be_cr_reversed".
+
+    can_be_cr_work = proc (f: rep, rev: bool) returns (bool)
+        if f.is_rr then fail("formula$can_be_cr_work") end
+        t: term := f.formula
+        if t.root ~= op_implies() then return(false) end
+           except when wrong_tag: return(false) end
+        % "f" has the form "t1 => t2"
+        t2: term := t.args[2]
+        if term$is_funct(t2) 
+             cand (is_op_equals(t2.root) cor t2.root = op_iff()) then
+           left, right: term
+           if term_seq$size(t2.args) = 2
+              then left := t2.args[1]
+              else left := term$make_funct(t2.root, term_seq$remh(t2.args))
+              end
+           right := term_seq$top(t2.args)
+           if t2.flipped ~= rev then left, right := right, left end    % (3)
+           if term$is_var(left) then return(false) end
+           if is_logical_constant(left) then return(false) end
+           if ~var_set$is_subset(right.fvars, left.fvars) then return(false) end
+           end except when wrong_tag: return(false) end
+        return(var_set$is_subset(t.args[1].fvars, t2.fvars))
+        end can_be_cr_work
+
+
+    % Yields the conditions for a conditional formula "f".
+    
+    conditions = iter (f: cvt) yields (term)
+        if ~f.is_conditional then return end
+        cond: term := f.conditions
+        if cond.root_or_quant = op_and()
+           then for c: term in term_seq$elements(cond.args) do yield(c) end
+           else yield(cond)
+           end
+        end conditions
+
+
+    % Returns the conditional rewrite rule obtained by ordering the formula
+    % "f".  The returned rule has the same name as "f".  Signals
+    % "already_oriented" if "f" is already ordered.  Signals "impossible" if
+    % "~can_be_cr(f)".
+    
+    % ENHANCE: Convert terms like "c1 => (c2 => (c3 /\ c4 => t))" into 
+    % conditional rules.
+
+    e2cr = proc (f: cvt) returns (cvt) signals (already_oriented, impossible)
+        if f.is_rr then signal already_oriented end
+        if ~can_be_cr(up(f)) then signal impossible end
+        return(e2cr_work(f, false))
+        end e2cr
+
+    
+    % Returns the conditional rewrite rule obtained by reversing the equation
+    % represented by the formula "f".  The returned rule has the same name as
+    % "f".  Signals "already_oriented" if "f" is already ordered.  Signals
+    % "impossible" if "~can_be_cr_reversed(f)".
+
+    e2cr_reversed = proc (f: cvt) returns (cvt) 
+                      signals (already_oriented, impossible)
+        if f.is_rr then signal already_oriented end
+        if ~can_be_cr_reversed(up(f)) then signal impossible end
+        return(e2cr_work(f, true))
+        end e2cr_reversed
+    
+    
+    % (Internal procedure)  Does the work for "e2cr" and "e2cr_reversed".
+    % Assumes: "can_be_cr_work(f, rev)"
+    
+    e2cr_work = proc (f: rep, rev: bool) returns (rep)
+        t: term := f.formula
+        left: term, op: operator, right: term := decompose(t.args[2], rev)
+        % FIX: Try handling "a => (b => c)" too.
+        return(rep${conditions: t.args[1],
+                    formula: f.formula,
+                    is_conditional: true,
+                    is_rr: true,
+                    left: left, 
+                    op: op,
+                    right: right,
+                    name: f.name})
+        end e2cr_work
+
+    
+    % Returns the rewrite rule obtained by ordering the formula "f".  The
+    % returned rule has the same name as "f".  Signals "already_oriented" if
+    % "f" is already ordered.  Signals "invalid_rule" if there is a variable in
+    % "f.right" that does not occur in "f.left", if "f.left" is a variable, or
+    % if "f.left" is "true" or "false", since this would be an invalid rewrite
+    % rule.
+
+    e2r = proc (f: cvt) returns (cvt) signals (already_oriented, invalid_rule)
+        if f.is_rr then signal already_oriented end
+        if ~is_orderable(up(f)) then signal invalid_rule end
+        rr: rep := rep$copy1(f)
+        rr.is_rr := true
+        return(rr)
+        end e2r
+
+
+    % Returns the rewrite rule obtained by ordering the equation represented by
+    % the formula "f" from right to left.  The returned rule has the same name
+    % as "f".  Signals "already_oriented" if "f" is already ordered.  Signals
+    % "invalid_rule" if there is a variable in "f.left" that does not occur in
+    % "f.right", if "f.right" is a variable, or if "f.right" is "true" or
+    % "false", since this would be an invalid rewrite rule.
+
+    e2r_reversed = proc (f: cvt) returns (cvt)
+                     signals (already_oriented, invalid_rule)
+        if f.is_rr then signal already_oriented end
+        if ~is_reversible(up(f)) then signal invalid_rule end
+        rr: rep := rep$copy1(f)
+        rr.left := f.right
+        rr.right := f.left
+        rr.is_rr := true
+        return(rr)
+        end e2r_reversed
+
+
+    % Returns an unnamed and unordered formula obtained by applying the
+    % substitution "sigma" to "f".  Signals "same" if "sigma" does not change
+    % "f".
+
+    instantiate = proc (f: cvt, sigma: substitution, osys: op_system,
+                        stab: symtab) returns (cvt) signals (same)
+        t: term := flatten(substitution$apply(sigma, f.formula, stab), osys)
+        if term$same_object(t, f.formula) then signal same end
+        return(down(create(t)))
+        end instantiate
+
+
+    % Returns "true" if "f" is an identity.
+
+    is_identity = proc (f: cvt) returns (bool)
+        return(is_term_true(f.formula))
+        end is_identity
+
+
+    % Returns "true" iff "f.left -> f.right" is a valid rewrite_rule, i.e., iff
+    % "f.left" is not a variable, all free variables in "f.left" occur free in
+    % "f.right", and "f.left" is neither "true" or "false".  ASSUMES:
+    % "~f.is_rr".
+
+    is_orderable = proc (f: cvt) returns (bool)
+        if f.is_rr then fail("formula$is_orderable") end
+        left: term := f.left
+        return(~term$is_var(left) cand
+               var_set$is_subset(f.right.fvars, left.fvars) cand
+               ~is_logical_constant(left) cand
+               ~f.is_conditional)
+        end is_orderable
+
+
+    % Returns "true" iff "f.right -> f.left" is a valid rewrite_rule, i.e., iff
+    % "f.right" is not a variable, all free variables in "f.right" occur free
+    % in "f.left", and "f.right" is neither "true" or "false".
+
+    is_reversible = proc (f: cvt) returns (bool)
+        if f.is_rr then fail("formula$is_reversible") end
+        right: term := f.right
+        return(~term$is_var(right) cand
+               var_set$is_subset(f.left.fvars, right.fvars) cand
+               ~is_logical_constant(right) cand
+               ~f.is_conditional)
+        end is_reversible
+
+
+    % Returns the critical pair formula that results from unifying the left
+    % side of "rr2" with a nonvariable subterm of the left side of "rr1" via
+    % "sigma".  Assumes "sigma" is such a unifying substitution, and that "t"
+    % is the result of replacing the nonvariable subterm of "rr1" with the left
+    % side of "rr2".
+
+    make_cp = proc (rr1, rr2: cvt, t: term, sigma: substitution, stab: symtab)
+                returns (formula)
+        left: term := substitution$apply(sigma, t, stab)
+        right: term := substitution$apply(sigma, rr1.right, stab)
+        uncond: bool := true
+        ca: term_arr
+        for c: term in conditions(up(rr1)) do
+            if uncond then ca := term_arr$[] end
+            term_arr$addh(ca, substitution$apply(sigma, c, stab))
+            uncond := false
+            end
+        for c: term in conditions(up(rr2)) do
+            if uncond then ca := term_arr$[] end
+            term_arr$addh(ca, substitution$apply(sigma, c, stab))
+            uncond := false
+            end
+        t := term2(rr1.op, left, right)
+        if uncond then return(create(t)) end
+        ct: term
+        if term_arr$size(ca) = 1
+           then ct := ca[1]
+           else ct := term$make_funct(op_and(), term_seq$a2s(ca))
+           end
+        return(create(term2(op_implies(), ct, t)))
+        end make_cp
+
+    
+    % Returns a normal form of "f" (considered as a boolean-valued term) with
+    % respect to "rsys", "osys", and the following top-level reductions:
+    %    \A x (t) -> t
+    %   ~\E x (t) -> ~t
+    % Does not use rewrite rules that are ancestors of "f" if "no_ancestors" is
+    % "true".  Turns a rewrite rule into a formula if (a subterm containing)
+    % its left side reduces.  The returned formula has the same name as "f".
+    % Signals "already_normal_form" if no reduction occurs.  Signals
+    % "might_loop" if normalization might result in an infinite rewriting loop.
+    
+    % (This operation turns a rewrite rule into an unordered formula when its
+    % left side reduces because the result may not be a valid rewrite rule;
+    % even if the result is a valid rewrite rule, the current ordering may not
+    % order it in the same direction.)
+
+    normal_form = proc (f: cvt, rsys: rewriting_system, osys: op_system,
+                        stab: symtab, no_ancestors: bool) 
+                    returns (cvt) 
+                    signals (already_normal_form, might_loop(formula))
+        reduced: bool := false
+        if f.is_rr then
+           f := down(normalize_rr(up(f), rsys, osys, stab, no_ancestors))
+           if f.is_rr then return(f) end
+           reduced := true
+           end resignal already_normal_form, might_loop
+        return(down(normalize_formula(f, rsys, osys, stab, no_ancestors)))
+           except when already_normal_form:
+                       if reduced 
+                          then return(f)
+                          else signal already_normal_form
+                          end
+                  end
+           resignal might_loop
+        end normal_form
+    
+    
+    % Like "normal_form", except may stop short of full normalization if "f" is
+    % turned into a formula.
+    
+    normalize_rr = proc (f: cvt, rsys: rewriting_system, osys: op_system,
+                         stab: symtab, no_ancestors: bool)
+                     returns (cvt)
+                     signals (already_normal_form, might_loop(cvt))
+        skip: name := ancestors_to_avoid(up(f), no_ancestors)
+        f := rep$copy1(f)
+        reduced: bool := false
+        might_loop: bool := false
+        try_top: bool := true
+        try_right: bool := ~is_logical_constant(f.right)
+        try_conditions: bool := f.is_conditional
+        while ~might_loop cand (try_top cor try_right cor try_conditions) do
+            if try_top then  % FIX: location depends on reduction_strategy
+               f := down(reduce_top(f, rsys, osys, stab, skip))
+               if ~f.is_rr then return(f) end
+               reduced := true
+               try_right := ~is_logical_constant(f.right)
+               try_conditions := f.is_conditional
+               end except when not_reduced: try_top := false end
+            if try_right then
+               try_right := false
+               f.right := 
+                   rewriting_system$normal_form(f.right, rsys, osys, stab, skip)
+               f.formula := join(f.conditions, f.left, f.op, f.right)
+               reduced := true
+               try_top := true
+               end except when already_normal_form: 
+                          when might_loop (t1: term): 
+                               f.right := t1
+                               f.formula := join(f.conditions, f.left, f.op, f.right)
+                               might_loop := true
+                          end
+            if try_conditions then
+               try_conditions := false
+               f.conditions := 
+                   rewriting_system$normal_form(f.conditions, rsys, osys, stab, skip)
+               f.formula := join(f.conditions, f.left, f.op, f.right)
+               f.is_conditional := ~is_term_true(f.conditions)
+               reduced := true
+               try_top := true
+               end except when already_normal_form: 
+                          when might_loop (t1: term): 
+                               f.conditions := t1
+                               f.formula := join(f.conditions, f.left, f.op, f.right)
+                               f.is_conditional := ~is_term_true(f.conditions)
+                               might_loop := true
+                          end
+            end
+        if ~reduced then signal already_normal_form end
+        if might_loop then signal might_loop(f) end
+        return(f)
+        end normalize_rr
+
+    
+    % (Internal procedure) Like "normal_form", except that the result is always
+    % an unordered formula, and that normalization does not use any rewrite
+    % rule whose name is an ancestor of "skip".
+    
+    normalize_formula = proc (f: rep, rsys: rewriting_system, osys: op_system,
+                              stab: symtab, no_ancestors: bool)
+                          returns (cvt)
+                          signals (already_normal_form, might_loop(cvt))
+        own no_vars: var_set := var_set$[]
+        skip: name := ancestors_to_avoid(up(f), no_ancestors)
+        t: term := f.formula
+        reduced: bool := false
+        might_loop: bool := false
+        try_normalizing: bool := true
+        try_dropping: bool := true
+        while try_normalizing cor try_dropping do
+            if try_dropping then
+               % Do this first to ensure that we get a crack at dropping
+               % quantifiers when "might_loop" is true.
+               retry: bool 
+               t, retry := drop_quantifier(t, no_vars, stab)
+               reduced := true
+               try_normalizing := try_normalizing cor retry
+               end except when not_dropped: try_dropping := false end
+            if try_normalizing then
+               try_normalizing := false
+               t := rewriting_system$normal_form(t, rsys, osys, stab, skip)
+               reduced := true
+               try_dropping := true
+               end except when already_normal_form: end
+            end except when might_loop (t1: term): t := t1
+                                                   reduced := true
+                                                   might_loop := true
+                       end
+        if ~reduced then signal already_normal_form end
+        f1: rep := down(create(t))
+        f1.name := f.name
+        if might_loop then signal might_loop(f1) end
+        return(f1)
+        end normalize_formula
+    
+    
+    % (Internal procedure) Returns one of the following reductions of "t"
+    % paired with the indicated boolean value, where "x" is a variable not in
+    % "vs".  Signals "not_dropped" if no reduction is possible.
+    %  \A x P(x)                -> P(x)                 false
+    %  ~\E x P(x)               -> ~P(x)                true
+    %  x = t /\ P(x) => Q(x)    -> P(t) => Q(t)         true
+    %  P(x) => ~(x = t) \/ Q(x) -> P(t) => Q(t)         true
+    %  ~(x = t) \/ Q(x)         -> Q(t)                 true
+    % Here "P(x)" and "Q(x)" are arbitrary terms, "t" is a term not containing
+    % "x", and "P(x)" and "Q(x)" are the results of substituting "t" for "x" in
+    % "P(x)" and "Q(x)" with appropriate changes of bound variables to prevent
+    % a quantifier in "P" or "Q" from capturing a variable in "t".
+    
+    drop_quantifier = proc (t: term, vs: var_set, stab: symtab) 
+                        returns (term, bool) signals (not_dropped)
+        own hardwired_name: name := name$create("lp_hardwired")
+        op: operator := t.root_or_quant
+           except when wrong_tag: signal not_dropped end
+        tracer$start_reducing(t)
+        statistics$start_rewrite()
+        tt: term
+        bb: bool := true
+        if is_op_forall(op) then
+           if var_set$exists(vs, t.quant.var) then exit not_dropped end
+           tt := t.subform
+           bb := false
+         elseif op = op_not() then
+           t1: term := t.args[1]
+           q: quantifier := t1.quant
+           if q.is_universal cor var_set$exists(vs, q.var) then
+              exit not_dropped
+              end
+           tt := term1(op_not(), t1.subform)
+         else tt := reduce_implicit_forall(t, vs, stab)
+         end except when wrong_tag, not_reduced, not_dropped: 
+                         statistics$fail_rewrite()
+                         tracer$stop_reducing()
+                         signal not_dropped
+                    end
+        tracer$applied_rr(hardwired_name)
+        tracer$matched_term(tt, path$[])
+        statistics$success_rewrite()
+        return(tt, bb)
+        end drop_quantifier
+    
+    
+    % (Internal procedure) Returns a formula obtained by reducing some subterm
+    % of "f.formula" that contains or is contained in "f.left".  Signals
+    % "not_reduced" if no reduction occurs.  The result is an unordered formula
+    % if some subterm properly containing "f.left" reduces, or if a subterm of
+    % "f.left" reduces and "f" has conditions or "f.right" is not a logical
+    % constant.
+
+    reduce_top = proc (f: rep, rsys: rewriting_system, osys: op_system,
+                       stab: symtab, skip: name) returns (cvt)
+                   signals (not_reduced)
+        if f.is_conditional then
+           % Try reducing all of "f.formula"
+           t: term := f.formula
+           t := rewriting_system$reduce_whole_term(t, rsys, osys, stab, skip)
+           f1: rep := down(create(t))
+           f1.name := f.name
+           return(f1)
+           end except when not_reduced: end
+        % Change "f.left -> false" into "~f.left -> true" to avoid counting 
+        % "f.left = false -> ~f.left" as a reduction.
+        left: term := f.left
+        right: term := f.right
+        if is_term_false(right) then
+           left := term1(op_not(), left)
+           right := term_true()
+           end
+        reduced: bool := false
+        if is_term_true(right)
+           then % Try dropping a quantifier
+                junk: bool
+                left, junk := drop_quantifier(left, f.conditions.fvars, stab)
+                reduced := true
+           else % Try reducing all of "left = right".
+                t: term := flatten1(term2(f.op, left, right), osys)
+                t := rewriting_system$reduce_whole_term(t, rsys, osys, stab, skip)
+                if f.is_conditional then
+                   t := term2(op_implies(), f.conditions, t)
+                   end
+                f1: rep := down(create(t))
+                f1.name := f.name
+                return(f1)
+           end except when not_reduced, not_dropped: end
+        % Try reducing "left" or one of its subterms.
+        if ~reduced then
+           left := rewriting_system$reduce(left, rsys, osys, stab, skip)
+           end except when already_normal_form: signal not_reduced end
+        % Re-establish representation of "~t -> true" as "t -> false".
+        if is_term_true(right) cand left.root = op_not() then
+           right := term_false()
+           left := left.args[1]
+           end except when wrong_tag: end
+        % FIX: Reinstall code that keeps "f" as a rewrite rule by deleting the
+        % following three lines of code.  Before doing this, however, fix
+        % system$internormalize_rewriting_system so that a rule whose left side
+        % reduces is moved to the list of normalized rules.  To do this may
+        % require adding a signal to this procedure.
+        f1: rep := down(create(join(f.conditions, left, f.op, right)))
+        f1.name := f.name
+        return(f1)
+        % FIX: The following code is dead code until it is reinstalled, as
+        % described above.
+        f1 := rep$copy1(f)
+        f1.left := left
+        f1.right := right
+        f1.formula := join(f1.conditions, f1.left, f1.op, f.right)
+        if f1.is_conditional cor ~is_logical_constant(f1.right) 
+           then return(down(r2e(up(f1))))
+           else return(f1)
+           end
+        end reduce_top
+    
+    
+    % (Internal procedure) Returns a name whose ancestors should not be used to
+    % reduce "f".
+    
+    ancestors_to_avoid = proc (f: formula, no_ancestors: bool) returns (name)
+        own n: name := name$orphan()
+        if no_ancestors then return(f.name) end
+           except when none: end
+        return(n)
+        end ancestors_to_avoid
+
+
+    % (Internal procedure)  Returns "t" so that "|= t <=> cond => left = right"
+    
+    join = proc (cond, left: term, op: operator, right: term) returns (term)
+        t: term
+        if is_term_true(right) then       t := left
+         elseif is_term_false(right) then t := term1(op_not(), left)
+         else t := term2(op, left, right)
+              if left.sort = bool_sort() then t := flatten_ac(t) end
+         end except when already_flattened: end
+        if ~is_term_true(cond) then t := term2(op_implies(), cond, t) end
+        return(t)
+        end join
+    
+
+    % Parses "s" and returns the corresponding formula.  Writes a message to
+    % "error", and signals "error", if "s" does not represent a formula
+    % constructed from operators in "stab".
+
+    parse = proc (s: string, stab: symtab, error: printer) returns (formula)
+              signals (error)
+        return(parse_item_with_ids[formula]("formula", s, stab, error))
+           resignal error
+        end parse
+
+
+    % Prettyprints "f" on "p".
+    
+    print = proc (p: printer, f: formula, stab: symtab)
+        pformula$print(p, f, stab)
+        end print
+    
+    
+    % Returns the formula obtained by unordering the rewrite rule "rr".  The
+    % returned formula has the same name as "rr".  Signals "not_rule" if "rr"
+    % is not ordered.
+
+    r2e = proc (rr: cvt) returns (cvt) signals (not_rule)
+        if ~rr.is_rr then signal not_rule end
+        f: rep
+        if rr.is_conditional
+           then f := down(create(rr.formula))
+                f.name := rr.name
+           else f := rep$copy1(rr)
+                f.is_rr := false
+           end
+        return(f)
+        end r2e
+
+    
+    % Reads and returns a formula from the head of "scan".  Writes a message
+    % to "scan", and signals "error", if the head of "scan" does not contain a
+    % valid formula constructed from identifiers in "stab".
+
+    read = proc (scan: scanner, stab: symtab) returns (formula) signals (error)
+        return(pformula$read(scan, stab))
+           resignal error
+        end read
+
+
+    % Returns a formula that results from reducing "f" once by "rsys".  Does
+    % not reduce "f" by an ancestor if "no_ancestors" is "true".  The returned
+    % formula has the same name as "f".  Signals "already_normal_form" if no
+    % reduction occurs.  Signals "top" if the reduction occurred at the top
+    % level of "f".  (This operation turns a rewrite rule into a formula if
+    % its left side is reduced; cf. "reduce_top".)
+
+    reduce = proc (f: cvt, rsys: rewriting_system, osys: op_system,
+                   stab: symtab, no_ancestors: bool)
+               returns (cvt) signals (already_normal_form, top(formula))
+        t: term
+        skip: name := ancestors_to_avoid(up(f), no_ancestors)
+        if f.is_rr then
+           return(down(reduce_top(f, rsys, osys, stab, skip)))
+              resignal top
+              except when not_reduced: end
+           begin
+               t := rewriting_system$reduce(f.right, rsys, osys, stab, skip)
+               f := rep$copy1(f)
+               f.right := t
+               f.formula := join(f.conditions, f.left, f.op, t)
+               return(f)
+               end except when already_normal_form: end
+           if f.is_conditional then
+              t := rewriting_system$reduce(f.conditions, rsys, osys, stab, skip)
+              f := rep$copy1(f)
+              f.conditions := t
+              f.is_conditional := ~is_term_true(t)
+              f.formula := join(t, f.left, f.op, f.right)
+              return(f)
+              end resignal already_normal_form
+           signal already_normal_form
+           end
+        t := rewriting_system$reduce(f.formula, rsys, osys, stab, skip)
+           resignal already_normal_form
+        f1: rep := down(create(t))
+        f1.name := f.name
+        return(f1)
+        end reduce
+
+
+    % Returns a formula equivalent to "f" with its terms flattened.  Signals
+    % "same" if "f" is not changed.
+    
+    reflat = proc (f: cvt, osys: op_system) returns (cvt) signals (same)
+        left: term := flatten(f.left, osys)             % Signal here?
+        right: term := flatten(f.right, osys)
+        same: bool := term$same_object(f.left, left) 
+                        cand term$same_object(f.right, right)
+        cond: term := f.conditions
+        if f.is_conditional then
+           cond := flatten(cond, osys)
+           same := same cand term$same_object(cond, f.conditions)
+           end
+        if same then 
+           if left.sort ~= bool_sort() then signal same end
+           if left.root ~= op_iff() cand ~is_op_equals(left.root)
+                cand right.root ~= op_iff() cand ~is_op_equals(right.root) 
+              then signal same
+              end
+           end except when wrong_tag: signal same end
+        return(rep${conditions: cond,
+                    formula: join(cond, left, f.op, right),
+                    is_conditional: f.is_conditional,
+                    is_rr: f.is_rr,
+                    left: left,
+                    name: f.name,
+                    op: f.op,
+                    right: right})
+        end reflat
+
+
+    % Returns a formula that is equal to "f", with all variables replaced by
+    % their aliases.  Invoked by "critical_pairs".
+
+    rename_variables = proc (f: cvt) returns (cvt)
+        if var_set$empty(f.formula.vars) then return(f) end
+        left: term := term$rename_variables(f.left)
+        right: term := term$rename_variables(f.right)
+        cond: term := f.conditions
+        if ~is_term_true(cond) then cond := term$rename_variables(cond) end
+        return(rep${conditions: cond,
+                    formula: join(cond, left, f.op, right),
+                    is_conditional: f.is_conditional,
+                    is_rr: f.is_rr,
+                    left: left,
+                    name: f.name,
+                    op: f.op,
+                    right: right})
+        end rename_variables
+
+
+    % Reverses the equation represented by "f".  Signals "impossible" if "f" is
+    % a rewrite rule and the result would not be a legal rewrite rule or 
+    % conditional rewrite rule.
+    
+    % ENHANCE: eliminate call by system$process_normalized_equations?
+
+    reverse = proc (f: cvt) returns (cvt) signals (impossible)
+        right: term := f.left
+        left: term := f.right
+        if term$is_var(left) cor is_logical_constant(left) cor
+           ~var_set$is_subset(right.fvars, left.fvars) then 
+           signal impossible 
+           end
+        if f.is_conditional then
+           vars: var_set := f.conditions.vars
+           if ~var_set$is_subset(vars, left.vars) then signal impossible end
+           end
+        f1: rep := rep$copy1(f)
+        f1.left := left
+        f1.right := right
+        return(f1)
+        end reverse
+
+
+    % Returns the total number of operators and variables in "f".
+
+    size = proc (f: cvt) returns (int)
+        return(f.formula.size)
+        end size
+
+
+    % Returns true iff (a) "f1.left" is smaller than "f2.left" or (b) "f1.left" and
+    % "f2.left" have the same size, but "f1.right" is smaller than "f2.right".
+
+    smaller_left = proc(f1, f2: cvt) returns (bool)
+        n1: int := f1.left.size
+        n2: int := f2.left.size
+        return(n1 < n2 cor (n1 = n2 cand f1.right.size < f2.right.size))
+        end smaller_left
+
+
+    % Returns an unnamed formula similar to "f", but which is a different
+    % object.
+    
+    unname = proc (f: cvt) returns (cvt)
+        f := rep$copy1(f)
+        f.name := name_type$make_none(nil)
+        return(f)
+        end unname
+
+    
+    % Returns a string denoting "f" suitable for printing on the terminal.
+    % Qualifies all identifiers if the current "display_mode" is
+    % "qualified_mode"; otherwise omits all qualifications.
+    
+    unparse = proc (f: formula) returns (string)
+        return(unparse_item_with_ids[formula](f))
+        end unparse
+
+
+    % Returns "true" iff "f1" and "f2" represent the same formula.
+
+    equal = proc (f1, f2: formula) returns (bool)
+        return(similar(f1, f2))
+        end equal
+
+    
+    % Returns "true" if "f1" and "f2" are the same object.  
+
+    same_object = proc (f1, f2: cvt) returns (bool)
+        return(f1 = f2)
+        end same_object
+    
+    
+    % Returns "true" iff "f1" and "f2" represent the same formula.
+
+    similar = proc (f1, f2: cvt) returns (bool)
+        return(f1.is_rr = f2.is_rr cand f1.right = f2.right
+	         cand f1.left = f2.left cand f1.conditions = f2.conditions)
+        end similar
+
+
+    % Returns "true" if "f1" and "f2" not only represent the same formula,
+    % but are constructed from the same terms.  This is meant to serve as a
+    % fast check of whether two rewrite rules were produced by ordering the
+    % same formula in the same way.
+
+    similar1 = proc (f1, f2: cvt) returns (bool)
+        return(f1.is_rr = f2.is_rr
+                 cand term$same_object(f1.left, f2.left)
+                 cand term$same_object(f1.right, f2.right)
+                 cand term$same_object(f1.conditions, f2.conditions))
+        end similar1
+
+
+    % Returns "f".
+
+    copy = proc (f: cvt) returns (cvt)
+        return(f)
+        end copy
+    
+    
+    % Necessary for "gc_dump".
+
+    _gcd = proc (x: cvt, tab: gcd_tab) returns (int)
+        return(rep$_gcd(x, tab))
+        end _gcd
+
+
+    decode = proc (s: istream) returns (cvt)
+               signals (end_of_file, not_possible(string))
+        return(rep$decode(s)) resignal end_of_file, not_possible
+        end decode
+
+    encode = proc (c: cvt, s: istream) signals (not_possible(string))
+        rep$encode(c, s) resignal not_possible
+        end encode
+
+
+    end formula

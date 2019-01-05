@@ -1,0 +1,1145 @@
+#extend
+
+% The "settings" cluster maintains settings for the "set" command.
+
+settings = cluster is freeze, pop, print, push, reset, set, thaw, write
+    
+    rep = null
+    
+
+    % Command tables.
+
+    setting_ctt	= command_table[setting_info]
+    on_off_ctt 	= command_table[bool]
+    ord_ctt	= command_table[ordering]
+    imm_ctt	= command_table[immunity]
+    npm_ctt	= command_table[named_proof_method]
+    red_ctt	= command_table[reduction_mode]
+    task_ctt	= command_table[named_task_mode]
+    unp_ctt	= command_table[unparse_mode]
+    
+    prints	= iodev$prints
+    printl	= iodev$printl
+    error	= iodev$error
+    
+    
+    % The possible settings.
+
+    setting_info = struct[default: setting,
+    			  getter: proctype (interactive) returns (setting)
+				    signals (none),
+			  name: string, 
+			  savable: bool,
+    			  setter: proctype (interactive, setting) 
+				    signals (error(string))]
+			  
+    setting_info_arr = array[setting_info]
+    setting_info_seq = sequence[setting_info]
+    settings_stack   = array[setting_info_arr]
+    
+    
+    % If "activity" is "on", new deduction rules, equations, and rewrite rules
+    % will be active.  Otherwise they will be inactive.
+
+    own activity: setting_info :=
+	    setting_info${name: "Activity",
+			  default: default_activity,
+			  getter: get_activity,
+			  savable: true,
+			  setter: set_activity}
+			 
+		     
+    % If "automatic_ordering" is "on", equations will be ordered automatically
+    % into rewrite rules.  Otherwise they will be ordered only in response to
+    % the "order" or "complete" commands.
+
+    own automatic_ordering: setting_info :=
+	    setting_info${name: "Automatic-ordering",
+			  default: default_automatic_ordering,
+			  getter: get_automatic_ordering,
+			  savable: true,
+			  setter: set_automatic_ordering}
+	
+	
+    % If "automatic_registry" is "on", the registry will be extended
+    % automatically when needed to order an equation into a rewrite rule.
+    % Otherwise the user will be prompted to approve extensions to the
+    % registry.
+
+    own automatic_registry: setting_info :=
+	    setting_info${name: "Automatic-registry",
+			  default: default_automatic_registry,
+			  getter: get_automatic_registry,
+			  savable: true,
+			  setter: set_automatic_registry}
+
+    
+    % If "box_checking" is "on" and input is being taken from a .lp file, there
+    % must be a "[]" in the input everytime lp discharges a proof obligation.
+
+    own box_checking: setting_info :=
+	    setting_info${name: "Box-checking",
+			  default: default_box_checking,
+			  getter: get_box_checking,
+			  savable: false,		% CONSIDER: local?
+			  setter: set_box_checking}
+    
+
+    % The default sequence of tasks to be used by the completion procedure.
+    
+    own completion_mode: setting_info :=
+	    setting_info${name: "Completion-mode",
+			  default: default_completion_mode,
+			  getter: get_completion_mode,
+			  savable: true,
+			  setter: set_completion_mode}
+
+		 
+    % The current working directory.
+    
+    own directory: setting_info := 
+	    setting_info${name: "Directory",
+			  default: default_directory,
+			  getter: get_directory,
+			  savable: false,
+			  setter: set_directory}
+
+    % The "unparse_mode" to be used by the "display" command.
+    
+    own display_mode: setting_info :=
+	    setting_info${name: "Display-mode",
+			  default: default_display_mode,
+			  getter: get_display_mode,
+			  savable: true,
+			  setter: set_display_mode}
+
+
+    % Controls which hardwired rewrite rules will be applied by LP.
+		     
+    own hardwired_usage: setting_info :=
+	    setting_info${name: "Hardwired-usage",
+			  default: default_hardwired_usage,
+			  getter: get_hardwired_usage,
+			  savable: true,
+			  setter: set_hardwired_usage}
+
+		     
+    % Controls the "immunity" of new equations and deduction rules.
+
+    own immunity_setting: setting_info :=
+	    setting_info${name: "Immunity",
+			  default: default_immunity,
+			  getter: get_immunity,
+			  savable: true,
+			  setter: set_immunity}
+		
+		     
+    % The name of a file to which input and output is being logged.
+    
+    own log_file: setting_info :=
+	    setting_info${name: "Log-file",
+			  default: default_log_file,
+			  getter: get_log_file,
+			  savable: false,
+			  setter: set_log_file}
+
+		     
+    % The search path for lp.
+    
+    own lp_path: setting_info :=
+	    setting_info${name: "LP-path",
+			  default: default_lp_path,
+			  getter: get_lp_path,
+			  savable: false,
+			  setter: set_lp_path}
+
+		     
+    % The prefix for names assigned by the "namer".
+    
+    own name_prefix: setting_info :=
+	    setting_info${name: "Name-prefix",
+			  default: default_name_prefix,
+			  getter: get_name_prefix,
+			  savable: true,
+			  setter: set_name_prefix}
+
+		     
+    % The ordering procedure to use when ordering equations into rewrite rules.
+    
+    own ordering_method: setting_info := 
+	    setting_info${name: "Ordering-method",
+			  default: setting$make_ord(ordering$default()),
+			  getter: get_ordering_method,
+			  savable: true,
+			  setter: set_ordering_method}
+
+		     
+    % If "page_mode" is "on", output will be paged.
+    
+    own page_mode: setting_info := 
+	    setting_info${name: "Page-mode",
+			  default: default_page_mode,
+			  getter: get_page_mode,
+			  savable: false,
+			  setter: set_page_mode}
+
+		     
+    % The prompt for user input.
+    
+    own prompt: setting_info :=
+	    setting_info${name: "Prompt",
+			  default: default_prompt,
+			  getter: get_prompt,
+			  savable: false,		% CONSIDER: local?
+			  setter: set_prompt}
+
+		     
+    % A list of default proof methods to apply to equational conjectures.
+    
+    own proof_methods: setting_info :=
+    	    setting_info${name: "Proof-methods",
+	    		  default: default_proof_methods,
+			  getter: get_proof_methods,
+			  savable: true,
+			  setter: set_proof_methods}
+			  
+
+    % The order (inside-out or outside-in) in which reductions are applied to
+    % subterms.
+		     
+    own reduction_strategy: setting_info :=
+	    setting_info${name: "Reduction-strategy",
+			  default: default_reduction_strategy,
+			  getter: get_reduction_strategy,
+			  savable: true,
+			  setter: set_reduction_strategy}
+
+		     
+    % The maximum number of times a term will be rewritten during normalization
+    % when the rewriting system is not know to terminate.
+    
+    own rewriting_limit: setting_info :=
+	    setting_info${name: "Rewriting-limit",
+			  default: default_rewriting_limit,
+			  getter: get_rewriting_limit,
+			  savable: true,
+			  setter: set_rewriting_limit}
+
+		     
+    % The name of a file in which input is being recorded.
+    
+    own script_file: setting_info :=
+	    setting_info${name: "Script-file",
+			  default: default_script_file,
+			  getter: get_script_file,
+			  savable: false,
+			  setter: set_script_file}
+
+		     
+    % Controls how much detail about axiom usage is recorded by the "tracer".
+
+    own statistics_level: setting_info :=
+	    setting_info${name: "Statistics-level",
+			  default: default_statistics_level,
+			  getter: get_statistics_level,
+			  savable: false,		% CONSIDER: local?
+			  setter: set_statistics_level}
+
+		   
+    % Controls how much detail about the operation of LP is reported by the
+    % "tracer".
+
+    own trace_level: setting_info :=
+	    setting_info${name: "Trace-level",
+			  default: default_trace_level,
+			  getter: get_trace_level,
+			  savable: false,		% CONSIDER: local?
+			  setter: set_trace_level}
+
+    
+    % The "unparse_mode" to be used by the "write" command.
+    
+    own write_mode: setting_info :=
+	    setting_info${name: "Write-mode",
+			  default: default_write_mode,
+			  getter: get_write_mode,
+			  savable: true,
+			  setter: set_write_mode}
+    
+    
+    % Dummy settings for use by the "unset" command.
+    
+    own all_settings: setting_info := 
+	    setting_info${name: "all", default: default_activity,
+			  getter: get_activity, savable: true,
+			  setter: set_activity}
+			   
+			   
+    % Sequences of settings for use by the "set" and "unset" commands.
+
+    own lp_settings: setting_info_seq := 
+	    setting_info_seq$[
+		activity, automatic_ordering,
+		automatic_registry, box_checking, completion_mode,
+		directory, display_mode, hardwired_usage, 
+		immunity_setting, log_file, lp_path, name_prefix,
+		ordering_method, page_mode, prompt, proof_methods,
+		reduction_strategy, rewriting_limit, script_file,
+		statistics_level, trace_level, write_mode]
+		
+    own unsettings: setting_info_seq :=
+	    lp_settings || setting_info_seq$[all_settings]
+		
+
+    % Stack of previous settings.
+    
+    own past_settings: settings_stack := settings_stack$[]
+
+
+    % Command table definitions.  ENHANCE: If we choose to allow multiple
+    % settings in a single command, the command tables should be delimited by
+    % ", \t", and we need to be careful about finding the end of a list of
+    % default proof methods.
+
+    own setting_ct: setting_ctt := 
+	    setting_ctt$s2ct(lp_settings, " \t", "setting")
+    own unsetting_ct: setting_ctt := 
+	    setting_ctt$s2ct(unsettings, " \t", "setting")
+    own imm_ct: imm_ctt := imm_ctt$s2ct(immunity_settings, "", "immunity")
+    own ord_ct: ord_ctt := 
+	    ord_ctt$s2ct(ordering$possibilities(), " \t", "ordering")
+    own npm_ct: npm_ctt := 
+	    npm_ctt$s2ct(automatic_proof_methods, ", \t", "default proof method")
+    own red_ct: red_ctt := red_ctt$s2ct(reduction_modes, "", "reduction-mode")
+    own task_ct: task_ctt := 
+	    task_ctt$s2ct(completion_task_modes, "", "completion-mode")
+    own unp_ct: unp_ctt := unp_ctt$s2ct(unparse_modes, "", "display mode")
+
+
+    on_off_ct = proc () returns (on_off_ctt)
+	oo = struct[name: string, choice: bool]
+	oo_seq = sequence[oo]
+	own ooct: on_off_ctt :=
+		on_off_ctt${help: on_off_ctt$help, delims: "", 
+			    label: "setting",
+			    as: oo_seq$[oo${name: "on", choice: true},
+					oo${name: "off", choice: false}]}
+	return(ooct)
+	end on_off_ct
+    
+    
+    % Internal procedures to get and set values for the settings.
+
+    get_activity = proc (i: interactive) returns (setting)
+	return(setting$make_b(i.sys.default_ai.active))
+	end get_activity
+    
+    set_activity = proc (i: interactive, s: setting)
+	ai: ai_settings := i.sys.default_ai
+	ai.active := setting$value_b(s)
+	i.sys.default_ai := ai
+	end set_activity
+    
+    get_automatic_ordering = proc (i: interactive) returns (setting)
+	return(setting$make_b(i.sys.automatic_ordering))
+	end get_automatic_ordering
+    
+    set_automatic_ordering = proc (i: interactive, s: setting)
+	i.sys.automatic_ordering := setting$value_b(s)
+	end set_automatic_ordering
+    
+    get_automatic_registry = proc (i: interactive) returns (setting)
+	return(setting$make_b(i.sys.automatic_registry))
+	end get_automatic_registry
+    
+    set_automatic_registry = proc (i: interactive, s: setting)
+	i.sys.automatic_registry := setting$value_b(s)
+	end set_automatic_registry
+    
+    get_box_checking = proc (i: interactive) returns (setting)
+	return(setting$make_b(prover$get_box_checking()))
+	end get_box_checking
+
+    set_box_checking = proc (i: interactive, s: setting)
+	prover$set_box_checking(setting$value_b(s))
+	end set_box_checking
+
+    get_completion_mode = proc (i: interactive) returns (setting)
+	return(setting$make_task(i.sys.completion_mode))
+	end get_completion_mode
+    
+    set_completion_mode = proc (i: interactive, s: setting)
+	i.sys.completion_mode := setting$value_task(s)
+	end set_completion_mode
+    
+    get_directory = proc (i: interactive) returns (setting)
+	return(setting$make_s(connected_dir()))
+	end get_directory
+    
+    set_directory = proc (i: interactive, s: setting) signals (error(string))
+	d: string := setting$value_s(s)
+	if d = "" then d := i.initial_directory
+	 elseif d[string$size(d)] ~= '/' then d := d || "/"
+	 end
+    	set_connected_dir(d)
+	   except when bad_format, not_possible (*):
+		       signal error(quote(d) || " is not a valid directory.")
+		  end
+        front_end$report_dir()
+    	end set_directory
+    
+    get_display_mode = proc (i: interactive) returns (setting)
+	return(setting$make_unp(i.sys.display_mode))
+	end get_display_mode
+    
+    set_display_mode = proc (i: interactive, s: setting) 
+	i.sys.display_mode := setting$value_unp(s)
+	i.symtab.unparse_mode := setting$value_unp(s)
+	end set_display_mode
+    
+    get_hardwired_usage = proc (i: interactive) returns (setting)
+	return(set_i_value(default_hardwired_usage, i.sys.hardwired_usage))
+	end get_hardwired_usage
+    
+    set_i_value = proc (s: setting, n: int) returns (setting)
+	return(setting$make_i(bounded_i$replace_value(setting$value_i(s), n)))
+	end set_i_value
+    
+    set_hardwired_usage = proc (i: interactive, s: setting)
+	i.sys.hardwired_usage := setting$value_i(s).value
+	end set_hardwired_usage
+    
+    get_immunity = proc (i: interactive) returns (setting)
+	return(setting$make_imm(i.sys.default_ai.immune))
+	end get_immunity
+    
+    set_immunity = proc (i: interactive, s: setting)
+	ai: ai_settings := i.sys.default_ai
+	ai.immune := setting$value_imm(s)
+	i.sys.default_ai := ai
+	end set_immunity
+    
+    get_log_file = proc (i: interactive) returns (setting) signals (none)
+	return(setting$make_s(i.io.log_name))
+	   resignal none
+	end get_log_file
+    
+    set_log_file = proc (i: interactive, s: setting) signals (error(string))
+	ended: bool := false
+	begin
+	    printl(i.io, "\nEnd of logging to `" || i.io.log_name || "'.")
+	    ended := true
+	    iodev$rem_log(i.io)
+	    end except when none, not_logging: end
+	fname: string := setting$value_s(s)
+	if string$empty(fname) then
+	   if ~ended then 
+	      printl(i.io, "\nThe session is not being logged.")
+	      end
+	   return
+	   end
+	fn: file_name := file_name$parse(fname)
+	iodev$add_log(i.io, fn)
+	   except when already_logging:
+		       prints(i.io, "\nEnd of logging to ")
+		       printl(i.io, quote(i.io.log_name) || ".")
+		       iodev$rem_log(i.io)
+		       iodev$add_log(i.io, fn)
+		  when already_in_use:
+		       signal error("Can't log to " || quote(fname) || 
+			   	    " because it is in use.")
+		  when not_possible (*):
+		       signal error("\nCan't write to `" || fname || "'.")
+		  end
+	end set_log_file
+    
+    get_lp_path = proc (i: interactive) returns (setting)
+	return(setting$make_s(i.search_path))
+	end get_lp_path
+    
+    set_lp_path = proc (i: interactive, s: setting)
+	i.search_path := setting$value_s(s)
+	end set_lp_path
+    
+    get_name_prefix = proc (i: interactive) returns (setting)
+	return(setting$make_s(name$unparse(i.symtab.root_name)))
+	end get_name_prefix
+	  
+    set_name_prefix = proc (i: interactive, s: setting) signals (error(string))
+	root: string := setting$value_s(s)
+	i.symtab.root_name := name$parse_root_name(root)
+	   except 
+	      when bad_format:
+		   signal error(quote(root) || " is not a legal name.")
+	      when not_possible:
+		   signal error(quote(root) || 
+		       	        " is not allowed as a name prefix.")
+	      end
+	end set_name_prefix
+	  
+    get_ordering_method = proc (i: interactive) returns (setting)
+	return(setting$make_ord(i.sys.ordering))
+	end get_ordering_method
+
+    set_ordering_method = proc (i: interactive, s: setting)
+	ord: ordering := setting$value_ord(s)
+	begin
+	    i.sys.ordering := ord
+	    return
+	    end except when termination_may_be_lost: end
+        prints(i.io, "\nWarning: the rewriting system is known to terminate, ")
+	prints(i.io, "but its termination cannot be verified with the ")
+	prints(i.io, quote(ord.name))
+	prints(i.io, " ordering.  When another rewrite rule is added, the ")
+	printl(i.io, "rewriting system will be treated as nonterminating.")
+	end set_ordering_method
+
+    get_page_mode = proc (i: interactive) returns (setting)
+	return(setting$make_b(i.io.page_mode))
+	end get_page_mode
+    
+    set_page_mode = proc (i: interactive, s: setting) signals (error(string))
+        b: bool := setting$value_b(s)
+        % FIX: To wire out "page-mode on" when a front-end exists, the error
+	% signal must be caught by "new_bool_setting" in a manner analogous to
+	% "new_string_setting", or it must be caught and passed on by
+	% "change_setting".
+	%	if b cand front_end$exists() then
+	%	   signal error("Page mode not available; scroll the output instead.")
+	%	   end
+	i.io.page_mode := b
+	end set_page_mode
+    
+    get_prompt = proc (i: interactive) returns (setting)
+	return(setting$make_s(i.io.command_prompt))
+	end get_prompt
+    
+    set_prompt = proc (i: interactive, s: setting)
+	i.io.command_prompt := setting$value_s(s)
+	end set_prompt
+    
+    get_proof_methods = proc (i: interactive) returns (setting)
+	return(setting$make_pms(i.prover.default_methods))
+	end get_proof_methods
+    
+    set_proof_methods = proc (i: interactive, s: setting)
+	i.prover.default_methods := setting$value_pms(s)
+	end set_proof_methods
+    
+    get_reduction_strategy = proc (i: interactive) returns (setting)
+	return(setting$make_red(i.sys.reduction_mode))
+	end get_reduction_strategy
+
+    set_reduction_strategy = proc (i: interactive, s: setting) 
+	i.sys.reduction_mode := setting$value_red(s)
+	end set_reduction_strategy
+
+    get_rewriting_limit = proc (i: interactive) returns (setting)
+	return(set_i_value(default_rewriting_limit, i.sys.rewriting_limit))
+	end get_rewriting_limit
+    
+    set_rewriting_limit = proc (i: interactive, s: setting)
+	i.sys.rewriting_limit := setting$value_i(s).value
+	end set_rewriting_limit
+    
+    get_script_file = proc (i: interactive) returns (setting) signals (none)
+	return(setting$make_s(i.io.script_name))
+	   resignal none
+	end get_script_file
+    
+    set_script_file = proc (i: interactive, s: setting) signals (error(string))
+	ended: bool := false
+	begin
+	    printl(i.io, "\nEnd of scripting to `" || i.io.script_name || "'.")
+	    ended := true
+	    iodev$rem_script(i.io)
+	    end except when none, not_scripting: end
+	fname: string := setting$value_s(s)
+	if string$empty(fname) then
+	   if ~ended then printl(i.io, "\nInput is not being recorded.") end
+	   return
+	   end
+	fn: file_name := file_name$parse(fname)
+	iodev$add_script(i.io, fn)
+	   except when already_scripting:
+		       prints(i.io, "\nEnd of scripting to ")
+		       printl(i.io, quote(i.io.script_name) || ".")
+		       iodev$rem_script(i.io)
+		       iodev$add_script(i.io, fn)
+		  when already_in_use:
+		       signal error("Can't script to " || quote(fname) || 
+			            " because it is in use.")
+		  when not_possible (*):
+		       signal error("\nCan't write to `" || fname || "'.")
+		  end
+	end set_script_file
+    
+    get_statistics_level = proc (i: interactive) returns (setting)
+	return(set_i_value(default_statistics_level, tracer$get_stat_level()))
+	end get_statistics_level
+    
+    set_statistics_level = proc (i: interactive, s: setting)
+	tracer$set_stat_level(setting$value_i(s).value)
+	end set_statistics_level
+    
+    get_trace_level = proc (i: interactive) returns (setting)
+	return(set_i_value(default_trace_level, tracer$get_level()))
+	end get_trace_level
+    
+    set_trace_level = proc (i: interactive, s: setting)
+	tracer$set_level(setting$value_i(s).value)
+	end set_trace_level
+    
+    get_write_mode = proc (i: interactive) returns (setting)
+	return(setting$make_unp(i.sys.write_mode))
+	end get_write_mode
+    
+    set_write_mode = proc (i: interactive, s: setting)
+	i.sys.write_mode:= setting$value_unp(s)
+	end set_write_mode
+    
+    
+    % Returns a "settings_seq" corresponding to the previously pushed settings
+    % and the current settings, except for the file-system related settings:
+    % log_file, script_file, directory, lp_path.
+    
+    freeze = proc (i: interactive) returns (saved_settings)
+	push(i)
+	ss: saved_settings := saved_settings$[]
+	for sia: setting_info_arr in settings_stack$elements(past_settings) do
+	    sa: setting_arr := setting_arr$[]
+	    for si: setting_info in setting_info_arr$elements(sia) do
+		if si.savable then setting_arr$addh(sa, si.default) end
+		end
+	    saved_settings$addh(ss, sa)
+	    end
+	pop(i)
+	return(ss)
+	end freeze
+    
+
+    % Pops the previous settings off the stack.
+    
+    pop = proc (i: interactive)
+	sia: setting_info_arr := settings_stack$remh(past_settings)
+	   except when bounds: 
+		       error(i.io)
+		       printl(i.io, "\nThere are no more settings to pop.")
+		       return
+		  end
+        for si: setting_info in setting_info_arr$elements(sia) do
+	    if si.savable then si.setter(i, si.default) end
+	       except when error (s: string):
+			   prints(i.io, "\n`")
+			   prints(i.io, si.name)
+			   prints(i.io, "' cannot be reset: ")
+			   printl(i.io, s)
+		      end
+	    end
+	end pop
+
+    
+    % Prints the current settings.
+    
+    print = proc (i: interactive)
+	own width: int := max_name_size(lp_settings)
+	printer$text(i.p, "\n~{")
+	for si: setting_info in setting_info_seq$elements(lp_settings) do
+	    s: setting := si.getter(i)
+	       except when none: continue end
+	    printer$text(i.p, "~{")
+	    printer$puts(i.p, padr(si.name, width))
+	    printer$text(i.p, "~ = ~J")
+	    tagcase s
+	       tag b (b: bool): printer$puts(i.p, on_off(b))
+	       tag i (bi: bounded_i): printer$puts(i.p, int$unparse(bi.value))
+	       tag imm (im: immunity): printer$puts(i.p, im.name)
+	       tag ord (ord: ordering): printer$puts(i.p, slower(ord.name))
+	       tag pms (pms: npm_seq): printer$text(i.p, unparse_pms(pms))
+	       tag red (r: reduction_mode): printer$puts(i.p, r.name)
+	       tag s (str: string): 
+		   str := string_replace_char(str, '~', "~~")
+		   if str[1] = ' ' cor str[string$size(str)] = ' ' then
+		      str := "`" || str || "'"
+		      end except when bounds: end
+		   printer$text(i.p, str)
+	       tag task (t: named_task_mode): printer$puts(i.p, slower(t.name))
+	       tag unp (u: unparse_mode): printer$puts(i.p, u.name)
+	       end
+	    printer$text(i.p, "~}\n")
+	    end
+	printer$text(i.p, "~}")
+	end print
+
+
+    % (Internal procedure) Returns the size of the longest name in "s".
+    
+    max_name_size = proc (s: setting_info_seq) returns (int)
+	n: int := 0
+	for si: setting_info in setting_info_seq$elements(s) do
+	    n := int$max(n, string$size(si.name))
+	    end
+	return(n)
+	end max_name_size
+    
+
+    % Processes the "unset" command.
+   
+    reset = proc (i: interactive) signals (error, excess_input)
+	msg: string := "\nSetting to unset: "
+        si: setting_info := setting_ctt$choose(unsetting_ct, msg, i.io)
+	   resignal error
+	   except others: return end
+	if iodev$pending_input(i.io) then signal excess_input end
+	if si = all_settings then reset_all(i, lp_settings)
+	 elseif si = log_file cor si = script_file then 
+	   si.setter(i, si.default)
+	 else change_setting(i, si, si.default)
+	 end
+	end reset
+    
+    
+    % (Internal procedure) Resets all settings in "sis" to their default value.
+    
+    reset_all = proc (i: interactive, sis: setting_info_seq)
+	for si: setting_info in setting_info_seq$elements(sis) do
+	    si.setter(i, si.default)
+	    end
+	end reset_all
+    
+    
+    % (Internal procedure)  Changes the setting for "si.name" to "s".  Prints
+    % a message giving the new setting.
+    
+    change_setting = proc (i: interactive, si: setting_info, s: setting)
+        si.setter(i, s)    % Special cases for Log, Script?
+	s := si.getter(i)  % In case "si.setter" changes "s"
+	if setting$is_b(s)
+	   then prints(i.io, "\n" || supply_is_are(si.name) || "now ")
+	   else prints(i.io, 
+		       "\nThe " || supply_is_are(slower(si.name)) || "now ")
+	   end
+	value: string
+	tagcase si.default
+	   tag b:    value := quote(on_off(setting$value_b(s)))
+	   tag i:    value := int$unparse(setting$value_i(s).value)
+	   tag imm:  value := quote(setting$value_imm(s).name)
+	   tag ord:  value := quote(setting$value_ord(s).name)
+	   tag pms:  value := quote(unparse_pms(setting$value_pms(s)))
+	   tag red:  value := quote(setting$value_red(s).name)
+	   tag s:    value := quote(setting$value_s(s))
+	   tag task: value := quote(setting$value_task(s).name)
+	   tag unp:  value := quote(setting$value_unp(s).name)
+	   end
+	printl(i.io, value || ".")
+	end change_setting
+
+
+    % Pushes the current settings onto the stack.
+    
+    push = proc (i: interactive)
+	sia: setting_info_arr := setting_info_arr$[]
+        for si: setting_info in setting_info_seq$elements(lp_settings) do
+	    if si.savable then
+	       setting_info_arr$addh
+		   (sia, setting_info$replace_default(si, si.getter(i)))
+	       end
+	    end
+	settings_stack$addh(past_settings, sia)
+	end push
+
+    
+    % Processes the "set" command.
+   
+    set = proc (i: interactive) signals (error, excess_input)
+	if ~iodev$pending_input(i.io) then 
+	   print(i)
+	   return
+	   end
+	msg: string := "\nName of setting and new value: "
+        si: setting_info := setting_ctt$choose(setting_ct, msg, i.io)
+	   resignal error
+	   except when end_of_file, no_response: return end
+	new: setting
+	tagcase si.default
+	   tag b:    new := new_bool_setting(i, si)
+	   tag i:    new := new_int_setting(i, si)
+	   tag imm:  new := new_imm_setting(i, si)
+	   tag ord:  new := new_ord_setting(i, si)
+	   tag pms:  new := new_pms_setting(i, si)
+	   tag red:  new := new_red_setting(i, si)
+	   tag s:    new := new_string_setting(i, si)
+	   tag task: new := new_task_setting(i, si)
+	   tag unp:  new := new_unp_setting(i, si)
+	   end resignal error, excess_input
+	   except when done: return end
+	if iodev$pending_input(i.io) then signal excess_input end
+        change_setting(i, si, new)
+	end set
+
+
+    % Restores "past_settings" and the current settings from "ss".
+    
+    thaw = proc (i: interactive, ss: saved_settings)
+	saved_stack: settings_stack := settings_stack$[]
+	for sa: setting_arr in saved_settings$elements(ss) do
+	    sia: setting_info_arr := setting_info_arr$[]
+	    for si: setting_info in setting_info_seq$elements(lp_settings) do
+		if ~si.savable then continue end
+		s: setting := setting_arr$reml(sa)
+		ok: bool
+		tagcase si.default
+		   tag b:    ok := setting$is_b(s)
+		   tag i:    ok := setting$is_i(s)
+		   tag imm:  ok := setting$is_imm(s)
+		   tag ord:  ok := setting$is_ord(s)
+		   tag pms:  ok := setting$is_pms(s)
+		   tag red:  ok := setting$is_red(s)
+		   tag s:    ok := setting$is_s(s)
+		   tag task: ok := setting$is_task(s)
+		   tag unp:  ok := setting$is_unp(s)
+		   end
+	        if ~ok then 
+		   error(i.io)
+		   prints(i.io, "\nCan't thaw settings; something is wrong ")
+		   printl(i.io, "with the .frz file.")
+		   return
+		   end
+		setting_info_arr$addh(sia, setting_info$replace_default(si, s))
+		end
+	    settings_stack$addh(saved_stack, sia)
+	    end
+	past_settings := saved_stack
+	pop(i)
+	end thaw
+    
+
+    % Writes LP commands to re-establish the current theory settings to "pp".
+    
+    write = proc (pp: printer, i: interactive)
+	printer$text(pp, "% Settings\n\n")
+	printer$text(pp, "pop-settings\n")
+	% printer$text(pp, "% unset all\n")
+	for si: setting_info in setting_info_seq$elements(lp_settings) do
+	    if ~si.savable then continue end
+	    s: setting := si.getter(i)
+	       except when none: continue end
+	    % if s = si.default then continue end
+	    printer$text(pp, "~{% set~ ")
+	    printer$puts(pp, slower(si.name))
+	    printer$text(pp, "~ ")
+	    tagcase s
+	       tag b (b: bool): printer$puts(pp, on_off(b))
+	       tag i (bi: bounded_i): printer$puts(pp, int$unparse(bi.value))
+	       tag imm (im: immunity): printer$puts(pp, im.name)
+	       tag ord (ord: ordering): printer$puts(pp, slower(ord.name))
+	       tag pms (pms: npm_seq): printer$puts(pp, unparse_pms(pms))
+	       tag red (r: reduction_mode): printer$puts(pp, r.name)
+	       tag s (str: string): printer$puts(pp, str)
+	       tag task (t: named_task_mode): printer$puts(pp, slower(t.name))
+	       tag unp (u: unparse_mode): printer$puts(pp, u.name)
+	       end
+	    printer$text(pp, "~}\n")
+	    end
+	end write
+
+
+    % (Internal procedure) Gets and returns a new value for the boolean-valued
+    % setting "si.name".
+    
+    new_bool_setting = proc (i: interactive, si: setting_info) 
+			 returns (setting) signals (done, error)
+	old: string := on_off(setting$value_b(si.getter(i)))
+	iodev$qprints(i.io, "\n" || supply_is_are(si.name) || "currently ")
+	iodev$qprintl(i.io, quote(old) || ".")
+	msg: string := "\nWould you like to turn " || slower(si.name) || 
+		       " `on' or `off'? "
+        return(setting$make_b(on_off_ctt$choose(on_off_ct(), msg, i.io)))
+	   resignal error
+           except when end_of_file, no_response: signal done end
+	end new_bool_setting
+
+
+    % (Internal procedure) Gets and returns a new value for the integer-valued
+    % setting "si.name".
+    
+    new_int_setting = proc (i: interactive, si: setting_info) returns (setting)
+			signals (done, error)
+	n: string := slower(si.name)
+	old: string := int$unparse(setting$value_i(si.getter(i)).value)
+	iodev$qprintl(i.io, "\nThe current " || supply_is_are(n) || old || ".")
+	high: int := setting$value_i(si.default).high
+	msg: string := "\nNew " || n
+	if high = 0
+	   then msg := msg || ": "
+	   else msg := msg || " [0.." || int$unparse(high) || "]: "
+	   end
+	answer: string
+	while true do
+	    answer := iodev$gets(i.io, msg, "")
+	    if answer = "" then signal done end
+	    if answer ~= "?" then break end
+	    prints(i.io, "Please enter " || int_range(high))
+	    printl(i.io, ", or type <ret> to exit.")
+	    end
+	new: int
+	begin
+	    new := int$parse(answer)
+	    if new < 0 cor (0 < high cand high < new) then exit error end
+	    end 
+	   except when bad_format, overflow, error:
+		       error(i.io)
+		       prints(i.io, quote(answer) || " is not a valid ")
+		       prints(i.io, n || ", which must be ")
+		       printl(i.io, int_range(high) || ".")
+		       signal error
+		  end
+	return(set_i_value(si.default, new))
+	end new_int_setting
+
+    
+    % (Internal procedure) Returns a string describing the range of values
+    % allowed for an integer parameter.
+    
+    int_range = proc (high: int) returns (string)
+	if high = 0
+	   then return("a nonnegative integer")
+	   else return("an integer between 0 and " || int$unparse(high) ||
+		       ", inclusive")
+	   end
+	end int_range
+
+
+    % (Internal procedure) Gets and returns a new value of type "t" for the
+    % setting "si.name" using the command table "ct".
+    
+    new_ct_value = proc [t: type](io: iodev, si: setting_info, 
+				  old: string, ct: command_table[t])
+		     returns (t) signals (done, error)
+		where t in copy_type, t in equal_type
+	n: string := slower(si.name)
+	iodev$qprintl(io, "\nThe current " || supply_is_are(n) || "`" || 
+	    		  old || "'.")
+	return(command_table[t]$choose(ct, "\nNew " || n || ": ", io))
+	   resignal error
+	   except when no_response, end_of_file: signal done end
+	end new_ct_value
+
+
+    % (Internal procedure) Gets and returns a new "immunity" setting.
+    
+    new_imm_setting = proc (i: interactive, si: setting_info) returns (setting)
+			signals (done, error)
+	old: string := setting$value_imm(si.getter(i)).name
+	new: immunity := new_ct_value[immunity](i.io, si, old, imm_ct)
+	   resignal done, error
+	return(setting$make_imm(new))
+	end new_imm_setting
+    
+
+    % (Internal procedure)
+    
+    new_ord_setting = proc (i: interactive, si: setting_info) 
+			returns (setting) signals (done, error)
+	old: ordering := setting$value_ord(si.getter(i))
+	new: ordering := new_ct_value[ordering](i.io, si, old.name, ord_ct)
+	   resignal done, error
+	if iodev$pending_input(i.io) then
+	   rest: string := iodev$getl(i.io)
+	   if ~ordering$is_poly(new) then
+	      error(i.io)
+	      printl(i.io, "\nUnrecognized excess input: " || rest)
+	      signal error
+	      end
+	   n_polys: int := int$parse(rest)
+	   if n_polys <= 0 then exit bad_format end
+	   new := ordering$poly(n_polys)
+	   end
+	   except when bad_format:
+		       error(i.io)
+		       prints(i.io, "\nThe number of polynomials must be a ")
+		       printl(i.io, "positive integer.")
+		       signal error
+		  when overflow:
+		       error(i.io)
+		       printl(i.io, "\nThat's far too many polynomials!")
+		       signal error
+		  end
+	return(setting$make_ord(new))
+	end new_ord_setting
+    
+    
+    % (Internal procedure) Gets and returns a new "proof-methods" setting.
+    
+    new_pms_setting = proc (i: interactive, si: setting_info) returns (setting)
+			signals (done, error)
+	iodev$qprintl(i.io, "\nThe current proof-methods are `" || 
+	    		    unparse_pms(setting$value_pms(si.getter(i))) || 
+			    "'.")
+	a: npm_arr := npm_arr$[]
+	while true do
+	    npm_arr$addh(a, npm_ctt$choose(npm_ct, 
+		    			   "\nList of proof methods: ", i.io))
+	    if ~iodev$pending_input(i.io) then break end
+	    end resignal error
+	   except when end_of_file, no_response: signal done end
+	return(setting$make_pms(npm_seq$a2s(a)))
+	end new_pms_setting
+
+
+    % (Internal procedure) Gets and returns a new "reduction_mode" setting.
+    
+    new_red_setting = proc (i: interactive, si: setting_info) returns (setting)
+			signals (done, error)
+	old: string := setting$value_red(si.getter(i)).name
+	new: reduction_mode := 
+	    new_ct_value[reduction_mode](i.io, si, old, red_ct)
+	   resignal done, error
+	return(setting$make_red(new))
+	end new_red_setting
+    
+
+    % (Internal procedure) Gets and returns a new "task_mode" setting.
+    
+    new_task_setting = proc (i: interactive, si: setting_info) 
+			 returns (setting) signals (done, error)
+	old: string := setting$value_task(si.getter(i)).name
+	new: named_task_mode := 
+	    new_ct_value[named_task_mode](i.io, si, old, task_ct)
+	   resignal done, error
+	return(setting$make_task(new))
+	end new_task_setting
+    
+
+    % (Internal procedure) Gets and returns a new "unparse_mode" setting.
+    
+    new_unp_setting = proc (i: interactive, si: setting_info) returns (setting)
+			signals (done, error)
+	old: string := setting$value_unp(si.getter(i)).name
+	new: unparse_mode := new_ct_value[unparse_mode](i.io, si, old, unp_ct)
+	   resignal done, error
+	return(setting$make_unp(new))
+	end new_unp_setting
+    
+
+    % (Internal procedure) Gets and returns a new value for the string-valued
+    % setting "si.name".
+
+    new_string_setting = proc (i: interactive, si: setting_info) 
+			   returns (setting) 
+			   signals (done, error, excess_input)
+	if si = log_file then handle_log_file(i)
+	 elseif si = script_file then handle_script_file(i)
+	 end resignal done, error, excess_input
+	old: string := setting$value_s(si.getter(i))
+	n: string := slower(si.name)
+	iodev$qprintl(i.io, "\nThe current " || supply_is_are(n) || "`" || 
+			    old || "'.")
+	new: string := iodev$gets(i.io, "\nNew " || n || ": ", "")
+	if string$empty(new) then signal done end
+	% ENHANCE: if new = "?" then
+	len: int := string$size(new)
+	if new[1] = '`' cand new[len] = '\'' then
+	   new := string$substr(new, 2, len-2)
+	   end except when bounds: end
+	si.setter(i, setting$make_s(new))
+	   except when error (msg: string):
+		       error(i.io)
+		       printl(i.io, "")
+		       printl(i.io, msg)
+		       signal error
+		  end
+	prints(i.io, "\nThe " || supply_is_are(n) || "now `")
+	printl(i.io, setting$value_s(si.getter(i)) || "'.")
+	signal done
+	end new_string_setting
+
+
+    % (Internal procedure) Allows users to begin logging.
+
+    handle_log_file = proc (i: interactive) signals (done, error, excess_input)
+	msg = "Log file (default suffix is `.lplog'): "
+	iodev$qprintl(i.io, "The session is currently being logged to `" || 
+	    		    i.io.log_name || "'.")
+	   except when none: 
+		       iodev$qprintl(i.io,
+				     "\nThe session is not being logged.")
+		  end
+	fn: file_name := get_file_name(i.io, msg, "lplog", help_log)
+	   resignal error
+	   except when no_response: signal done end
+	if iodev$pending_input(i.io) then signal excess_input end
+	fname: string := file_name$unparse(fn)
+	set_log_file(i, setting$make_s(fname))
+	   except when error (what: string):
+		       error(i.io)
+		       printl(i.io, "\n" || what)
+		       signal error
+		  end
+        printl(i.io, "\n" || lp_version() || " logging to `" ||
+	             i.io.log_name || "' on " || date$unparse(now()) || ".")
+	signal done
+	end handle_log_file
+
+    
+    % (Local procedure) A help procedure used when prompting for log files.
+
+    help_log = proc (io: iodev)
+	prints(io, "Enter the name of the file in which input should be ")
+	prints(io, "recorded, or type <ret> to quit.  The default suffix ")
+	prints(io, "for log files is `.lp'.  Use the command  ")
+	printl(io, "`unset log-file' to stop logging.")
+	end help_log
+
+
+    % (Internal procedure) Allows users to begin scripting.
+
+    handle_script_file = proc (i: interactive) 
+			   signals (done, error, excess_input)
+	msg = "Script file (default suffix is `.lpscr'): "
+	iodev$qprintl(i.io, "Input is currently being recorded in `" ||
+	    		    i.io.script_name || "'.")
+	   except when none: 
+		       iodev$qprintl(i.io, "\nInput is not being recorded.")
+		  end
+	fn: file_name := get_file_name(i.io, msg, "lpscr", help_script)
+	   resignal error
+	   except when no_response: signal done end
+	if iodev$pending_input(i.io) then signal excess_input end
+	fname: string := file_name$unparse(fn)
+	set_script_file(i, setting$make_s(fname))
+	   except when error (what: string):
+		       error(i.io)
+		       printl(i.io, "\n" || what)
+		       signal error
+		  end
+	printl(i.io, "\nInput is being recorded now in `" || 
+	    	     i.io.script_name || "'.")
+	signal done
+	end handle_script_file
+
+    
+    % (Internal procedure) A help procedure used when prompting for script
+    % files.
+
+    help_script = proc (io: iodev)
+	prints(io, "Enter the name of the file in which the session should ")
+	prints(io, "be recorded, or type <ret> to quit.  The default  ")
+	prints(io, "suffix for script files is `.lpscr'.  Use the command ")
+	printl(io, "`unset script-file' to stop scripting.")
+	end help_script
+    
+    
+    % (Internal procedure) Returns a string listing the proof methods in "pms".
+    
+    unparse_pms = proc (pms: npm_seq) returns (string)
+	s: string := ""
+	for npm: named_proof_method in npm_seq$elements(pms) do
+	    if ~string$empty(s) then s := s || ", " end
+	    s := s || npm.name
+	    end
+	return(s)
+	end unparse_pms
+    
+
+    end settings
